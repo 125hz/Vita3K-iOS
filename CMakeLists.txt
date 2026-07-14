@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.22)
 
+option(VITA3K_BUILD_IOS "Build the experimental iOS bootstrap application" OFF)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR VITA3K_BUILD_IOS)
+	if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+		message(FATAL_ERROR "VITA3K_BUILD_IOS requires an iOS toolchain. Configure with -DCMAKE_SYSTEM_NAME=iOS on macOS with Xcode installed.")
+	endif()
+	project(Vita3KiOS LANGUAGES C CXX OBJC OBJCXX)
+	add_subdirectory(ios)
+	return()
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Android")
 	set(ANDROID 1)
 	set(VCPKG_TARGET_ANDROID 1)

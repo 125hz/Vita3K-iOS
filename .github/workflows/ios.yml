@@ -1,0 +1,80 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ios-port
+    paths:
+      - "CMakeLists.txt"
+      - "ios/**"
+      - ".ci/package-ios.sh"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "CMakeLists.txt"
+      - "ios/**"
+      - ".ci/package-ios.sh"
+      - ".github/workflows/ios.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unsigned-ipa:
+    name: Unsigned arm64 device IPA
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Show Apple toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          cmake --version
+
+      - name: Configure iOS bootstrap target
+        run: |
+          cmake -S . -B build-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DVITA3K_BUILD_IOS=ON \
+            -DVITA3K_IOS_DEPLOYMENT_TARGET=17.0 \
+            -DVITA3K_IOS_LINK_CORE=OFF
+
+      - name: Build unsigned device application
+        run: |
+          cmake --build build-ios \
+            --config Release \
+            --target Vita3KiOS \
+            -- \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Package and verify unsigned IPA
+        id: package
+        run: |
+          bash ./.ci/package-ios.sh \
+            --build-dir build-ios \
+            --configuration Release \
+            --output artifacts/Vita3K-iOS-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vita3K-iOS-${{ github.sha }}-unsigned
+          path: artifacts/Vita3K-iOS-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
