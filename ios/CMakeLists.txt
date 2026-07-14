@@ -27,6 +27,7 @@ target_compile_options(Vita3KiOS PRIVATE
 )
 target_compile_definitions(Vita3KiOS PRIVATE VITA3K_PLATFORM_IOS=1)
 target_link_libraries(Vita3KiOS PRIVATE
+    "-framework CoreGraphics"
     "-framework Foundation"
     "-framework Metal"
     "-framework MetalKit"
