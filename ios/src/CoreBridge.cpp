@@ -251,15 +251,16 @@ bool run_loader_pipeline_test(GuestMemory &memory, ImportBindingResult &binding_
     write_value(payload, 0x34, static_cast<std::uint32_t>(0x51F7A4D2));
     write_value(payload, 0x44, module_start);
 
-    const std::array<std::uint16_t, 9> guest_program{
-        0xB510u, // PUSH {r4, lr}
-        0x4B04u, // LDR r3, [pc, #16]: address of ARM get-thread-ID stub
+    const std::array<std::uint16_t, 10> guest_program{
+        0xE92Du, // PUSH.W {r8, lr}, first halfword
+        0x4100u, // PUSH.W register list: high register r8 and lr
+        0x4B03u, // LDR r3, [pc, #12]: address of ARM get-thread-ID stub
         0x4798u, // BLX r3: enter the ARM import trampoline
         0x4604u, // MOV r4, r0
         0x9400u, // STR r4, [sp]
         0x9A00u, // LDR r2, [sp]
         0x202Au, // MOVS r0, #42
-        0x4B02u, // LDR r3, [pc, #8]: address of ARM exit-thread stub
+        0x4B01u, // LDR r3, [pc, #4]: address of ARM exit-thread stub
         0x4798u // BLX r3
     };
     std::memcpy(payload.data() + (module_start & ~1u), guest_program.data(),
@@ -424,6 +425,72 @@ bool run_arm_execution_test(GuestMemory &memory, std::uint64_t &instruction_coun
         state.registers[12] != test_nid ||
         instruction_count != instructions.size()) {
         error = "The ARM execution/HLE diagnostic produced unexpected register state.";
+        return false;
+    }
+    if (!unmapped) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
+bool run_thumb2_wide_push_test(GuestMemory &memory, std::string &error) {
+    constexpr std::uint32_t test_address = 0x40000;
+    constexpr std::uint32_t r0_value = 0x11111111;
+    constexpr std::uint32_t r8_value = 0x88888888;
+    constexpr std::uint32_t lr_value = 0xEEEEEEEE;
+    std::array<std::uint8_t, 12> program{};
+    write_value(program, 0, static_cast<std::uint16_t>(0xE92D));
+    write_value(program, 2, static_cast<std::uint16_t>(0x4101)); // PUSH.W {r0, r8, lr}
+    write_value(program, 8, static_cast<std::uint16_t>(0xE8FF));
+    write_value(program, 10, static_cast<std::uint16_t>(0xA55A));
+
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < program.size() ||
+        memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the Thumb-2 PUSH.W diagnostic.";
+        return false;
+    }
+    const auto memory_size = static_cast<std::uint32_t>(memory_size_64);
+    if (!memory.map_segment(test_address, program, memory_size, 7, error)) {
+        return false;
+    }
+
+    HLEDispatcher dispatcher;
+    ArmInterpreter interpreter(memory, dispatcher);
+    const auto initial_sp = test_address + memory_size;
+    interpreter.reset(test_address | 1u, initial_sp, lr_value);
+    interpreter.state().registers[0] = r0_value;
+    interpreter.state().registers[8] = r8_value;
+    const auto wide_execution = interpreter.run(1);
+    const auto wide_state = interpreter.state();
+
+    std::array<std::uint8_t, 12> saved_bytes{};
+    std::array<std::uint32_t, 3> saved_registers{};
+    const bool stack_read = memory.read(
+        initial_sp - static_cast<std::uint32_t>(saved_bytes.size()), saved_bytes, error);
+    if (stack_read) {
+        std::memcpy(saved_registers.data(), saved_bytes.data(), saved_bytes.size());
+    }
+
+    interpreter.reset((test_address + 8u) | 1u, initial_sp);
+    const auto unsupported_execution = interpreter.run(1);
+
+    std::string unmap_error;
+    const bool unmapped = memory.unmap_all_segments(unmap_error);
+    if (wide_execution.reason != ArmStopReason::instruction_limit ||
+        wide_execution.instructions_executed != 1 ||
+        wide_state.registers[13] != initial_sp - 12u ||
+        wide_state.registers[15] != test_address + 4u || !stack_read ||
+        saved_registers[0] != r0_value || saved_registers[1] != r8_value ||
+        saved_registers[2] != lr_value) {
+        error = "Thumb-2 PUSH.W produced unexpected stack or register state.";
+        return false;
+    }
+    if (unsupported_execution.reason != ArmStopReason::unsupported_thumb ||
+        unsupported_execution.last_instruction != 0xA55AE8FFu ||
+        unsupported_execution.detail.find("0xE8FFA55A") == std::string::npos) {
+        error = "The unsupported Thumb-2 diagnostic did not retain both halfwords.";
         return false;
     }
     if (!unmapped) {
@@ -724,7 +791,8 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     std::string execution_error;
     const bool arm_execution_passed = loader_pipeline_passed &&
         run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count,
-            core_status.hle_test_dispatch_count, execution_error);
+            core_status.hle_test_dispatch_count, execution_error) &&
+        run_thumb2_wide_push_test(*guest_memory, execution_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;

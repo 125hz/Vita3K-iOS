@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It can transactionally install user-selected app/patch ZIPs, list installed titles, prefer a patch `eboot.bin`, safely prepare a selected Vita SELF, and make one explicitly confirmed interpreter attempt with a hard 256-instruction ceiling. It also loads and completes the `module_start` of a deliberately tiny legal fixture, presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet execute general installed games, render Vita graphics, route input to guest services, or provide a production CPU/HLE implementation.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It can transactionally install user-selected app/patch ZIPs, list installed titles, prefer a patch `eboot.bin`, safely prepare a selected Vita SELF, and make one explicitly confirmed interpreter attempt with a hard 256-instruction ceiling. It also loads and completes the `module_start` of a deliberately tiny legal fixture, executes compact and wide Thumb stack prologues, presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet execute general installed games, render Vita graphics, route input to guest services, or provide a production CPU/HLE implementation.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -180,3 +180,14 @@ Milestone 17 exposed `0xF62F7FFF` at `0x810176B8` before executing an instructio
 5. Share the new diagnostic text or screenshot. A new unsupported instruction or HLE boundary is expected; a playable frame is not.
 
 The Actions artifact also includes `milestone18-lifecycle-export.zip`. Its module header deliberately points at the wrong executable location while its lifecycle export points at a legal synthetic Thumb program. Installing, preparing, and attempting `M15TEST01` from that archive must complete 12 instructions, two HLE calls, and exit with status 42. This fixture contains no game or firmware data.
+
+## Milestone 19 wide Thumb-2 stack-prologue test
+
+The accepted Milestone 18 Amagami attempt entered the lifecycle export at `0x810176B9`, completed the first branch, and reached a wide Thumb-2 stack prologue beginning with `0xE92D` at `0x81017580`. Milestone 19 implements the `PUSH.W` alias of `STMDB sp!` for valid register lists, including high registers, and reports both halfwords for any later unsupported Thumb-2 instruction.
+
+1. Install the Milestone 19 IPA and open **Game Library**.
+2. Select `PCSG00291` with **Prefer Installed Patch** enabled and confirm preparation still says `via lifecycle export`.
+3. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
+4. Share the complete new diagnostic. It should advance past `0xE92D` at `0x81017580`; another CPU, memory, or HLE boundary is expected.
+
+The Actions artifact includes `milestone19-thumb2-wide-push.zip`. Installing and attempting its synthetic `M15TEST01` title must complete 12 instructions and two HLE calls, including `PUSH.W {r8, lr}`, then exit with status 42. This fixture contains no game or firmware data.

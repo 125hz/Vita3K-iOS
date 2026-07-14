@@ -106,6 +106,7 @@ jobs:
             --emit-self-fixture artifacts/milestone16-plain-self-eboot.bin \
             --emit-m16-install-zip-fixture artifacts/milestone16-app-and-patch.zip \
             --emit-m18-install-zip-fixture artifacts/milestone18-lifecycle-export.zip \
+            --emit-m19-install-zip-fixture artifacts/milestone19-thumb2-wide-push.zip \
             --verify-vitasdk artifacts/milestone10-vitasdk-homebrew.velf
 
       - name: Configure iOS application and core target
@@ -151,5 +152,6 @@ jobs:
             artifacts/milestone16-plain-self-eboot.bin
             artifacts/milestone16-app-and-patch.zip
             artifacts/milestone18-lifecycle-export.zip
+            artifacts/milestone19-thumb2-wide-push.zip
           if-no-files-found: error
           retention-days: 14

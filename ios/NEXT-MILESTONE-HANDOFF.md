@@ -1,6 +1,6 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 18.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 19.
 
 ## Copy-paste prompt
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 18 boundary
+## Known Milestone 19 boundary
 
-Milestone 17 prepared Amagami title `PCSG00291` from `patch/eboot.bin`, but its one-shot interpreter attempt executed zero instructions and reported `0xF62F7FFF` at `0x810176B8`. The loader had treated the module-info header's relative `module_start` as final. Upstream Vita3K later replaces that value when it encounters lifecycle export NID `0x935CD196` (`NID_MODULE_START`). Milestone 18 now preserves export entry addresses and performs that override before execution.
+Milestone 18 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. Preparation reported `module_start 0x810176B9 via lifecycle export`; the bounded attempt completed the entry branch and stopped on Thumb-2 prefix `0xE92D` at `0x81017580` before making an HLE call. This is the wide `PUSH.W` alias of `STMDB sp!`, a normal compiler prologue.
 
-The physical-device Milestone 18 acceptance result is not yet known. Do not implement a new CPU instruction from the old `0xF62F7FFF` diagnostic. First install the Milestone 18 artifact, prepare `PCSG00291`, confirm `via lifecycle export`, run the one-shot 256-instruction attempt, and use that new diagnostic for Milestone 19.
+Milestone 19 implements valid `E92D` register lists, including high registers, and makes later unsupported Thumb-2 stops report the complete 32-bit instruction instead of only its first halfword. Its physical-device acceptance result is not yet known. Install the Milestone 19 artifact, prepare `PCSG00291`, confirm `via lifecycle export`, run the one-shot 256-instruction attempt, and use only that new diagnostic for Milestone 20.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m18-install-zip-fixture artifacts/milestone18-lifecycle-export.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m19-install-zip-fixture artifacts/milestone19-thumb2-wide-push.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 

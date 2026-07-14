@@ -683,6 +683,84 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         return continued();
     }
 
+    // PUSH.W {registers} is the Thumb-2 alias of STMDB sp!, {registers}.
+    // Commercial modules commonly use this form when their prologue saves
+    // high registers that cannot be represented by the compact PUSH encoding.
+    if (instruction == 0xE92Du) {
+        std::array<std::uint8_t, sizeof(std::uint16_t)> lower_bytes{};
+        std::string lower_error;
+        if (!memory_.read(pc + 2u, lower_bytes, lower_error)) {
+            return {
+                .reason = ArmStopReason::memory_fault,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb-2 PUSH.W register-list fetch failed: " + lower_error
+            };
+        }
+        std::uint16_t register_list = 0;
+        std::memcpy(&register_list, lower_bytes.data(), sizeof(register_list));
+        const auto packed_instruction = static_cast<std::uint32_t>(instruction) |
+            (static_cast<std::uint32_t>(register_list) << 16);
+        const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) |
+            register_list;
+        state_.registers[register_pc] = pc + 4u;
+
+        const auto invalid_registers = static_cast<std::uint16_t>(
+            (1u << register_sp) | (1u << register_pc));
+        const auto register_count = std::popcount(register_list);
+        if ((register_list & invalid_registers) != 0 || register_count < 2) {
+            return {
+                .reason = ArmStopReason::unsupported_instruction,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = packed_instruction,
+                .detail = "Unsupported or unpredictable Thumb-2 PUSH.W " +
+                    hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
+            };
+        }
+
+        const auto byte_count = static_cast<std::uint32_t>(
+            register_count * sizeof(std::uint32_t));
+        const auto old_sp = state_.registers[register_sp];
+        if (old_sp < byte_count) {
+            return {
+                .reason = ArmStopReason::memory_fault,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = packed_instruction,
+                .detail = "Thumb-2 PUSH.W underflowed guest address space."
+            };
+        }
+        const auto new_sp = old_sp - byte_count;
+        auto cursor = new_sp;
+        for (std::size_t index = 0; index < state_.registers.size(); ++index) {
+            if ((register_list & (1u << index)) == 0) {
+                continue;
+            }
+            std::array<std::uint8_t, sizeof(std::uint32_t)> word{};
+            std::memcpy(word.data(), &state_.registers[index], sizeof(std::uint32_t));
+            std::string stack_error;
+            if (!memory_.write(cursor, word, stack_error)) {
+                return {
+                    .reason = ArmStopReason::memory_fault,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = packed_instruction,
+                    .detail = "Thumb-2 PUSH.W failed: " + stack_error
+                };
+            }
+            cursor += sizeof(std::uint32_t);
+        }
+        state_.registers[register_sp] = new_sp;
+        return {
+            .reason = ArmStopReason::instruction_limit,
+            .instructions_executed = state_.instruction_count,
+            .final_pc = state_.registers[register_pc],
+            .last_instruction = packed_instruction
+        };
+    }
+
     // Thumb-2 BL/BLX immediate. This is the first 32-bit compiler-generated
     // instruction accepted by the real VitaSDK fixture.
     if ((instruction & 0xF800u) == 0xF000u) {
@@ -742,13 +820,30 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
 
     // A leading 11101/11110/11111 halfword begins a 32-bit Thumb-2 encoding.
     if ((instruction & 0xF800u) >= 0xE800u) {
+        std::array<std::uint8_t, sizeof(std::uint16_t)> lower_bytes{};
+        std::string lower_error;
+        if (!memory_.read(pc + 2u, lower_bytes, lower_error)) {
+            return {
+                .reason = ArmStopReason::memory_fault,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb-2 instruction suffix fetch failed: " + lower_error
+            };
+        }
+        std::uint16_t lower = 0;
+        std::memcpy(&lower, lower_bytes.data(), sizeof(lower));
+        const auto packed_instruction = static_cast<std::uint32_t>(instruction) |
+            (static_cast<std::uint32_t>(lower) << 16);
+        const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) |
+            lower;
         return {
             .reason = ArmStopReason::unsupported_thumb,
             .instructions_executed = state_.instruction_count,
             .final_pc = pc,
-            .last_instruction = instruction,
-            .detail = "Unsupported 32-bit Thumb-2 instruction prefix " +
-                hexadecimal(instruction) + " at " + hexadecimal(pc) + "."
+            .last_instruction = packed_instruction,
+            .detail = "Unsupported 32-bit Thumb-2 instruction " +
+                hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
         };
     }
 
