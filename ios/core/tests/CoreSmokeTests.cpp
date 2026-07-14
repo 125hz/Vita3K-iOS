@@ -161,6 +161,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m23_install_zip_fixture;
     std::filesystem::path emitted_m24_install_zip_fixture;
     std::filesystem::path emitted_m25_install_zip_fixture;
+    std::filesystem::path emitted_m26_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -192,6 +193,8 @@ int main(int argc, char **argv) {
             emitted_m24_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m25-install-zip-fixture" && index + 1 < argc) {
             emitted_m25_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m26-install-zip-fixture" && index + 1 < argc) {
+            emitted_m26_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -209,6 +212,7 @@ int main(int argc, char **argv) {
                          "[--emit-m23-install-zip-fixture <path>] "
                          "[--emit-m24-install-zip-fixture <path>] "
                          "[--emit-m25-install-zip-fixture <path>] "
+                         "[--emit-m26-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -458,6 +462,44 @@ int main(int argc, char **argv) {
     const auto register_family_self = make_plain_self(register_family_elf);
     const auto m25_install_zip = vita3k::ios::make_synthetic_install_zip(
         register_family_self, register_family_self);
+    auto libc_termination_elf = lifecycle_elf;
+    constexpr std::uint32_t aeabi_atexit_nid = 0xEDC939E1u;
+    constexpr std::uint32_t cxa_atexit_nid = 0x33B83B70u;
+    constexpr std::uint32_t cxa_finalize_nid = 0xB538BF48u;
+    constexpr std::uint32_t synthetic_atexit_object = 0x81000240u;
+    constexpr std::uint32_t synthetic_atexit_destructor = 0x81000301u;
+    const std::array<std::uint16_t, 7> libc_termination_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4803u, // LDR r0, [pc, #12] -> object / finalize DSO
+        0x4903u, // LDR r1, [pc, #12] -> destructor
+        0x4A04u, // LDR r2, [pc, #16] -> DSO handle
+        0x4B04u, // LDR r3, [pc, #16] -> libc import stub
+        0x4798u, // BLX r3
+        0xBD10u // POP {r4, pc} -> zero-link return sentinel
+    };
+    std::memcpy(libc_termination_elf.data() + 244, libc_termination_program.data(),
+        sizeof(libc_termination_program));
+    write_value(libc_termination_elf, 260, synthetic_atexit_object);
+    write_value(libc_termination_elf, 264, synthetic_atexit_destructor);
+    write_value(libc_termination_elf, 268, synthetic_dso_handle);
+    write_value(libc_termination_elf, 272, static_cast<std::uint32_t>(0x81000050));
+    write_value(libc_termination_elf, 372, aeabi_atexit_nid);
+    const auto libc_termination_self = make_plain_self(libc_termination_elf);
+    const auto m26_install_zip = vita3k::ios::make_synthetic_install_zip(
+        libc_termination_self, libc_termination_self);
+    auto cxa_atexit_elf = libc_termination_elf;
+    write_value(cxa_atexit_elf, 260, synthetic_atexit_destructor);
+    write_value(cxa_atexit_elf, 264, synthetic_atexit_object);
+    write_value(cxa_atexit_elf, 372, cxa_atexit_nid);
+    const auto cxa_atexit_self = make_plain_self(cxa_atexit_elf);
+    const auto cxa_atexit_install_zip = vita3k::ios::make_synthetic_install_zip(
+        cxa_atexit_self, cxa_atexit_self);
+    auto cxa_finalize_elf = libc_termination_elf;
+    write_value(cxa_finalize_elf, 260, synthetic_dso_handle);
+    write_value(cxa_finalize_elf, 372, cxa_finalize_nid);
+    const auto cxa_finalize_self = make_plain_self(cxa_finalize_elf);
+    const auto cxa_finalize_install_zip = vita3k::ios::make_synthetic_install_zip(
+        cxa_finalize_self, cxa_finalize_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -493,6 +535,11 @@ int main(int argc, char **argv) {
     if (m25_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 25 Thumb-2 register-family fixture.\n";
         return 78;
+    }
+    if (m26_install_zip.empty() || cxa_atexit_install_zip.empty()
+        || cxa_finalize_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 26 libc termination fixtures.\n";
+        return 83;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -621,6 +668,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 25 Thumb-2 register-family fixture.\n";
             return 79;
+        }
+    }
+    if (!emitted_m26_install_zip_fixture.empty()) {
+        if (!emitted_m26_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m26_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m26_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m26_install_zip.data()),
+            static_cast<std::streamsize>(m26_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 26 libc termination fixture.\n";
+            return 84;
         }
     }
 
@@ -963,6 +1023,88 @@ int main(int argc, char **argv) {
         return 82;
     }
 
+    const auto m26_archive_path = test_root / "milestone26-libc-termination.zip";
+    std::ofstream m26_archive_stream(m26_archive_path, std::ios::binary);
+    m26_archive_stream.write(reinterpret_cast<const char *>(m26_install_zip.data()),
+        static_cast<std::streamsize>(m26_install_zip.size()));
+    m26_archive_stream.close();
+    const auto m26_install = vita3k::ios::install_game_archive(m26_archive_path);
+    if (!m26_install.success || m26_install.file_count != 6) {
+        std::cerr << m26_install.detail << '\n';
+        return 85;
+    }
+    const auto libc_termination_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!libc_termination_prepared.selected || !libc_termination_prepared.loaded
+        || !libc_termination_prepared.module_start_from_export
+        || libc_termination_prepared.module_start_address != 0x81000061) {
+        std::cerr << libc_termination_prepared.detail << '\n';
+        return 86;
+    }
+    const auto libc_termination_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!libc_termination_boot.started || libc_termination_boot.exited
+        || !libc_termination_boot.returned || libc_termination_boot.instruction_count != 9
+        || libc_termination_boot.hle_dispatch_count != 1
+        || libc_termination_boot.last_hle_nid != aeabi_atexit_nid
+        || libc_termination_boot.libc_atexit_registration_count != 1
+        || libc_termination_boot.last_libc_atexit_object != synthetic_atexit_object
+        || libc_termination_boot.last_libc_atexit_destructor != synthetic_atexit_destructor
+        || libc_termination_boot.last_libc_atexit_dso != synthetic_dso_handle
+        || libc_termination_boot.return_value != 0
+        || libc_termination_boot.detail.find("Libc termination registrations=1") == std::string::npos) {
+        std::cerr << libc_termination_boot.detail << '\n';
+        return 87;
+    }
+
+    const auto cxa_atexit_archive_path = test_root / "milestone26-cxa-atexit.zip";
+    std::ofstream cxa_atexit_archive_stream(cxa_atexit_archive_path, std::ios::binary);
+    cxa_atexit_archive_stream.write(reinterpret_cast<const char *>(cxa_atexit_install_zip.data()),
+        static_cast<std::streamsize>(cxa_atexit_install_zip.size()));
+    cxa_atexit_archive_stream.close();
+    if (!vita3k::ios::install_game_archive(cxa_atexit_archive_path).success) {
+        return 88;
+    }
+    const auto cxa_atexit_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!cxa_atexit_prepared.loaded) {
+        std::cerr << cxa_atexit_prepared.detail << '\n';
+        return 89;
+    }
+    const auto cxa_atexit_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!cxa_atexit_boot.returned || cxa_atexit_boot.instruction_count != 9
+        || cxa_atexit_boot.hle_dispatch_count != 1
+        || cxa_atexit_boot.last_hle_nid != cxa_atexit_nid
+        || cxa_atexit_boot.libc_atexit_registration_count != 1
+        || cxa_atexit_boot.last_libc_atexit_object != synthetic_atexit_object
+        || cxa_atexit_boot.last_libc_atexit_destructor != synthetic_atexit_destructor
+        || cxa_atexit_boot.last_libc_atexit_dso != synthetic_dso_handle) {
+        std::cerr << cxa_atexit_boot.detail << '\n';
+        return 90;
+    }
+
+    const auto cxa_finalize_archive_path = test_root / "milestone26-cxa-finalize.zip";
+    std::ofstream cxa_finalize_archive_stream(cxa_finalize_archive_path, std::ios::binary);
+    cxa_finalize_archive_stream.write(reinterpret_cast<const char *>(cxa_finalize_install_zip.data()),
+        static_cast<std::streamsize>(cxa_finalize_install_zip.size()));
+    cxa_finalize_archive_stream.close();
+    if (!vita3k::ios::install_game_archive(cxa_finalize_archive_path).success) {
+        return 91;
+    }
+    const auto cxa_finalize_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!cxa_finalize_prepared.loaded) {
+        std::cerr << cxa_finalize_prepared.detail << '\n';
+        return 92;
+    }
+    const auto cxa_finalize_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!cxa_finalize_boot.returned || cxa_finalize_boot.instruction_count != 9
+        || cxa_finalize_boot.hle_dispatch_count != 1
+        || cxa_finalize_boot.last_hle_nid != cxa_finalize_nid
+        || cxa_finalize_boot.libc_finalize_call_count != 1
+        || cxa_finalize_boot.last_libc_finalize_dso != synthetic_dso_handle
+        || cxa_finalize_boot.return_value != 0
+        || cxa_finalize_boot.detail.find("Libc finalize calls=1") == std::string::npos) {
+        std::cerr << cxa_finalize_boot.detail << '\n';
+        return 93;
+    }
+
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
@@ -1065,6 +1207,10 @@ int main(int argc, char **argv) {
     if (!emitted_m25_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 25 Thumb-2 register-family fixture: "
                   << emitted_m25_install_zip_fixture << '\n';
+    }
+    if (!emitted_m26_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 26 libc termination fixture: "
+                  << emitted_m26_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

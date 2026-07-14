@@ -22,6 +22,12 @@ struct GuestThreadRunResult {
     std::uint32_t last_hle_nid = 0;
     std::uint32_t last_guest_pc = 0;
     std::uint32_t libc_dso_handle_main = 0;
+    std::size_t libc_atexit_registration_count = 0;
+    std::size_t libc_finalize_call_count = 0;
+    std::uint32_t last_libc_atexit_object = 0;
+    std::uint32_t last_libc_atexit_destructor = 0;
+    std::uint32_t last_libc_atexit_dso = 0;
+    std::uint32_t last_libc_finalize_dso = 0;
     std::uint32_t return_value = 0;
     std::string detail;
 };

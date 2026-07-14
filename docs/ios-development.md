@@ -194,6 +194,10 @@ Milestone 24 intentionally batches full instruction families. The interpreter im
 
 Milestone 25 implements Thumb-2 shifted-register scalar ALU/test operations and the move/immediate-shift aliases, including `RRX`, together with scaled register-offset signed/unsigned single-memory operations. The accepted Milestone 24 boundary was `EBAA 0202` (`SUB.W r2, r10, r2`) after 28 instructions and one HLE call. The CI artifact `milestone25-thumb2-register-families.zip` executes that exact subtraction after the prior runtime sequence and returns after ten instructions. Device diagnostics now include sixteen look-ahead halfwords.
 
+## Milestone 26 libc termination registration
+
+The accepted Milestone 25 device run reached `__aeabi_atexit` after 72 instructions and one prior HLE call. Milestone 26 binds `__aeabi_atexit`, `__cxa_atexit`, and `__cxa_finalize`, preserves normalized registration/finalization arguments in the boot result, and returns the upstream-compatible zero result. It intentionally does not invoke guest destructor callbacks. The CI artifact `milestone26-libc-termination.zip` reproduces the registration path and returns after nine instructions; portable tests also cover the alternate `__cxa_atexit` argument order and finalize bookkeeping.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

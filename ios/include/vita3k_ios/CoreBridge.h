@@ -54,6 +54,12 @@ struct TitleBootResult {
     std::uint32_t last_hle_nid{};
     std::uint32_t last_guest_pc{};
     std::uint32_t libc_dso_handle_main{};
+    std::size_t libc_atexit_registration_count{};
+    std::size_t libc_finalize_call_count{};
+    std::uint32_t last_libc_atexit_object{};
+    std::uint32_t last_libc_atexit_destructor{};
+    std::uint32_t last_libc_atexit_dso{};
+    std::uint32_t last_libc_finalize_dso{};
     std::int32_t exit_status{};
     std::uint32_t return_value{};
     std::string title_id;

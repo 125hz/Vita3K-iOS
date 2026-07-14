@@ -1478,6 +1478,12 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.last_hle_nid = thread.last_hle_nid;
         result.last_guest_pc = thread.last_guest_pc;
         result.libc_dso_handle_main = thread.libc_dso_handle_main;
+        result.libc_atexit_registration_count = thread.libc_atexit_registration_count;
+        result.libc_finalize_call_count = thread.libc_finalize_call_count;
+        result.last_libc_atexit_object = thread.last_libc_atexit_object;
+        result.last_libc_atexit_destructor = thread.last_libc_atexit_destructor;
+        result.last_libc_atexit_dso = thread.last_libc_atexit_dso;
+        result.last_libc_finalize_dso = thread.last_libc_finalize_dso;
         result.exit_status = thread.exit_status;
         result.return_value = thread.return_value;
         result.detail = thread.detail;

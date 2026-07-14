@@ -264,3 +264,16 @@ This milestone also adds scaled register-offset byte, halfword, signed-byte, sig
 4. Share the complete next boundary and all sixteen look-ahead halfwords. Execution must advance through `SUB.W` at `0x810175EA`, preserve the libc HLE/DSO state, and then stop honestly at the next CPU, memory, HLE, return, or instruction-ceiling boundary.
 
 The Actions artifact includes `milestone25-thumb2-register-families.zip`. Its legal synthetic title crosses the libc call and Milestone 24 sequence, executes the exact captured `SUB.W`, and returns after ten instructions. Portable tests additionally cover shifted flags, rotate/`RRX`, arithmetic carry/overflow behavior, scaled register memory, sign extension, invalid encodings, and overflow.
+
+## Milestone 26 libc termination-registration cluster
+
+The accepted Milestone 25 Amagami attempt advanced from 28 to 72 instructions with the DSO handle intact, then reached `__aeabi_atexit` (NID `0xEDC939E1`) through the canonical inline import trampoline. The captured call passed object `0x810DFB24`, Thumb destructor `0x8107CBE5`, and DSO handle `0x812C7690` in `r0`-`r2`.
+
+Milestone 26 binds the complete closely related `__aeabi_atexit`, `__cxa_atexit`, and `__cxa_finalize` trio whenever the title imports them. Both registration ABIs are normalized into object/destructor/DSO records, return zero, and preserve the latest values in the boot diagnostic. Finalization records its DSO request but deliberately does not invoke guest destructor callbacks: upstream Vita3K's current handlers are zero-return compatibility stubs, and this bounded runner cannot safely re-enter arbitrary guest callbacks from HLE yet.
+
+1. Install the Milestone 26 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (256 Instructions)** once.
+4. Share the complete next boundary. It should exceed 72 instructions, report two successful HLE calls and `Libc termination registrations=1` with the three captured values, then stop honestly at the next CPU, memory, HLE, return, or instruction-ceiling boundary.
+
+The Actions artifact includes `milestone26-libc-termination.zip`. Its legal synthetic title dispatches `__aeabi_atexit`, records object `0x81000240`, destructor `0x81000301`, and DSO `0x81000200`, then returns after nine instructions. Portable regressions separately exercise the `__cxa_atexit` argument order and `__cxa_finalize` diagnostic state.

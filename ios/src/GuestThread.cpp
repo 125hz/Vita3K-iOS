@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string_view>
+#include <vector>
 
 namespace vita3k::ios {
 namespace {
@@ -16,7 +17,16 @@ namespace {
 constexpr std::uint32_t nid_sce_kernel_get_thread_id = 0x0FB972F9;
 constexpr std::uint32_t nid_sce_kernel_exit_thread = 0x0C8A38E1;
 constexpr std::uint32_t nid_cxa_set_dso_handle_main = 0xBFE02B3A;
+constexpr std::uint32_t nid_aeabi_atexit = 0xEDC939E1;
+constexpr std::uint32_t nid_cxa_atexit = 0x33B83B70;
+constexpr std::uint32_t nid_cxa_finalize = 0xB538BF48;
 constexpr std::int32_t first_diagnostic_thread_id = 0x10001;
+
+struct LibcAtexitRegistration {
+    std::uint32_t object = 0;
+    std::uint32_t destructor = 0;
+    std::uint32_t dso = 0;
+};
 
 bool contains_nid(std::span<const std::uint32_t> nids, std::uint32_t expected) {
     return std::ranges::find(nids, expected) != nids.end();
@@ -56,6 +66,9 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     }
     const bool imports_exit_thread = contains_nid(imported_nids, nid_sce_kernel_exit_thread);
     const bool imports_cxa_set_dso_handle_main = contains_nid(imported_nids, nid_cxa_set_dso_handle_main);
+    const bool imports_aeabi_atexit = contains_nid(imported_nids, nid_aeabi_atexit);
+    const bool imports_cxa_atexit = contains_nid(imported_nids, nid_cxa_atexit);
+    const bool imports_cxa_finalize = contains_nid(imported_nids, nid_cxa_finalize);
     if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" || (imports_exit_thread && std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
         return result;
@@ -64,9 +77,16 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         result.detail = "The upstream Vita NID database did not match the libc runtime binding.";
         return result;
     }
+    if ((imports_aeabi_atexit && std::string_view(import_name(nid_aeabi_atexit)) != "__aeabi_atexit")
+        || (imports_cxa_atexit && std::string_view(import_name(nid_cxa_atexit)) != "__cxa_atexit")
+        || (imports_cxa_finalize && std::string_view(import_name(nid_cxa_finalize)) != "__cxa_finalize")) {
+        result.detail = "The upstream Vita NID database did not match the libc termination bindings.";
+        return result;
+    }
 
     HLEDispatcher dispatcher;
     bool exit_requested = false;
+    std::vector<LibcAtexitRegistration> atexit_registrations;
     result.hle_dispatch_count = 0;
     const bool get_id_bound = dispatcher.bind(nid_sce_kernel_get_thread_id,
         "sceKernelGetThreadId", [&](ArmCpuState &) -> std::int32_t {
@@ -94,8 +114,58 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                 return 0;
             });
     }
-    const auto expected_binding_count = 1u + static_cast<std::size_t>(imports_exit_thread) + static_cast<std::size_t>(imports_cxa_set_dso_handle_main);
-    if (!get_id_bound || !exit_bound || !dso_handle_bound || dispatcher.binding_count() != expected_binding_count) {
+    const auto record_atexit_registration = [&](std::uint32_t object,
+                                                std::uint32_t destructor,
+                                                std::uint32_t dso) -> std::int32_t {
+        atexit_registrations.push_back({
+            .object = object,
+            .destructor = destructor,
+            .dso = dso
+        });
+        result.libc_atexit_registration_count = atexit_registrations.size();
+        result.last_libc_atexit_object = object;
+        result.last_libc_atexit_destructor = destructor;
+        result.last_libc_atexit_dso = dso;
+        return 0;
+    };
+    bool aeabi_atexit_bound = true;
+    if (imports_aeabi_atexit) {
+        aeabi_atexit_bound = dispatcher.bind(nid_aeabi_atexit,
+            "__aeabi_atexit", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                return record_atexit_registration(
+                    state.registers[0], state.registers[1], state.registers[2]);
+            });
+    }
+    bool cxa_atexit_bound = true;
+    if (imports_cxa_atexit) {
+        cxa_atexit_bound = dispatcher.bind(nid_cxa_atexit,
+            "__cxa_atexit", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                return record_atexit_registration(
+                    state.registers[1], state.registers[0], state.registers[2]);
+            });
+    }
+    bool cxa_finalize_bound = true;
+    if (imports_cxa_finalize) {
+        cxa_finalize_bound = dispatcher.bind(nid_cxa_finalize,
+            "__cxa_finalize", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.libc_finalize_call_count;
+                result.last_libc_finalize_dso = state.registers[0];
+                // Upstream Vita3K currently returns zero here without invoking guest callbacks.
+                return 0;
+            });
+    }
+    const auto expected_binding_count = 1u
+        + static_cast<std::size_t>(imports_exit_thread)
+        + static_cast<std::size_t>(imports_cxa_set_dso_handle_main)
+        + static_cast<std::size_t>(imports_aeabi_atexit)
+        + static_cast<std::size_t>(imports_cxa_atexit)
+        + static_cast<std::size_t>(imports_cxa_finalize);
+    if (!get_id_bound || !exit_bound || !dso_handle_bound || !aeabi_atexit_bound
+        || !cxa_atexit_bound || !cxa_finalize_bound
+        || dispatcher.binding_count() != expected_binding_count) {
         result.detail = "The minimal kernel/runtime HLE bindings could not be registered.";
         return result;
     }
@@ -137,6 +207,16 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     }
     if (result.libc_dso_handle_main != 0) {
         detail << " Runtime DSO handle=" << nid_hex(result.libc_dso_handle_main) << ".";
+    }
+    if (result.libc_atexit_registration_count != 0) {
+        detail << " Libc termination registrations=" << result.libc_atexit_registration_count
+               << "; last object=" << nid_hex(result.last_libc_atexit_object)
+               << ", destructor=" << nid_hex(result.last_libc_atexit_destructor)
+               << ", DSO=" << nid_hex(result.last_libc_atexit_dso) << ".";
+    }
+    if (result.libc_finalize_call_count != 0) {
+        detail << " Libc finalize calls=" << result.libc_finalize_call_count
+               << "; last DSO=" << nid_hex(result.last_libc_finalize_dso) << ".";
     }
     result.detail = detail.str();
     return result;

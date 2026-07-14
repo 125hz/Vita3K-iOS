@@ -60,6 +60,10 @@ The bounded interpreter now accepts the complete modified-immediate ALU family a
 
 The bounded interpreter now accepts the scalar logical, arithmetic, test, move, and immediate-shift portions of Thumb-2 data processing with a shifted register, including exact shift carry and arithmetic flags. It also accepts scaled register-offset byte/halfword/word loads and stores with signed load extension. Amagami's exact `EBAA 0202` subtraction is covered alongside negative tests for `PKH`, invalid SP/PC operands, reserved memory suffixes, address overflow, and guest faults. The next unsupported boundary includes sixteen following halfwords to accelerate coherent-family selection without skipping guest execution.
 
+## Milestone 26 libc termination registration
+
+The bounded HLE surface now clears Amagami's captured `__aeabi_atexit` boundary and proactively covers the ABI-equivalent `__cxa_atexit` plus `__cxa_finalize`. Registration calls retain normalized object, destructor, and DSO values for diagnostics while returning upstream's current zero result. Finalization is observable but does not execute guest callbacks, matching upstream Vita3K's present stub rather than inventing teardown behavior. The legal `milestone26-libc-termination.zip` fixture proves import dispatch, argument retention, the return value, and a clean module return; separate portable cases verify both registration argument orders and finalize state.
+
 ## Firmware packages
 
 Do not commit firmware PUP files to this public repository or upload them as Actions artifacts. The future iOS installer should select user-owned files locally and write only extracted virtual-filesystem content inside the app sandbox. Upstream `install_pup` currently depends on the packages/crypto layers, OpenSSL, vita-toolchain key handling, FAT/exFAT extraction, miniz, and psvpfsparser; those dependencies are not part of the current iOS core slice. `fontpkg.pup`, `preinstall.pup`, and the system update PUP should therefore remain local until that bounded installer milestone is implemented.
