@@ -12,7 +12,8 @@ An experimental iOS build pipeline is documented in
 [`ios/README.md`](ios/README.md). It produces an unsigned UIKit/Metal IPA,
 links the first dependency-free Vita3K core slice, completes one deliberately
 tiny VitaSDK program, presents one core-owned Metal diagnostic frame, and
-captures normalized UIKit touch plus GameController state. It
+captures normalized UIKit touch plus GameController state. The iOS core also
+links Vita3K's upstream PARAM.SFO parser to identify Vita application metadata. It
 does not yet execute general Vita software or render Vita graphics. The remaining porting blockers are tracked
 in [`ios/PORTING.md`](ios/PORTING.md).
 

@@ -15,6 +15,11 @@ struct ImportedArtifact {
     std::string filename;
     std::uintmax_t size;
     std::string kind;
+    bool app_metadata_parsed;
+    std::string app_title_id;
+    std::string app_title;
+    std::string app_category;
+    std::string app_version;
     bool structurally_valid;
     std::size_t load_segment_count;
     bool load_attempted;
@@ -48,6 +53,7 @@ struct ImportedArtifact {
 struct CoreStatus {
     bool linked;
     bool self_tests_passed;
+    bool upstream_metadata_ready;
     bool storage_ready;
     bool guest_memory_ready;
     bool segment_mapping_ready;

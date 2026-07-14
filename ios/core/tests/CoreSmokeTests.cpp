@@ -1,6 +1,7 @@
 #include <vita3k_ios/CoreBridge.h>
 #include <vita3k_ios/HostDisplay.h>
 #include <vita3k_ios/HostInput.h>
+#include <vita3k_ios/VitaAppMetadata.h>
 
 #include <array>
 #include <cstdint>
@@ -89,17 +90,40 @@ int main(int argc, char **argv) {
         return 18;
     }
 
+    const auto sfo_fixture = vita3k::ios::make_synthetic_param_sfo(
+        "M13TEST01", "Vita3K iOS upstream metadata probe");
+    const auto parsed_sfo = vita3k::ios::parse_vita_app_metadata(sfo_fixture);
+    if (!parsed_sfo.parsed || parsed_sfo.title_id != "M13TEST01" ||
+        parsed_sfo.title != "Vita3K iOS upstream metadata probe" ||
+        parsed_sfo.category != "gd" || parsed_sfo.app_version != "01.00") {
+        std::cerr << parsed_sfo.detail << '\n';
+        return 22;
+    }
+    const std::array<std::uint8_t, 20> malformed_sfo{
+        0x00, 0x50, 0x53, 0x46, 0x01, 0x01, 0x00, 0x00,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0x7F
+    };
+    if (vita3k::ios::parse_vita_app_metadata(malformed_sfo).parsed) {
+        std::cerr << "The upstream SFO parser accepted malformed table offsets.\n";
+        return 23;
+    }
+
     std::filesystem::path emitted_fixture;
+    std::filesystem::path emitted_sfo_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--emit-fixture" && index + 1 < argc) {
             emitted_fixture = argv[++index];
+        } else if (argument == "--emit-sfo-fixture" && index + 1 < argc) {
+            emitted_sfo_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
             std::cerr << "Usage: vita3k_ios_core_smoke_tests "
-                         "[--emit-fixture <path>] [--verify-vitasdk <path>]\n";
+                         "[--emit-fixture <path>] [--emit-sfo-fixture <path>] "
+                         "[--verify-vitasdk <path>]\n";
             return 64;
         }
     }
@@ -108,7 +132,8 @@ int main(int argc, char **argv) {
     std::filesystem::remove_all(test_root, error);
 
     const auto status = vita3k::ios::initialize_core(test_root);
-    if (!status.linked || !status.self_tests_passed || !status.storage_ready ||
+    if (!status.linked || !status.self_tests_passed || !status.upstream_metadata_ready ||
+        !status.storage_ready ||
         !status.guest_memory_ready || !status.segment_mapping_ready ||
         !status.loader_pipeline_ready || !status.import_binding_ready ||
         !status.arm_execution_ready ||
@@ -117,6 +142,7 @@ int main(int argc, char **argv) {
         status.summary.find("Renderer: waiting for MTKView host") == std::string::npos ||
         status.input_surface_attached || status.input_touch_received ||
         status.summary.find("Input: waiting for UIKit touch surface") == std::string::npos ||
+        status.summary.find("Upstream app metadata: passed") == std::string::npos ||
         status.arm_test_instruction_count != 7 || status.hle_test_dispatch_count != 1 ||
         status.thread_test_instruction_count != 12 ||
         status.thread_test_hle_dispatch_count != 2 || status.thread_test_exit_status != 42 ||
@@ -244,6 +270,19 @@ int main(int argc, char **argv) {
             return 4;
         }
     }
+    if (!emitted_sfo_fixture.empty()) {
+        if (!emitted_sfo_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(emitted_sfo_fixture.parent_path(), error);
+        }
+        std::ofstream emitted_sfo_stream(emitted_sfo_fixture, std::ios::binary);
+        emitted_sfo_stream.write(reinterpret_cast<const char *>(sfo_fixture.data()),
+            static_cast<std::streamsize>(sfo_fixture.size()));
+        if (error || !emitted_sfo_stream) {
+            std::cerr << "Could not emit the Milestone 13 SFO fixture: "
+                      << error.message() << '\n';
+            return 24;
+        }
+    }
 
     const auto rescanned = vita3k::ios::rescan_imports();
     if (rescanned.imported_artifacts.size() != 1 ||
@@ -311,6 +350,33 @@ int main(int argc, char **argv) {
         std::cout << "Verified real VitaSDK diagnostic:\n" << real_status.summary << '\n';
     }
 
+    const auto imports = test_root / "Vita3K" / "imports";
+    std::filesystem::remove_all(imports, error);
+    std::filesystem::create_directories(imports, error);
+    const auto imported_sfo = imports / "milestone13-synthetic-param.sfo";
+    std::ofstream imported_sfo_stream(imported_sfo, std::ios::binary);
+    imported_sfo_stream.write(reinterpret_cast<const char *>(sfo_fixture.data()),
+        static_cast<std::streamsize>(sfo_fixture.size()));
+    imported_sfo_stream.close();
+    if (error || !imported_sfo_stream) {
+        std::cerr << "Could not stage the Milestone 13 SFO fixture: "
+                  << error.message() << '\n';
+        return 25;
+    }
+    const auto sfo_status = vita3k::ios::rescan_imports();
+    if (sfo_status.imported_artifacts.size() != 1 ||
+        sfo_status.imported_artifacts.front().kind != "PARAM.SFO" ||
+        !sfo_status.imported_artifacts.front().app_metadata_parsed ||
+        sfo_status.imported_artifacts.front().app_title_id != "M13TEST01" ||
+        sfo_status.imported_artifacts.front().app_title !=
+            "Vita3K iOS upstream metadata probe" ||
+        sfo_status.imported_artifacts.front().app_category != "gd" ||
+        sfo_status.imported_artifacts.front().app_version != "01.00" ||
+        sfo_status.summary.find("title ID M13TEST01") == std::string::npos) {
+        std::cerr << sfo_status.summary << '\n';
+        return 26;
+    }
+
     if (!vita3k::ios::attach_host_display(1280, 720, display_error)) {
         std::cerr << display_error << '\n';
         return 12;
@@ -360,6 +426,10 @@ int main(int argc, char **argv) {
     std::filesystem::remove_all(test_root, error);
     if (!emitted_fixture.empty()) {
         std::cout << "Emitted legal Milestone 9 fixture: " << emitted_fixture << '\n';
+    }
+    if (!emitted_sfo_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 13 SFO fixture: "
+                  << emitted_sfo_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

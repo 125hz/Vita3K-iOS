@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slice of upstream Vita3K code. It now loads and completes the `module_start` of a deliberately tiny program built by the real VitaSDK toolchain, clears and presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet execute general Vita homebrew, render Vita graphics, route input to guest services, or run games.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It now loads and completes the `module_start` of a deliberately tiny program built by the real VitaSDK toolchain, clears and presents one core-owned Metal diagnostic frame, captures normalized UIKit/GameController input, and uses Vita3K's real package/SFO parser to identify application metadata. It does **not** yet install VPKs, extract commercial SELF payloads, execute general Vita homebrew, render Vita graphics, route input to guest services, or run games.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -37,6 +37,8 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - renderer status that changes to `passed` only after the command buffer completes on device
 - a portable input seam that normalizes UIKit touch positions and bounds controller state
 - a GameController adapter for sticks, D-pad, face buttons, shoulders, and triggers
+- Vita3K's upstream `packages/sfo.cpp`, refactored to build without Boost/fmt and hardened against malformed table offsets
+- imported `param.sfo` reporting for title ID, title, category, and application version
 - a narrow C++ `CoreBridge` seam for additional core integration
 - no signing credentials or provisioning profiles in CI
 
@@ -73,6 +75,16 @@ This frame contains no Vita display output. It proves only that the portable cor
 
 The adapter does not yet implement Vita `SceCtrl` or touch HLE. It proves that real device input reaches a portable core-owned state object without depending on UIKit or GameController types outside the iOS frontend.
 
+## Milestone 13 upstream metadata test
+
+1. Install and open the Milestone 13 IPA.
+2. Confirm `Upstream app metadata: passed (Vita3K packages/SFO parser linked)`.
+3. Copy `milestone13-synthetic-param.sfo` from the Actions artifact into the app's `Vita3K/imports` folder.
+4. Tap **Rescan Imports** and confirm `PARAM.SFO`, `title ID M13TEST01`, and `title Vita3K iOS upstream metadata probe` appear.
+5. Optionally copy only `sce_sys/param.sfo` from a user-owned Amagami dump. It should report title ID `PCSG00291`.
+
+This is application recognition, not installation or execution. Do not upload game dumps, firmware, keys, or extracted copyrighted assets to the public repository or Actions.
+
 ## Build contract
 
 The iOS shell is selected before upstream desktop dependencies are configured:
@@ -91,10 +103,12 @@ cmake --build build-ios --config Release --target Vita3KiOS -- \
 
 This command requires macOS and Xcode; the GitHub Actions workflow runs it remotely for Windows contributors.
 
-`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map fixed-address `ET_SCE_EXEC` files and preferred-address `ET_SCE_RELEXEC` VELFs, apply checked relocations, validate module metadata, inventory import/export NIDs, rewrite ARM function stubs, execute the narrow compiler path used by the Milestone 10 program, present one diagnostic Metal frame, and capture bounded host input. General relocatable placement, SELF payload extraction, broader Thumb-2, thread scheduling, production HLE coverage, the Vita renderer, audio, and guest input services remain tracked in `PORTING.md`.
+`VITA3K_IOS_LINK_CORE=ON` is now required. The port can parse Vita application SFO metadata using upstream code, reserve guest address space, map fixed-address `ET_SCE_EXEC` files and preferred-address `ET_SCE_RELEXEC` VELFs, apply checked relocations, validate module metadata, inventory import/export NIDs, rewrite ARM function stubs, execute the narrow compiler path used by the Milestone 10 program, present one diagnostic Metal frame, and capture bounded host input. VPK installation, Vita VFS mounting, general relocatable placement, SELF payload extraction, broader Thumb-2, thread scheduling, production HLE coverage, the Vita renderer, audio, and guest input services remain tracked in `PORTING.md`.
 
 Milestone 10 preserves the synthetic tests and adds an independently compiled VitaSDK VELF. The loader maps that VELF at its preferred addresses, applies its real compact relocation stream, parses its genuine module/import tables, rebinds `sceKernelGetThreadId`, and completes `module_start` through six guest instructions. This is intentionally not advertised as a general ARMv7 interpreter: conditional execution, most 32-bit Thumb-2, most addressing modes, floating point/NEON, exceptions, atomics, and most data-processing instructions remain unsupported. Relocatable segments are not yet placed at alternative addresses if their preferred ranges are unavailable, and SELF containers remain probe-only.
 
 Milestone 11 adds only the host-display boundary and the first Metal clear/present. It does not link the upstream Vulkan renderer, decode GXM commands, translate shaders, or display guest output.
 
 Milestone 12 adds only the host-input boundary. UIKit touch and GameController samples are retained for diagnostics, but no Vita guest API can read them yet.
+
+Milestone 13 is the first package-layer extraction from upstream: it compiles the real SFO parser into the iOS core and exposes application metadata, while deliberately leaving package installation and executable loading for later milestones.

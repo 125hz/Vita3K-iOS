@@ -17,7 +17,9 @@ add_library(vita3k_ios_core STATIC
     ../src/ImportBinder.cpp
     ../src/ModuleTableParser.cpp
     ../src/RelocationEngine.cpp
+    ../src/VitaAppMetadata.cpp
     ../../vita3k/nids/src/nids.cpp
+    ../../vita3k/packages/src/sfo.cpp
     ../../vita3k/util/src/arm.cpp
 )
 
@@ -28,6 +30,7 @@ target_include_directories(vita3k_ios_core
         ../include
     PRIVATE
         ../../vita3k/nids/include
+        ../../vita3k/packages/include
         ../../vita3k/util/include
 )
 if(MSVC)

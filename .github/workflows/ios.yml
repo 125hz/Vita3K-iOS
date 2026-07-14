@@ -96,6 +96,7 @@ jobs:
           mkdir -p artifacts
           ./build-core-tests/vita3k_ios_core_smoke_tests \
             --emit-fixture artifacts/milestone9-thumb-homebrew.elf \
+            --emit-sfo-fixture artifacts/milestone13-synthetic-param.sfo \
             --verify-vitasdk artifacts/milestone10-vitasdk-homebrew.velf
 
       - name: Configure iOS application and core target
@@ -135,5 +136,6 @@ jobs:
             artifacts/milestone9-thumb-homebrew.elf
             artifacts/milestone10-vitasdk-homebrew.velf
             artifacts/milestone10-vitasdk-homebrew.self
+            artifacts/milestone13-synthetic-param.sfo
           if-no-files-found: error
           retention-days: 14

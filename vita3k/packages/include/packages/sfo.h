@@ -25,8 +25,6 @@
 
 #pragma once
 
-#include <io/vfs.h>
-
 #include <cstdint>
 #include <string>
 #include <utility> // pair
@@ -94,8 +92,8 @@ bool load(SfoFile &sfile, const std::vector<uint8_t> &content);
  *
  * @param app_info App information struct to store the information retrieved from the `.sfo` file
  specified in `param`
- * @param param File buffer pointing to the `param.sfo` file to parse
+ * @param param Byte buffer containing the `param.sfo` file to parse
  * @param sys_lang System language. It is used to get translated strings from `param.sfo`
  */
-void get_param_info(sfo::SfoAppInfo &app_info, const vfs::FileBuffer &param, int sys_lang);
+void get_param_info(sfo::SfoAppInfo &app_info, const std::vector<uint8_t> &param, int sys_lang);
 } // namespace sfo

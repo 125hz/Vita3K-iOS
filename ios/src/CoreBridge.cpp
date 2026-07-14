@@ -10,6 +10,7 @@
 #include <vita3k_ios/ImportBinder.h>
 #include <vita3k_ios/ModuleTableParser.h>
 #include <vita3k_ios/RelocationEngine.h>
+#include <vita3k_ios/VitaAppMetadata.h>
 
 #include <nids/functions.h>
 #include <util/arm.h>
@@ -46,6 +47,15 @@ bool run_upstream_self_tests() {
     const bool nid_database_ok = std::string_view(import_name(0x210C0046u)) == "__sceAppMgrGetAppState";
     const bool unknown_nid_ok = std::string_view(import_name(0xFFFFFFFFu)) == "UNRECOGNISED";
     return arm_encoder_ok && thumb_encoder_ok && nid_database_ok && unknown_nid_ok;
+}
+
+bool run_upstream_metadata_test() {
+    const auto fixture = make_synthetic_param_sfo(
+        "M13TEST01", "Vita3K iOS upstream metadata probe");
+    const auto metadata = parse_vita_app_metadata(fixture);
+    return metadata.parsed && metadata.title_id == "M13TEST01" &&
+        metadata.title == "Vita3K iOS upstream metadata probe" &&
+        metadata.category == "gd" && metadata.app_version == "01.00";
 }
 
 void update_renderer_status() {
@@ -422,6 +432,10 @@ void update_status_from_storage() {
         std::error_code error;
         const auto size = entry.file_size(error);
         const auto probe = probe_artifact(entry.path());
+        VitaAppMetadata metadata;
+        if (probe.kind == "PARAM.SFO" && probe.recognized) {
+            metadata = parse_vita_app_metadata(entry.path());
+        }
         PlainElfLoadResult load;
         GuestThreadRunResult thread;
         if (loaded_filename.empty() && guest_memory && core_status.loader_pipeline_ready &&
@@ -437,6 +451,9 @@ void update_status_from_storage() {
         }
 
         std::string detail = probe.detail;
+        if (probe.kind == "PARAM.SFO" && probe.recognized) {
+            detail += " " + metadata.detail;
+        }
         if (load.attempted) {
             detail += " Loader: " + load.detail;
         }
@@ -447,6 +464,11 @@ void update_status_from_storage() {
             .filename = entry.path().filename().string(),
             .size = error ? 0 : size,
             .kind = probe.kind,
+            .app_metadata_parsed = metadata.parsed,
+            .app_title_id = std::move(metadata.title_id),
+            .app_title = std::move(metadata.title),
+            .app_category = std::move(metadata.category),
+            .app_version = std::move(metadata.app_version),
             .structurally_valid = probe.structurally_valid,
             .load_segment_count = probe.load_segments.size(),
             .load_attempted = load.attempted,
@@ -481,6 +503,9 @@ void update_status_from_storage() {
     std::ostringstream summary;
     summary << "Core slice: ARM encoder + Vita NID database\n"
             << "Self-tests: " << (core_status.self_tests_passed ? "passed" : "FAILED") << "\n"
+            << "Upstream app metadata: " << (core_status.upstream_metadata_ready
+                ? "passed (Vita3K packages/SFO parser linked)"
+                : "FAILED") << "\n"
             << "Guest memory: " << (core_status.guest_memory_ready ? "ready" : "FAILED");
     if (core_status.guest_memory_ready) {
         summary << " (" << (core_status.guest_memory_size >> 30) << " GiB reserved, "
@@ -523,7 +548,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: bring up bounded host audio, then connect input/audio services to guest HLE. General Vita homebrew and games are not active yet.";
+    summary << "\n\nNext: extract upstream Vita VFS and package installation dependencies, then connect SELF loading. General Vita homebrew and games are not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
@@ -539,6 +564,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     host_display = HostDisplay{};
     host_input = HostInput{};
     core_status.self_tests_passed = run_upstream_self_tests();
+    core_status.upstream_metadata_ready = run_upstream_metadata_test();
     guest_memory = std::make_unique<GuestMemory>();
     std::string memory_error;
     constexpr std::uint64_t vita_address_space_size = 1ULL << 32;

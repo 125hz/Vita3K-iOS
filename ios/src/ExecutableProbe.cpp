@@ -204,7 +204,7 @@ ExecutableProbeResult probe_artifact(const std::filesystem::path &path) {
             .kind = "PARAM.SFO",
             .recognized = true,
             .structurally_valid = file_size >= 20,
-            .detail = file_size >= 20 ? "PSF metadata recognized; metadata parsing is not connected yet."
+            .detail = file_size >= 20 ? "PSF metadata recognized; Vita3K upstream parsing is connected."
                                       : "PSF header is truncated."
         };
     }
