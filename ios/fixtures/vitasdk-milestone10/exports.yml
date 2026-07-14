@@ -1,4 +1,4 @@
-milestone10_vitasdk_homebrew:
+m10_homebrew:
   attributes: 0
   process_image: true
   imagemodule: false
