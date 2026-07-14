@@ -6,6 +6,7 @@
 #include <vita3k_ios/GuestThread.h>
 #include <vita3k_ios/HostDisplay.h>
 #include <vita3k_ios/HostFilesystem.h>
+#include <vita3k_ios/HostInput.h>
 #include <vita3k_ios/ImportBinder.h>
 #include <vita3k_ios/ModuleTableParser.h>
 #include <vita3k_ios/RelocationEngine.h>
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -30,6 +32,7 @@ std::mutex core_mutex;
 HostStorage host_storage;
 std::unique_ptr<GuestMemory> guest_memory;
 HostDisplay host_display;
+HostInput host_input;
 CoreStatus core_status{
     .linked = true,
     .self_tests_passed = false,
@@ -68,6 +71,51 @@ void update_renderer_status() {
         line << "ready (Metal host attached)";
     } else {
         line << "waiting for MTKView host";
+    }
+    const auto storage = core_status.summary.find("\nStorage:");
+    core_status.summary.insert(storage == std::string::npos ? core_status.summary.size() : storage,
+        line.str());
+}
+
+void update_input_status() {
+    const auto input = host_input.status();
+    core_status.input_surface_attached = input.touch_surface_attached;
+    core_status.input_touch_received = input.touch_sample_received;
+    core_status.input_controller_connected = input.controller_connected;
+    core_status.input_controller_received = input.controller_sample_received;
+    core_status.input_touch_sample_count = input.touch_sample_count;
+    core_status.input_controller_sample_count = input.controller_sample_count;
+    core_status.input_last_touch_x = input.last_touch_x;
+    core_status.input_last_touch_y = input.last_touch_y;
+
+    const auto marker = core_status.summary.find("\nInput:");
+    if (marker != std::string::npos) {
+        const auto end = core_status.summary.find('\n', marker + 1);
+        core_status.summary.erase(marker,
+            end == std::string::npos ? std::string::npos : end - marker);
+    }
+
+    std::ostringstream line;
+    line << "\nInput: ";
+    if (!input.touch_surface_attached) {
+        line << "waiting for UIKit touch surface";
+    } else if (!input.touch_sample_received && !input.controller_sample_received) {
+        line << "ready (tap the blue background; controller "
+             << (input.controller_connected ? "connected" : "waiting") << ")";
+    } else {
+        line << "passed (" << input.touch_sample_count << " touch samples";
+        if (input.touch_sample_received) {
+            line << "; last x=" << std::fixed << std::setprecision(3) << input.last_touch_x
+                 << " y=" << input.last_touch_y;
+        }
+        line << "; controller ";
+        if (input.controller_sample_received) {
+            line << input.controller_sample_count << " samples/"
+                 << (input.controller_connected ? "connected" : "disconnected");
+        } else {
+            line << (input.controller_connected ? "connected" : "waiting");
+        }
+        line << ")";
     }
     const auto storage = core_status.summary.find("\nStorage:");
     core_status.summary.insert(storage == std::string::npos ? core_status.summary.size() : storage,
@@ -475,12 +523,13 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: add controller and touch adapters, then bring up bounded audio. General Vita homebrew and games are not active yet.";
+    summary << "\n\nNext: bring up bounded host audio, then connect input/audio services to guest HLE. General Vita homebrew and games are not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
     core_status.summary = summary.str();
     update_renderer_status();
+    update_input_status();
 }
 
 } // namespace
@@ -488,6 +537,7 @@ void update_status_from_storage() {
 CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     std::lock_guard lock(core_mutex);
     host_display = HostDisplay{};
+    host_input = HostInput{};
     core_status.self_tests_passed = run_upstream_self_tests();
     guest_memory = std::make_unique<GuestMemory>();
     std::string memory_error;
@@ -562,6 +612,34 @@ bool complete_host_display_frame(std::uint64_t identifier, bool presented,
         std::move(detail), error);
     update_renderer_status();
     return completed;
+}
+
+bool attach_host_input_surface(double width, double height, std::string &error) {
+    std::lock_guard lock(core_mutex);
+    const bool attached = host_input.attach_touch_surface(width, height, error);
+    update_input_status();
+    return attached;
+}
+
+bool submit_host_touch(std::uint64_t identifier, double x, double y, HostTouchPhase phase,
+    std::string &error) {
+    std::lock_guard lock(core_mutex);
+    const bool submitted = host_input.submit_touch(identifier, x, y, phase, error);
+    update_input_status();
+    return submitted;
+}
+
+void set_host_controller_connected(bool connected) {
+    std::lock_guard lock(core_mutex);
+    host_input.set_controller_connected(connected);
+    update_input_status();
+}
+
+bool submit_host_controller(HostControllerSample sample, std::string &error) {
+    std::lock_guard lock(core_mutex);
+    const bool submitted = host_input.submit_controller(sample, error);
+    update_input_status();
+    return submitted;
 }
 
 } // namespace vita3k::ios

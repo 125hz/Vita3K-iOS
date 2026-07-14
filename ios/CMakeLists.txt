@@ -13,6 +13,7 @@ add_subdirectory(core)
 
 add_executable(Vita3KiOS MACOSX_BUNDLE
     src/AppDelegate.mm
+    src/IOSInputAdapter.mm
     src/IOSLogger.mm
     src/IOSMetalRenderer.mm
     src/main.mm
@@ -30,6 +31,7 @@ target_link_libraries(Vita3KiOS PRIVATE
     vita3k_ios_core
     "-framework CoreGraphics"
     "-framework Foundation"
+    "-framework GameController"
     "-framework Metal"
     "-framework MetalKit"
     "-framework UIKit"

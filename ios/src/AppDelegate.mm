@@ -2,11 +2,13 @@
 #import <UIKit/UIKit.h>
 
 #include <vita3k_ios/CoreBridge.h>
+#import <vita3k_ios/IOSInputAdapter.h>
 #include <vita3k_ios/IOSLogger.h>
 #import <vita3k_ios/IOSMetalRenderer.h>
 
 @interface VitaViewController : UIViewController
 @property(nonatomic, strong) UILabel *detailsLabel;
+@property(nonatomic, strong) VitaInputAdapter *inputAdapter;
 @property(nonatomic, strong) VitaMetalRenderer *renderer;
 @end
 
@@ -16,6 +18,7 @@
     MTKView *view = [[MTKView alloc] initWithFrame:CGRectZero device:MTLCreateSystemDefaultDevice()];
     view.clearColor = MTLClearColorMake(0.035, 0.055, 0.09, 1.0);
     view.enableSetNeedsDisplay = YES;
+    view.multipleTouchEnabled = YES;
     view.paused = YES;
     self.view = view;
 }
@@ -25,7 +28,7 @@
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Vita3K iOS — Core Milestone 11";
+    title.text = @"Vita3K iOS — Core Milestone 12";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
     title.textAlignment = NSTextAlignmentCenter;
@@ -61,8 +64,16 @@
     self.renderer = [[VitaMetalRenderer alloc] initWithView:(MTKView *)self.view completion:^{
         [weakSelf refreshStatus];
     }];
+    self.inputAdapter = [[VitaInputAdapter alloc] initWithView:self.view completion:^{
+        [weakSelf refreshStatus];
+    }];
 
     [self refreshStatus];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self.inputAdapter attachTouchSurface];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -79,6 +90,26 @@
     const auto status = vita3k::ios::rescan_imports();
     vita3k::ios::log_message("INFO", status.summary);
     [self refreshStatus];
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    (void)event;
+    [self.inputAdapter submitTouches:touches phase:VitaTouchPhaseBegan];
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    (void)event;
+    [self.inputAdapter submitTouches:touches phase:VitaTouchPhaseMoved];
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    (void)event;
+    [self.inputAdapter submitTouches:touches phase:VitaTouchPhaseEnded];
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    (void)event;
+    [self.inputAdapter submitTouches:touches phase:VitaTouchPhaseCancelled];
 }
 
 @end

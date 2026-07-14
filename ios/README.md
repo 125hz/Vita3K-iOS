@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slice of upstream Vita3K code. It now loads and completes the `module_start` of a deliberately tiny program built by the real VitaSDK toolchain, then clears and presents one core-owned Metal diagnostic frame. It does **not** yet execute general Vita homebrew, render Vita graphics, or run games.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slice of upstream Vita3K code. It now loads and completes the `module_start` of a deliberately tiny program built by the real VitaSDK toolchain, clears and presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet execute general Vita homebrew, render Vita graphics, route input to guest services, or run games.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -35,6 +35,8 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - a portable `HostDisplay` seam with deterministic attach, acquire, and completion state
 - an `MTKViewDelegate` that submits, clears, and presents one core-owned diagnostic frame through a Metal command queue
 - renderer status that changes to `passed` only after the command buffer completes on device
+- a portable input seam that normalizes UIKit touch positions and bounds controller state
+- a GameController adapter for sticks, D-pad, face buttons, shoulders, and triggers
 - a narrow C++ `CoreBridge` seam for additional core integration
 - no signing credentials or provisioning profiles in CI
 
@@ -61,6 +63,16 @@ The `.self` is retained as evidence that the same build produced a normal Vita c
 
 This frame contains no Vita display output. It proves only that the portable core can own a frame request, UIKit can supply the drawable, and Metal can complete a clear/present command buffer on the device.
 
+## Milestone 12 input test
+
+1. Install and open the Milestone 12 IPA on a physical iPhone or iPad.
+2. Wait for `Input: ready (tap the blue background; controller waiting)`.
+3. Tap or drag on an empty portion of the blue background.
+4. Confirm the line changes to `Input: passed` with a positive touch-sample count and normalized `x`/`y` coordinates between 0 and 1.
+5. Optionally connect a compatible controller and move a stick or press a button; the controller sample count should increase.
+
+The adapter does not yet implement Vita `SceCtrl` or touch HLE. It proves that real device input reaches a portable core-owned state object without depending on UIKit or GameController types outside the iOS frontend.
+
 ## Build contract
 
 The iOS shell is selected before upstream desktop dependencies are configured:
@@ -79,8 +91,10 @@ cmake --build build-ios --config Release --target Vita3KiOS -- \
 
 This command requires macOS and Xcode; the GitHub Actions workflow runs it remotely for Windows contributors.
 
-`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map fixed-address `ET_SCE_EXEC` files and preferred-address `ET_SCE_RELEXEC` VELFs, apply checked relocations, validate module metadata, inventory import/export NIDs, rewrite ARM function stubs, execute the narrow compiler path used by the Milestone 10 program, and present one diagnostic Metal frame. General relocatable placement, SELF payload extraction, broader Thumb-2, thread scheduling, production HLE coverage, the Vita renderer, audio, and input remain tracked in `PORTING.md`.
+`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map fixed-address `ET_SCE_EXEC` files and preferred-address `ET_SCE_RELEXEC` VELFs, apply checked relocations, validate module metadata, inventory import/export NIDs, rewrite ARM function stubs, execute the narrow compiler path used by the Milestone 10 program, present one diagnostic Metal frame, and capture bounded host input. General relocatable placement, SELF payload extraction, broader Thumb-2, thread scheduling, production HLE coverage, the Vita renderer, audio, and guest input services remain tracked in `PORTING.md`.
 
 Milestone 10 preserves the synthetic tests and adds an independently compiled VitaSDK VELF. The loader maps that VELF at its preferred addresses, applies its real compact relocation stream, parses its genuine module/import tables, rebinds `sceKernelGetThreadId`, and completes `module_start` through six guest instructions. This is intentionally not advertised as a general ARMv7 interpreter: conditional execution, most 32-bit Thumb-2, most addressing modes, floating point/NEON, exceptions, atomics, and most data-processing instructions remain unsupported. Relocatable segments are not yet placed at alternative addresses if their preferred ranges are unavailable, and SELF containers remain probe-only.
 
 Milestone 11 adds only the host-display boundary and the first Metal clear/present. It does not link the upstream Vulkan renderer, decode GXM commands, translate shaders, or display guest output.
+
+Milestone 12 adds only the host-input boundary. UIKit touch and GameController samples are retained for diagnostics, but no Vita guest API can read them yet.

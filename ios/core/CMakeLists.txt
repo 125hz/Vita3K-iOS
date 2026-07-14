@@ -13,6 +13,7 @@ add_library(vita3k_ios_core STATIC
     ../src/GuestThread.cpp
     ../src/HostDisplay.cpp
     ../src/HostFilesystem.cpp
+    ../src/HostInput.cpp
     ../src/ImportBinder.cpp
     ../src/ModuleTableParser.cpp
     ../src/RelocationEngine.cpp

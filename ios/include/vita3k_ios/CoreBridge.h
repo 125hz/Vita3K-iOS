@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <vita3k_ios/HostDisplay.h>
+#include <vita3k_ios/HostInput.h>
 
 namespace vita3k::ios {
 
@@ -56,6 +57,10 @@ struct CoreStatus {
     bool guest_thread_ready;
     bool renderer_attached;
     bool renderer_frame_presented;
+    bool input_surface_attached;
+    bool input_touch_received;
+    bool input_controller_connected;
+    bool input_controller_received;
     std::uint64_t guest_memory_size;
     std::size_t host_page_size;
     std::uint64_t arm_test_instruction_count;
@@ -66,6 +71,10 @@ struct CoreStatus {
     std::size_t thread_test_bound_stub_count;
     std::uint64_t renderer_submitted_frame_count;
     std::uint64_t renderer_presented_frame_count;
+    std::uint64_t input_touch_sample_count;
+    std::uint64_t input_controller_sample_count;
+    double input_last_touch_x;
+    double input_last_touch_y;
     std::string storage_root;
     std::vector<ImportedArtifact> imported_artifacts;
     std::string summary;
@@ -79,5 +88,10 @@ std::optional<HostDisplayFrame> acquire_host_display_frame(std::uint32_t width,
     std::uint32_t height, std::string &error);
 bool complete_host_display_frame(std::uint64_t identifier, bool presented,
     std::string detail, std::string &error);
+bool attach_host_input_surface(double width, double height, std::string &error);
+bool submit_host_touch(std::uint64_t identifier, double x, double y, HostTouchPhase phase,
+    std::string &error);
+void set_host_controller_connected(bool connected);
+bool submit_host_controller(HostControllerSample sample, std::string &error);
 
 } // namespace vita3k::ios

@@ -1,5 +1,6 @@
 #include <vita3k_ios/CoreBridge.h>
 #include <vita3k_ios/HostDisplay.h>
+#include <vita3k_ios/HostInput.h>
 
 #include <array>
 #include <cstdint>
@@ -50,6 +51,44 @@ int main(int argc, char **argv) {
         return 11;
     }
 
+    vita3k::ios::HostInput input;
+    std::string input_error;
+    if (input.attach_touch_surface(0.0, 1080.0, input_error)) {
+        std::cerr << "The input adapter accepted a zero-width touch surface.\n";
+        return 15;
+    }
+    if (!input.attach_touch_surface(1000.0, 500.0, input_error) ||
+        !input.submit_touch(7, 250.0, 125.0, vita3k::ios::HostTouchPhase::began,
+            input_error) ||
+        !input.submit_touch(7, 250.0, 125.0, vita3k::ios::HostTouchPhase::ended,
+            input_error)) {
+        std::cerr << input_error << '\n';
+        return 16;
+    }
+    input.set_controller_connected(true);
+    const vita3k::ios::HostControllerSample controller_sample{
+        .left_x = 0.25f,
+        .left_y = -0.5f,
+        .right_x = 2.0f,
+        .right_y = -2.0f,
+        .buttons = vita3k::ios::host_button_a | vita3k::ios::host_button_dpad_up
+    };
+    if (!input.submit_controller(controller_sample, input_error)) {
+        std::cerr << input_error << '\n';
+        return 17;
+    }
+    const auto input_status = input.status();
+    if (!input_status.touch_surface_attached || input_status.touch_active ||
+        !input_status.touch_sample_received || !input_status.controller_connected ||
+        !input_status.controller_sample_received || input_status.touch_sample_count != 2 ||
+        input_status.controller_sample_count != 1 || input_status.last_touch_x != 0.25 ||
+        input_status.last_touch_y != 0.25 || input_status.controller.right_x != 1.0f ||
+        input_status.controller.right_y != -1.0f ||
+        input_status.controller.buttons != controller_sample.buttons) {
+        std::cerr << "The portable input adapter produced unexpected state.\n";
+        return 18;
+    }
+
     std::filesystem::path emitted_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
@@ -76,6 +115,8 @@ int main(int argc, char **argv) {
         !status.guest_thread_ready ||
         status.renderer_attached || status.renderer_frame_presented ||
         status.summary.find("Renderer: waiting for MTKView host") == std::string::npos ||
+        status.input_surface_attached || status.input_touch_received ||
+        status.summary.find("Input: waiting for UIKit touch surface") == std::string::npos ||
         status.arm_test_instruction_count != 7 || status.hle_test_dispatch_count != 1 ||
         status.thread_test_instruction_count != 12 ||
         status.thread_test_hle_dispatch_count != 2 || status.thread_test_exit_status != 42 ||
@@ -289,6 +330,31 @@ int main(int argc, char **argv) {
         rendered_status.summary.find("Renderer: passed") == std::string::npos) {
         std::cerr << rendered_status.summary << '\n';
         return 14;
+    }
+
+    if (!vita3k::ios::attach_host_input_surface(1000.0, 500.0, input_error) ||
+        !vita3k::ios::submit_host_touch(9, 750.0, 250.0,
+            vita3k::ios::HostTouchPhase::began, input_error)) {
+        std::cerr << input_error << '\n';
+        return 19;
+    }
+    vita3k::ios::set_host_controller_connected(true);
+    if (!vita3k::ios::submit_host_controller(controller_sample, input_error)) {
+        std::cerr << input_error << '\n';
+        return 20;
+    }
+    const auto bridged_input_status = vita3k::ios::query_core_status();
+    if (!bridged_input_status.input_surface_attached ||
+        !bridged_input_status.input_touch_received ||
+        !bridged_input_status.input_controller_connected ||
+        !bridged_input_status.input_controller_received ||
+        bridged_input_status.input_touch_sample_count != 1 ||
+        bridged_input_status.input_controller_sample_count != 1 ||
+        bridged_input_status.input_last_touch_x != 0.75 ||
+        bridged_input_status.input_last_touch_y != 0.5 ||
+        bridged_input_status.summary.find("Input: passed") == std::string::npos) {
+        std::cerr << bridged_input_status.summary << '\n';
+        return 21;
     }
 
     std::filesystem::remove_all(test_root, error);

@@ -88,7 +88,7 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
           cmake --version
 
-      - name: Run portable core and host-display smoke tests
+      - name: Run portable core, display, and input smoke tests
         run: |
           cmake -S ios/core -B build-core-tests -DCMAKE_BUILD_TYPE=Release
           cmake --build build-core-tests --parallel
