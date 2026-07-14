@@ -1,6 +1,6 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 20.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 21.
 
 ## Copy-paste prompt
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 20 boundary
+## Known Milestone 21 boundary
 
-Milestone 19 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. Preparation reported `module_start 0x810176B9 via lifecycle export`; the bounded attempt executed the entry branch and wide `PUSH.W`, then stopped on `0xB082` at `0x81017584` before making an HLE call. This is `SUB sp, #8`, a normal compiler stack allocation.
+Milestone 20 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. Preparation still reported `module_start 0x810176B9 via lifecycle export`; the bounded attempt executed four instructions and made zero HLE calls before stopping on `0xF2476290` at `0x81017586`. The six-halfword look-ahead was `0x8101758A=0xE9CD`, `0x8101758C=0x1000`, `0x8101758E=0xF2C8`, `0x81017590=0x122C`, `0x81017592=0x6012`, and `0x81017594=0x1C10`.
 
-Milestone 20 implements `B082` plus batched common Thumb compiler families covering arithmetic, shifts, CPSR flags, high registers, byte/halfword/word memory access, signed loads, address generation, compare-and-branch, multiple-register transfers, and conditional/unconditional branches. Later unsupported stops include six look-ahead halfwords. Its physical-device acceptance result is not yet known. Install the Milestone 20 artifact, prepare `PCSG00291`, confirm `via lifecycle export`, run the one-shot 256-instruction attempt, and use the complete new diagnostic and `Lookahead:` values for Milestone 21.
+Those words decode as `MOVW r2, #0x7690`, `STRD r1, r0, [sp]`, and `MOVT r2, #0x812c`, followed by compact `STR` and `ADDS` instructions already supported in Milestone 20. Milestone 21 implements full Thumb-2 immediate `MOVW`/`MOVT` constant construction plus the immediate `LDRD`/`STRD` offset, pre-indexed, post-indexed, and checked-writeback forms. Install the Milestone 21 artifact, prepare `PCSG00291`, confirm `via lifecycle export`, run the one-shot 256-instruction attempt, and use the complete new diagnostic and `Lookahead:` values to select the next coherent Thumb-2 or HLE batch.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m20-install-zip-fixture artifacts/milestone20-thumb-compiler-baseline.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m21-install-zip-fixture artifacts/milestone21-thumb2-compiler-batch.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 

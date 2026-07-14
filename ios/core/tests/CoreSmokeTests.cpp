@@ -156,6 +156,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m18_install_zip_fixture;
     std::filesystem::path emitted_m19_install_zip_fixture;
     std::filesystem::path emitted_m20_install_zip_fixture;
+    std::filesystem::path emitted_m21_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -177,6 +178,8 @@ int main(int argc, char **argv) {
             emitted_m19_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m20-install-zip-fixture" && index + 1 < argc) {
             emitted_m20_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m21-install-zip-fixture" && index + 1 < argc) {
+            emitted_m21_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -189,6 +192,7 @@ int main(int argc, char **argv) {
                          "[--emit-m18-install-zip-fixture <path>] "
                          "[--emit-m19-install-zip-fixture <path>] "
                          "[--emit-m20-install-zip-fixture <path>] "
+                         "[--emit-m21-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -355,6 +359,27 @@ int main(int argc, char **argv) {
     const auto compiler_baseline_self = make_plain_self(compiler_baseline_elf);
     const auto m20_install_zip = vita3k::ios::make_synthetic_install_zip(
         compiler_baseline_self, compiler_baseline_self);
+    auto thumb2_compiler_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 12> thumb2_compiler_program{
+        0xE92Du, // PUSH.W {r8, lr}
+        0x4100u,
+        0xB082u, // SUB sp, #8
+        0xF247u, // MOVW r2, #0x7690
+        0x6290u,
+        0xE9CDu, // STRD r1, r0, [sp]
+        0x1000u,
+        0xF2C8u, // MOVT r2, #0x812c
+        0x122Cu,
+        0x202Au, // MOVS r0, #42
+        0x4B00u, // LDR r3, [pc] -> exit-thread import stub
+        0x4798u // BLX r3
+    };
+    std::memcpy(thumb2_compiler_elf.data() + 244, thumb2_compiler_program.data(),
+        sizeof(thumb2_compiler_program));
+    write_value(thumb2_compiler_elf, 268, static_cast<std::uint32_t>(0x81000050));
+    const auto thumb2_compiler_self = make_plain_self(thumb2_compiler_elf);
+    const auto m21_install_zip = vita3k::ios::make_synthetic_install_zip(
+        thumb2_compiler_self, thumb2_compiler_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -370,6 +395,10 @@ int main(int argc, char **argv) {
     if (m20_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 20 Thumb compiler baseline fixture.\n";
         return 52;
+    }
+    if (m21_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 21 Thumb-2 compiler batch fixture.\n";
+        return 57;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -433,6 +462,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 20 Thumb compiler baseline fixture.\n";
             return 53;
+        }
+    }
+    if (!emitted_m21_install_zip_fixture.empty()) {
+        if (!emitted_m21_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m21_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m21_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m21_install_zip.data()),
+            static_cast<std::streamsize>(m21_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 21 Thumb-2 compiler batch fixture.\n";
+            return 58;
         }
     }
 
@@ -670,6 +712,27 @@ int main(int argc, char **argv) {
         return 56;
     }
 
+    const auto m21_archive_path = test_root / "milestone21-thumb2-compiler-batch.zip";
+    std::ofstream m21_archive_stream(m21_archive_path, std::ios::binary);
+    m21_archive_stream.write(reinterpret_cast<const char *>(m21_install_zip.data()),
+        static_cast<std::streamsize>(m21_install_zip.size()));
+    m21_archive_stream.close();
+    const auto m21_install = vita3k::ios::install_game_archive(m21_archive_path);
+    if (!m21_install.success || m21_install.file_count != 6) {
+        std::cerr << m21_install.detail << '\n';
+        return 59;
+    }
+    const auto thumb2_compiler_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!thumb2_compiler_prepared.selected || !thumb2_compiler_prepared.loaded || !thumb2_compiler_prepared.module_start_from_export || thumb2_compiler_prepared.module_start_address != 0x81000061) {
+        std::cerr << thumb2_compiler_prepared.detail << '\n';
+        return 60;
+    }
+    const auto thumb2_compiler_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!thumb2_compiler_boot.started || !thumb2_compiler_boot.exited || thumb2_compiler_boot.returned || thumb2_compiler_boot.instruction_count != 9 || thumb2_compiler_boot.hle_dispatch_count != 1 || thumb2_compiler_boot.exit_status != 42) {
+        std::cerr << thumb2_compiler_boot.detail << '\n';
+        return 61;
+    }
+
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
@@ -752,6 +815,10 @@ int main(int argc, char **argv) {
     if (!emitted_m20_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 20 Thumb compiler baseline fixture: "
                   << emitted_m20_install_zip_fixture << '\n';
+    }
+    if (!emitted_m21_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 21 Thumb-2 compiler batch fixture: "
+                  << emitted_m21_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

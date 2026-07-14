@@ -154,6 +154,8 @@ For Milestone 19, re-select `PCSG00291`, confirm `via lifecycle export`, and run
 
 For Milestone 20, run the same Amagami attempt and capture the full boundary plus `Lookahead:` suffix. The interpreter now accepts the captured `0xB082` (`SUB sp, #8`) and a coherent baseline of common Thumb arithmetic, CPSR flags, memory, stack, high-register, multiple-transfer, compare-and-branch, and branch encodings. The CI artifact's `milestone20-thumb-compiler-baseline.zip` is the legal installable regression; its synthetic `M15TEST01` executes 13 instructions, two HLE calls, and exits with status 42.
 
+For Milestone 21, run the one-shot Amagami attempt again and capture the next complete boundary. The interpreter now accepts the exact `F247 6290` / `E9CD 1000` / `F2C8 122C` sequence as part of complete Thumb-2 immediate `MOVW`/`MOVT` and immediate `LDRD`/`STRD` families, including checked pre/post-index writeback. The CI artifact's `milestone21-thumb2-compiler-batch.zip` executes those exact opcodes in a legal synthetic title, completes nine instructions and one HLE call, and exits with status 42.
+
 Keep firmware files such as `fontpkg.pup`, `preinstall.pup`, and the system update PUP on the local device/PC. Do not add them to Git, CI caches, or Actions artifacts. Firmware selection and extraction will be added after the iOS build includes the upstream crypto, package, FAT/exFAT, and psvpfs dependencies needed by `install_pup`.
 
 ## 8. Keeping the fork current

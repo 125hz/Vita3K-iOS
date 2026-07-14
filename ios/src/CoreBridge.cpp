@@ -414,7 +414,7 @@ bool run_thumb2_wide_push_test(GuestMemory &memory, std::string &error) {
     std::array<std::uint8_t, 12> program{};
     write_value(program, 0, static_cast<std::uint16_t>(0xE92D));
     write_value(program, 2, static_cast<std::uint16_t>(0x4101)); // PUSH.W {r0, r8, lr}
-    write_value(program, 8, static_cast<std::uint16_t>(0xE8FF));
+    write_value(program, 8, static_cast<std::uint16_t>(0xE8BF));
     write_value(program, 10, static_cast<std::uint16_t>(0xA55A));
 
     const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
@@ -453,7 +453,7 @@ bool run_thumb2_wide_push_test(GuestMemory &memory, std::string &error) {
         error = "Thumb-2 PUSH.W produced unexpected stack or register state.";
         return false;
     }
-    if (unsupported_execution.reason != ArmStopReason::unsupported_thumb || unsupported_execution.last_instruction != 0xA55AE8FFu || unsupported_execution.detail.find("0xE8FFA55A") == std::string::npos || unsupported_execution.detail.find("Lookahead:") == std::string::npos) {
+    if (unsupported_execution.reason != ArmStopReason::unsupported_thumb || unsupported_execution.last_instruction != 0xA55AE8BFu || unsupported_execution.detail.find("0xE8BFA55A") == std::string::npos || unsupported_execution.detail.find("Lookahead:") == std::string::npos) {
         error = "The unsupported Thumb-2 diagnostic did not retain both halfwords.";
         return false;
     }
@@ -579,6 +579,83 @@ bool run_thumb_compiler_baseline_test(GuestMemory &memory, std::string &error) {
     const bool unmapped = memory.unmap_all_segments(unmap_error);
     if (!valid) {
         error = "The Thumb compiler baseline diagnostic produced unexpected CPU state.";
+        return false;
+    }
+    if (!unmapped) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
+bool run_thumb2_compiler_batch_test(GuestMemory &memory, std::string &error) {
+    constexpr std::uint32_t test_address = 0x60000;
+    constexpr std::uint32_t first_value = 0x11111111u;
+    constexpr std::uint32_t second_value = 0x22222222u;
+    std::array<std::uint8_t, 0x100> program{};
+
+    write_value(program, 0x00, static_cast<std::uint16_t>(0xF247)); // MOVW r2, #0x7690
+    write_value(program, 0x02, static_cast<std::uint16_t>(0x6290));
+    write_value(program, 0x04, static_cast<std::uint16_t>(0xF2C8)); // MOVT r2, #0x812c
+    write_value(program, 0x06, static_cast<std::uint16_t>(0x122C));
+    write_value(program, 0x08, static_cast<std::uint16_t>(0xE9CD)); // STRD r1, r0, [sp]
+    write_value(program, 0x0A, static_cast<std::uint16_t>(0x1000));
+    write_value(program, 0x0C, static_cast<std::uint16_t>(0xE9DD)); // LDRD r3, r4, [sp]
+    write_value(program, 0x0E, static_cast<std::uint16_t>(0x3400));
+    write_value(program, 0x10, static_cast<std::uint16_t>(0xE9ED)); // STRD r0, r1, [sp, #8]!
+    write_value(program, 0x12, static_cast<std::uint16_t>(0x0102));
+    write_value(program, 0x14, static_cast<std::uint16_t>(0xE8FD)); // LDRD r2, r3, [sp], #8
+    write_value(program, 0x16, static_cast<std::uint16_t>(0x2302));
+
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < 0x400 || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the Thumb-2 compiler batch diagnostic.";
+        return false;
+    }
+    const auto memory_size = static_cast<std::uint32_t>(memory_size_64);
+    if (!memory.map_segment(test_address, program, memory_size, 7, error)) {
+        return false;
+    }
+
+    HLEDispatcher dispatcher;
+    ArmInterpreter interpreter(memory, dispatcher);
+    const auto data_address = test_address + 0x200u;
+    interpreter.reset(test_address | 1u, data_address);
+    interpreter.state().registers[0] = second_value;
+    interpreter.state().registers[1] = first_value;
+    const auto captured_sequence = interpreter.run(3);
+    const auto captured_state = interpreter.state();
+
+    std::array<std::uint32_t, 2> captured_words{};
+    std::array<std::uint8_t, sizeof(captured_words)> captured_bytes{};
+    const bool captured_read = memory.read(data_address, captured_bytes, error);
+    if (captured_read) {
+        std::memcpy(captured_words.data(), captured_bytes.data(), captured_bytes.size());
+    }
+
+    interpreter.reset((test_address + 0x0Cu) | 1u, data_address);
+    const auto offset_load = interpreter.run(1);
+    const auto offset_load_state = interpreter.state();
+
+    interpreter.reset((test_address + 0x10u) | 1u, data_address);
+    interpreter.state().registers[0] = first_value;
+    interpreter.state().registers[1] = second_value;
+    const auto preindexed_store = interpreter.run(1);
+    const auto preindexed_store_state = interpreter.state();
+
+    interpreter.reset((test_address + 0x14u) | 1u, data_address + 8u);
+    const auto postindexed_load = interpreter.run(1);
+    const auto postindexed_load_state = interpreter.state();
+
+    const auto stopped_at_limit = [](const ArmExecutionResult &result) {
+        return result.reason == ArmStopReason::instruction_limit;
+    };
+    const bool valid = stopped_at_limit(captured_sequence) && captured_sequence.instructions_executed == 3 && captured_state.registers[2] == 0x812C7690u && captured_read && captured_words[0] == first_value && captured_words[1] == second_value && stopped_at_limit(offset_load) && offset_load_state.registers[3] == first_value && offset_load_state.registers[4] == second_value && stopped_at_limit(preindexed_store) && preindexed_store_state.registers[13] == data_address + 8u && stopped_at_limit(postindexed_load) && postindexed_load_state.registers[2] == first_value && postindexed_load_state.registers[3] == second_value && postindexed_load_state.registers[13] == data_address + 16u;
+
+    std::string unmap_error;
+    const bool unmapped = memory.unmap_all_segments(unmap_error);
+    if (!valid) {
+        error = "The Thumb-2 compiler batch diagnostic produced unexpected CPU or memory state.";
         return false;
     }
     if (!unmapped) {
@@ -852,7 +929,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     ImportBindingResult binding_test;
     const bool loader_pipeline_passed = segment_mapping_passed && run_loader_pipeline_test(*guest_memory, binding_test, thread_test, memory_error);
     std::string execution_error;
-    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error);
+    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;

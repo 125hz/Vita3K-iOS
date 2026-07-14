@@ -1333,6 +1333,127 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         };
     }
 
+    // MOVW/MOVT construct compiler constants without touching flags. The
+    // accepted Amagami Milestone 20 boundary starts with MOVW r2, #0x7690 and
+    // later completes the pointer with MOVT r2, #0x812c.
+    const auto move_wide_opcode = instruction & 0xFBF0u;
+    if (move_wide_opcode == 0xF240u || move_wide_opcode == 0xF2C0u) {
+        std::array<std::uint8_t, sizeof(std::uint16_t)> lower_bytes{};
+        std::string lower_error;
+        if (!memory_.read(pc + 2u, lower_bytes, lower_error)) {
+            return {
+                .reason = ArmStopReason::memory_fault,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb-2 MOVW/MOVT suffix fetch failed: " + lower_error
+            };
+        }
+        std::uint16_t lower = 0;
+        std::memcpy(&lower, lower_bytes.data(), sizeof(lower));
+        const auto packed_instruction = static_cast<std::uint32_t>(instruction) | (static_cast<std::uint32_t>(lower) << 16);
+        const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) | lower;
+        const auto destination = (lower >> 8) & 0xFu;
+        state_.registers[register_pc] = pc + 4u;
+        if (destination == register_pc || (lower & 0x8000u) != 0) {
+            return {
+                .reason = ArmStopReason::unsupported_instruction,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = packed_instruction,
+                .detail = "Unsupported or unpredictable Thumb-2 MOVW/MOVT " + hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
+            };
+        }
+        const auto immediate = static_cast<std::uint32_t>(
+            ((instruction & 0x000Fu) << 12) | ((instruction & 0x0400u) << 1) | ((lower & 0x7000u) >> 4) | (lower & 0x00FFu));
+        if (move_wide_opcode == 0xF240u) {
+            state_.registers[destination] = immediate;
+        } else {
+            state_.registers[destination] = (state_.registers[destination] & 0x0000FFFFu) | (immediate << 16);
+        }
+        return {
+            .reason = ArmStopReason::instruction_limit,
+            .instructions_executed = state_.instruction_count,
+            .final_pc = state_.registers[register_pc],
+            .last_instruction = packed_instruction
+        };
+    }
+
+    // LDRD/STRD immediate forms. This covers both post-indexed/writeback T1
+    // and offset/pre-indexed T2 encodings as one coherent doubleword-memory
+    // family. The accepted Amagami sequence uses STRD r1, r0, [sp].
+    const auto dual_t1_opcode = instruction & 0xFF70u;
+    const auto dual_t2_opcode = instruction & 0xFF50u;
+    const bool dual_t1 = dual_t1_opcode == 0xE860u || dual_t1_opcode == 0xE870u;
+    const bool dual_t2 = dual_t2_opcode == 0xE940u || dual_t2_opcode == 0xE950u;
+    if (dual_t1 || dual_t2) {
+        std::array<std::uint8_t, sizeof(std::uint16_t)> lower_bytes{};
+        std::string lower_error;
+        if (!memory_.read(pc + 2u, lower_bytes, lower_error)) {
+            return {
+                .reason = ArmStopReason::memory_fault,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb-2 LDRD/STRD suffix fetch failed: " + lower_error
+            };
+        }
+        std::uint16_t lower = 0;
+        std::memcpy(&lower, lower_bytes.data(), sizeof(lower));
+        const auto packed_instruction = static_cast<std::uint32_t>(instruction) | (static_cast<std::uint32_t>(lower) << 16);
+        const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) | lower;
+        const bool load = dual_t1 ? dual_t1_opcode == 0xE870u : dual_t2_opcode == 0xE950u;
+        const bool add_offset = (instruction & 0x0080u) != 0;
+        const bool pre_index = dual_t2;
+        const bool writeback = dual_t1 || (instruction & 0x0020u) != 0;
+        const auto base_register = instruction & 0xFu;
+        const auto first_register = (lower >> 12) & 0xFu;
+        const auto second_register = (lower >> 8) & 0xFu;
+        const auto immediate = static_cast<std::uint32_t>(lower & 0xFFu) << 2;
+        const bool literal_load = load && base_register == register_pc;
+        const bool invalid = first_register == register_pc || second_register == register_pc || (load && first_register == second_register) || (!load && base_register == register_pc) || (writeback && (base_register == first_register || base_register == second_register)) || (literal_load && (!pre_index || writeback));
+        state_.registers[register_pc] = pc + 4u;
+        if (invalid) {
+            return {
+                .reason = ArmStopReason::unsupported_instruction,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = packed_instruction,
+                .detail = "Unsupported or unpredictable Thumb-2 LDRD/STRD " + hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
+            };
+        }
+
+        const auto base = literal_load
+            ? ((pc + 4u) & ~3u)
+            : state_.registers[base_register];
+        const auto offset_address = add_offset ? base + immediate : base - immediate;
+        const auto address = pre_index ? offset_address : base;
+        std::array<std::uint8_t, sizeof(std::uint64_t)> doubleword{};
+        std::string data_error;
+        if (load) {
+            if (!memory_.read(address, doubleword, data_error)) {
+                return memory_fault("Thumb-2 LDRD", data_error);
+            }
+            std::memcpy(&state_.registers[first_register], doubleword.data(), sizeof(std::uint32_t));
+            std::memcpy(&state_.registers[second_register], doubleword.data() + sizeof(std::uint32_t), sizeof(std::uint32_t));
+        } else {
+            std::memcpy(doubleword.data(), &state_.registers[first_register], sizeof(std::uint32_t));
+            std::memcpy(doubleword.data() + sizeof(std::uint32_t), &state_.registers[second_register], sizeof(std::uint32_t));
+            if (!memory_.write(address, doubleword, data_error)) {
+                return memory_fault("Thumb-2 STRD", data_error);
+            }
+        }
+        if (writeback) {
+            state_.registers[base_register] = offset_address;
+        }
+        return {
+            .reason = ArmStopReason::instruction_limit,
+            .instructions_executed = state_.instruction_count,
+            .final_pc = state_.registers[register_pc],
+            .last_instruction = packed_instruction
+        };
+    }
+
     // Thumb-2 BL/BLX immediate. This is the first 32-bit compiler-generated
     // instruction accepted by the real VitaSDK fixture.
     if ((instruction & 0xF800u) == 0xF000u) {

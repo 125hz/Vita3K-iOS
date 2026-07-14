@@ -202,3 +202,14 @@ The accepted Milestone 19 Amagami attempt executed the wide stack save and stopp
 4. Share the complete new diagnostic, including its `Lookahead:` values. It should advance past `0xB082` at `0x81017584`; an unsupported CPU instruction, memory fault, unbound HLE NID, or the 256-instruction ceiling is expected.
 
 The Actions artifact includes `milestone20-thumb-compiler-baseline.zip`. Installing and attempting its synthetic `M15TEST01` title must complete 13 instructions and two HLE calls, including wide `PUSH.W` and `SUB sp, #8`, then exit with status 42. Portable self-tests additionally validate the other batched instruction families and exact CPU/memory state.
+
+## Milestone 21 batched Thumb-2 constant and doubleword-memory test
+
+The accepted Milestone 20 Amagami attempt advanced through the stack allocation and captured a coherent compiler sequence: `F247 6290` (`MOVW r2, #0x7690`), `E9CD 1000` (`STRD r1, r0, [sp]`), and `F2C8 122C` (`MOVT r2, #0x812c`). Milestone 21 implements the complete Thumb-2 immediate `MOVW`/`MOVT` family plus the immediate `LDRD`/`STRD` offset, pre-indexed, post-indexed, and writeback forms. Invalid register combinations still stop without fabricating state, and later unknown instructions retain the bounded six-halfword look-ahead.
+
+1. Install the Milestone 21 IPA and open **Game Library**.
+2. Select `PCSG00291` with **Prefer Installed Patch** enabled and confirm `via lifecycle export`.
+3. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
+4. Share the complete new diagnostic, including `Lookahead:` if present. It should advance past the three captured 32-bit instructions at `0x81017586` through `0x81017592`; the next honest CPU, memory, HLE, return, or instruction-limit boundary is expected.
+
+The Actions artifact includes `milestone21-thumb2-compiler-batch.zip`. Its synthetic `M15TEST01` runs the exact captured `MOVW`/`STRD`/`MOVT` opcodes after the existing wide prologue, reaches the exit-thread import, and completes nine instructions with one HLE call and exit status 42. Portable CPU-state tests additionally cover `LDRD`, pre-indexed store writeback, and post-indexed load writeback.
