@@ -14,7 +14,7 @@ bool is_import_candidate(const std::filesystem::path &path) {
         return static_cast<char>(std::tolower(character));
     });
     constexpr std::array supported_extensions{
-        ".bin", ".elf", ".self", ".sfo", ".vpk"
+        ".bin", ".elf", ".self", ".sfo", ".velf", ".vpk"
     };
     return std::ranges::find(supported_extensions, extension) != supported_extensions.end();
 }

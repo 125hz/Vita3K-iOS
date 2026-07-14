@@ -19,11 +19,18 @@ void write_value(std::array<std::uint8_t, Size> &image, std::size_t offset, T va
 
 int main(int argc, char **argv) {
     std::filesystem::path emitted_fixture;
-    if (argc == 3 && std::string_view(argv[1]) == "--emit-fixture") {
-        emitted_fixture = argv[2];
-    } else if (argc != 1) {
-        std::cerr << "Usage: vita3k_ios_core_smoke_tests [--emit-fixture <path>]\n";
-        return 64;
+    std::filesystem::path vitasdk_fixture;
+    for (int index = 1; index < argc; ++index) {
+        const std::string_view argument = argv[index];
+        if (argument == "--emit-fixture" && index + 1 < argc) {
+            emitted_fixture = argv[++index];
+        } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
+            vitasdk_fixture = argv[++index];
+        } else {
+            std::cerr << "Usage: vita3k_ios_core_smoke_tests "
+                         "[--emit-fixture <path>] [--verify-vitasdk <path>]\n";
+            return 64;
+        }
     }
     const auto test_root = std::filesystem::temp_directory_path() / "vita3k-ios-core-smoke-test";
     std::error_code error;
@@ -192,6 +199,41 @@ int main(int argc, char **argv) {
         rescanned.imported_artifacts.front().module_nid != 0x1234ABCD) {
         std::cerr << rescanned.summary << '\n';
         return 3;
+    }
+
+    if (!vitasdk_fixture.empty()) {
+        std::filesystem::remove(fixture, error);
+        const auto real_fixture = test_root / "Vita3K" / "imports" /
+            "milestone10-vitasdk-homebrew.velf";
+        std::filesystem::copy_file(vitasdk_fixture, real_fixture,
+            std::filesystem::copy_options::overwrite_existing, error);
+        if (error) {
+            std::cerr << "Could not stage the real VitaSDK fixture: " << error.message() << '\n';
+            return 5;
+        }
+        const auto real_status = vita3k::ios::rescan_imports();
+        if (real_status.imported_artifacts.size() != 1 ||
+            real_status.imported_artifacts.front().kind != "Vita ELF" ||
+            !real_status.imported_artifacts.front().structurally_valid ||
+            !real_status.imported_artifacts.front().load_attempted ||
+            !real_status.imported_artifacts.front().loaded ||
+            !real_status.imported_artifacts.front().module_info_valid ||
+            !real_status.imported_artifacts.front().relocations_applied ||
+            !real_status.imported_artifacts.front().module_tables_parsed ||
+            !real_status.imported_artifacts.front().import_stubs_bound ||
+            !real_status.imported_artifacts.front().module_start_valid ||
+            !real_status.imported_artifacts.front().execution_attempted ||
+            real_status.imported_artifacts.front().thread_exited ||
+            !real_status.imported_artifacts.front().thread_returned ||
+            real_status.imported_artifacts.front().module_name != "m10_homebrew" ||
+            real_status.imported_artifacts.front().module_start_address != 0x81000001 ||
+            real_status.imported_artifacts.front().executed_instruction_count != 6 ||
+            real_status.imported_artifacts.front().hle_dispatch_count != 1 ||
+            real_status.imported_artifacts.front().thread_return_value != 1) {
+            std::cerr << real_status.summary << '\n';
+            return 6;
+        }
+        std::cout << "Verified real VitaSDK diagnostic:\n" << real_status.summary << '\n';
     }
 
     std::filesystem::remove_all(test_root, error);

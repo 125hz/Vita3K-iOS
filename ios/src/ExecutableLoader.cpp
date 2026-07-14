@@ -21,6 +21,8 @@ namespace vita3k::ios {
 namespace {
 
 constexpr std::uint16_t et_sce_exec = 0xFE00;
+constexpr std::uint16_t et_sce_relexec = 0xFE04;
+constexpr std::uint32_t diagnostic_stack_address = 0x7FF00000;
 constexpr std::size_t module_info_size = 0x5C;
 constexpr std::size_t module_name_offset = 4;
 constexpr std::size_t module_name_size = 27;
@@ -28,6 +30,7 @@ constexpr std::size_t module_nid_offset = 0x34;
 constexpr std::size_t module_start_offset = 0x44;
 constexpr std::uint32_t guest_flag_execute = 1;
 constexpr std::uint32_t guest_flag_write = 2;
+constexpr std::uint32_t guest_flag_read = 4;
 
 bool read_file_range(std::ifstream &stream, std::uint32_t offset,
     std::span<std::uint8_t> output) {
@@ -70,8 +73,9 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
         result.detail = "Only a structurally valid plain Vita ELF can be mapped.";
         return result;
     }
-    if (probe.executable_type != et_sce_exec) {
-        result.detail = "Relocatable Vita ELFs require rebasing before their segments can be mapped.";
+    if (probe.executable_type != et_sce_exec &&
+        probe.executable_type != et_sce_relexec) {
+        result.detail = "The Vita ELF type is not supported by the diagnostic loader.";
         return result;
     }
     if (memory.mapped_segment_count() != 0) {
@@ -87,7 +91,8 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
 
     std::vector<std::vector<std::uint8_t>> payloads(probe.load_segments.size());
     std::vector<GuestSegmentMapping> mappings;
-    mappings.reserve(probe.load_segments.size());
+    mappings.reserve(probe.load_segments.size() + 1);
+    bool has_writable_stack = false;
     for (std::size_t index = 0; index < probe.load_segments.size(); ++index) {
         const auto &segment = probe.load_segments[index];
         payloads[index].resize(segment.file_size);
@@ -103,6 +108,19 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
         });
         result.file_bytes += segment.file_size;
         result.memory_bytes += segment.memory_size;
+        has_writable_stack = has_writable_stack ||
+            ((segment.flags & guest_flag_write) != 0 && segment.memory_size >= 16);
+    }
+
+    const bool uses_diagnostic_stack = !has_writable_stack;
+    if (uses_diagnostic_stack) {
+        const auto stack_size = static_cast<std::uint32_t>(memory.host_page_size());
+        mappings.push_back({
+            .guest_address = diagnostic_stack_address,
+            .file_data = {},
+            .memory_size = stack_size,
+            .guest_flags = guest_flag_read | guest_flag_write
+        });
     }
 
     const auto page_size = static_cast<std::uint64_t>(memory.host_page_size());
@@ -238,6 +256,10 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
             result.temporary_stack_pointer = static_cast<std::uint32_t>(end) & ~7u;
         }
     }
+    if (uses_diagnostic_stack) {
+        result.temporary_stack_pointer = diagnostic_stack_address +
+            static_cast<std::uint32_t>(memory.host_page_size());
+    }
 
     const auto module_tables = parse_module_tables(memory,
         module_segment->virtual_address, module_segment->memory_size, module_info);
@@ -266,18 +288,25 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
     result.loaded = true;
 
     std::ostringstream detail;
-    detail << "Mapped " << probe.load_segments.size() << " segments ("
+    detail << "Mapped " << probe.load_segments.size() <<
+           (probe.executable_type == et_sce_relexec ? " preferred-address relocatable" : " fixed") <<
+           " segment" << (probe.load_segments.size() == 1 ? "" : "s") << " ("
            << result.file_bytes << " file bytes, " << result.memory_bytes
            << " guest bytes); readback passed; module " << result.module_name
            << " NID 0x" << std::hex << std::uppercase << std::setw(8)
            << std::setfill('0') << result.module_nid << std::dec << "; "
            << result.relocation_entry_count << " relocation entries/"
            << result.relocation_patch_count << " verified patches applied; "
-           << result.export_library_count << " export libraries/"
-           << result.exported_nid_count << " NIDs; "
-           << result.import_library_count << " import libraries/"
-           << result.imported_nid_count << " NIDs; "
-           << result.bound_import_stub_count << " function stubs rebound";
+           << result.export_library_count << " export librar"
+           << (result.export_library_count == 1 ? "y/" : "ies/")
+           << result.exported_nid_count << " NID"
+           << (result.exported_nid_count == 1 ? "" : "s") << "; "
+           << result.import_library_count << " import librar"
+           << (result.import_library_count == 1 ? "y/" : "ies/")
+           << result.imported_nid_count << " NID"
+           << (result.imported_nid_count == 1 ? "" : "s") << "; "
+           << result.bound_import_stub_count << " function stub"
+           << (result.bound_import_stub_count == 1 ? "" : "s") << " rebound";
     if (result.module_start_valid) {
         detail << "; module_start 0x" << std::hex << std::uppercase << std::setw(8)
                << std::setfill('0') << result.module_start_address << std::dec;

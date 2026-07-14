@@ -141,8 +141,10 @@ ExecutableProbeResult validate_elf(std::ifstream &stream, std::uint64_t file_siz
 
     result.structurally_valid = true;
     std::ostringstream detail;
-    detail << "ARM32 Vita ELF; " << result.load_segments.size() << " load segments; "
-           << result.relocation_segments.size() << " relocation segments; entry/module-info 0x"
+    detail << "ARM32 Vita ELF; " << result.load_segments.size() << " load segment"
+           << (result.load_segments.size() == 1 ? "" : "s") << "; "
+           << result.relocation_segments.size() << " relocation segment"
+           << (result.relocation_segments.size() == 1 ? "" : "s") << "; entry/module-info 0x"
            << std::hex << header.e_entry << ".";
     result.detail = detail.str();
     return result;

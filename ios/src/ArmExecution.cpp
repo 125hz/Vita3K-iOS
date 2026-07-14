@@ -619,8 +619,125 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         return continued();
     }
 
+    // UXTB Rd, Rm.
+    if ((instruction & 0xFFC0u) == 0xB2C0u) {
+        const auto source = (instruction >> 3) & 0x7u;
+        const auto destination = instruction & 0x7u;
+        state_.registers[destination] = state_.registers[source] & 0xFFu;
+        return continued();
+    }
+
+    // POP {R0-R7, PC}. A zero PC is the diagnostic module-return sentinel.
+    if ((instruction & 0xFE00u) == 0xBC00u) {
+        const auto register_list = static_cast<std::uint16_t>(
+            (instruction & 0x00FFu) | ((instruction & 0x0100u) != 0 ? (1u << register_pc) : 0));
+        const auto register_count = std::popcount(register_list);
+        if (register_count == 0) {
+            return {
+                .reason = ArmStopReason::unsupported_instruction,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb POP has an empty register list."
+            };
+        }
+        auto cursor = state_.registers[register_sp];
+        for (std::size_t index = 0; index < state_.registers.size(); ++index) {
+            if ((register_list & (1u << index)) == 0) {
+                continue;
+            }
+            std::array<std::uint8_t, sizeof(std::uint32_t)> word{};
+            std::string stack_error;
+            if (!memory_.read(cursor, word, stack_error)) {
+                return {
+                    .reason = ArmStopReason::memory_fault,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = instruction,
+                    .detail = "Thumb POP failed: " + stack_error
+                };
+            }
+            std::memcpy(&state_.registers[index], word.data(), sizeof(std::uint32_t));
+            cursor += sizeof(std::uint32_t);
+        }
+        state_.registers[register_sp] +=
+            static_cast<std::uint32_t>(register_count * sizeof(std::uint32_t));
+        if ((register_list & (1u << register_pc)) != 0) {
+            const auto target = state_.registers[register_pc];
+            if (target == 0) {
+                return {
+                    .reason = ArmStopReason::halted,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = 0,
+                    .last_instruction = instruction,
+                    .detail = "Guest Thumb routine returned through the zero-link sentinel."
+                };
+            }
+            state_.thumb = (target & 1u) != 0;
+            state_.registers[register_pc] = target & (state_.thumb ? ~1u : ~3u);
+        }
+        return continued();
+    }
+
     if (instruction == 0xBF00u) {
         return continued();
+    }
+
+    // Thumb-2 BL/BLX immediate. This is the first 32-bit compiler-generated
+    // instruction accepted by the real VitaSDK fixture.
+    if ((instruction & 0xF800u) == 0xF000u) {
+        std::array<std::uint8_t, sizeof(std::uint16_t)> lower_bytes{};
+        std::string lower_error;
+        if (!memory_.read(pc + 2u, lower_bytes, lower_error)) {
+            return {
+                .reason = ArmStopReason::memory_fault,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb-2 branch suffix fetch failed: " + lower_error
+            };
+        }
+        std::uint16_t lower = 0;
+        std::memcpy(&lower, lower_bytes.data(), sizeof(lower));
+        if ((lower & 0xC000u) == 0xC000u) {
+            const auto sign = (instruction >> 10) & 1u;
+            const auto j1 = (lower >> 13) & 1u;
+            const auto j2 = (lower >> 11) & 1u;
+            const auto i1 = (~(j1 ^ sign)) & 1u;
+            const auto i2 = (~(j2 ^ sign)) & 1u;
+            const bool link_to_thumb = (lower & 0x1000u) != 0;
+            std::uint32_t encoded_offset = (sign << 24) | (i1 << 23) | (i2 << 22) |
+                ((instruction & 0x03FFu) << 12);
+            if (link_to_thumb) {
+                encoded_offset |= (lower & 0x07FFu) << 1;
+            } else {
+                encoded_offset |= ((lower >> 1) & 0x03FFu) << 2;
+            }
+            const auto offset = static_cast<std::int32_t>(encoded_offset << 7) >> 7;
+            const auto base = link_to_thumb ? pc + 4u : (pc + 4u) & ~3u;
+            const auto target64 = static_cast<std::int64_t>(base) + offset;
+            if (target64 < 0 || target64 > std::numeric_limits<std::uint32_t>::max()) {
+                return {
+                    .reason = ArmStopReason::unsupported_instruction,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = static_cast<std::uint32_t>(instruction) |
+                        (static_cast<std::uint32_t>(lower) << 16),
+                    .detail = "Thumb-2 branch target leaves guest address space."
+                };
+            }
+            state_.registers[register_lr] = (pc + 4u) | 1u;
+            state_.thumb = link_to_thumb;
+            state_.registers[register_pc] = static_cast<std::uint32_t>(target64) &
+                (state_.thumb ? ~1u : ~3u);
+            return {
+                .reason = ArmStopReason::instruction_limit,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = state_.registers[register_pc],
+                .last_instruction = static_cast<std::uint32_t>(instruction) |
+                    (static_cast<std::uint32_t>(lower) << 16)
+            };
+        }
     }
 
     // A leading 11101/11110/11111 halfword begins a 32-bit Thumb-2 encoding.

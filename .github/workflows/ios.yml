@@ -95,7 +95,8 @@ jobs:
           ctest --test-dir build-core-tests --output-on-failure
           mkdir -p artifacts
           ./build-core-tests/vita3k_ios_core_smoke_tests \
-            --emit-fixture artifacts/milestone9-thumb-homebrew.elf
+            --emit-fixture artifacts/milestone9-thumb-homebrew.elf \
+            --verify-vitasdk artifacts/milestone10-vitasdk-homebrew.velf
 
       - name: Configure iOS application and core target
         run: |

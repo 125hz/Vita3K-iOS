@@ -54,13 +54,10 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
             nid_hex(nid_sce_kernel_get_thread_id) + ").";
         return result;
     }
-    if (!contains_nid(imported_nids, nid_sce_kernel_exit_thread)) {
-        result.detail = "The module does not import sceKernelExitThread (" +
-            nid_hex(nid_sce_kernel_exit_thread) + ").";
-        return result;
-    }
+    const bool imports_exit_thread = contains_nid(imported_nids, nid_sce_kernel_exit_thread);
     if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" ||
-        std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread") {
+        (imports_exit_thread &&
+            std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
         return result;
     }
@@ -73,16 +70,20 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
             ++result.hle_dispatch_count;
             return result.thread_id;
         });
-    const bool exit_bound = dispatcher.bind(nid_sce_kernel_exit_thread,
-        "sceKernelExitThread", [&](ArmCpuState &state) -> std::int32_t {
-            ++result.hle_dispatch_count;
-            result.exit_status = static_cast<std::int32_t>(state.registers[0]);
-            exit_requested = true;
-            state.stop_requested = true;
-            state.stop_code = result.exit_status;
-            return 0;
-        });
-    if (!get_id_bound || !exit_bound || dispatcher.binding_count() != 2) {
+    bool exit_bound = true;
+    if (imports_exit_thread) {
+        exit_bound = dispatcher.bind(nid_sce_kernel_exit_thread,
+            "sceKernelExitThread", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                result.exit_status = static_cast<std::int32_t>(state.registers[0]);
+                exit_requested = true;
+                state.stop_requested = true;
+                state.stop_code = result.exit_status;
+                return 0;
+            });
+    }
+    const auto expected_binding_count = imports_exit_thread ? 2u : 1u;
+    if (!get_id_bound || !exit_bound || dispatcher.binding_count() != expected_binding_count) {
         result.detail = "The minimal kernel HLE bindings could not be registered.";
         return result;
     }
@@ -98,14 +99,20 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     result.instruction_count = execution.instructions_executed;
     result.observed_thread_id = state.registers[2];
     result.exited = execution.halted() && exit_requested && state.stop_requested;
+    result.returned = execution.halted() && !exit_requested && !state.stop_requested;
+    result.return_value = state.registers[0];
 
     std::ostringstream detail;
     detail << "Thread " << (thread_name.empty() ? "<unnamed>" : thread_name)
            << " (UID 0x" << std::hex << std::uppercase << result.thread_id << std::dec
            << ") executed " << result.instruction_count << " instructions and "
-           << result.hle_dispatch_count << " HLE calls; ";
+           << result.hle_dispatch_count << " HLE call"
+           << (result.hle_dispatch_count == 1 ? "" : "s") << "; ";
     if (result.exited) {
         detail << "sceKernelExitThread(" << result.exit_status << ") completed.";
+    } else if (result.returned) {
+        detail << "module_start returned " << result.return_value <<
+            " through the zero-link sentinel.";
     } else {
         detail << execution.detail;
     }

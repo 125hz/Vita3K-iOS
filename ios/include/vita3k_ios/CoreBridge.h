@@ -22,6 +22,7 @@ struct ImportedArtifact {
     bool module_start_valid;
     bool execution_attempted;
     bool thread_exited;
+    bool thread_returned;
     std::string module_name;
     std::uint32_t module_nid;
     std::size_t relocation_segment_count;
@@ -36,6 +37,7 @@ struct ImportedArtifact {
     std::uint64_t executed_instruction_count;
     std::size_t hle_dispatch_count;
     std::int32_t thread_exit_status;
+    std::uint32_t thread_return_value;
     std::string detail;
 };
 

@@ -13,11 +13,13 @@ struct GuestThreadRunResult {
     bool attempted = false;
     bool started = false;
     bool exited = false;
+    bool returned = false;
     std::int32_t thread_id = 0;
     std::int32_t exit_status = 0;
     std::uint32_t observed_thread_id = 0;
     std::uint64_t instruction_count = 0;
     std::size_t hle_dispatch_count = 0;
+    std::uint32_t return_value = 0;
     std::string detail;
 };
 

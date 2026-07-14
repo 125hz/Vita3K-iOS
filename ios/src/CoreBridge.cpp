@@ -379,6 +379,7 @@ void update_status_from_storage() {
             .module_start_valid = load.module_start_valid,
             .execution_attempted = thread.attempted,
             .thread_exited = thread.exited,
+            .thread_returned = thread.returned,
             .module_name = load.module_name,
             .module_nid = load.module_nid,
             .relocation_segment_count = probe.relocation_segments.size(),
@@ -393,6 +394,7 @@ void update_status_from_storage() {
             .executed_instruction_count = thread.instruction_count,
             .hle_dispatch_count = thread.hle_dispatch_count,
             .thread_exit_status = thread.exit_status,
+            .thread_return_value = thread.return_value,
             .detail = std::move(detail)
         });
     }
@@ -437,11 +439,12 @@ void update_status_from_storage() {
     for (const auto &artifact : core_status.imported_artifacts) {
         summary << "\n  * " << artifact.filename << " - " << artifact.kind
                 << " - " << (artifact.structurally_valid ? "header valid" : "not loadable")
-                << " - " << artifact.load_segment_count << " load segments"
+                << " - " << artifact.load_segment_count << " load segment"
+                << (artifact.load_segment_count == 1 ? "" : "s")
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: load a tiny real VitaSDK ELF, then add each required Thumb-2 instruction and libc/kernel HLE call from its diagnostic trace. Rendering is not active yet.";
+    summary << "\n\nNext: expand the real VitaSDK program one service at a time, then connect its first renderer-owned frame. General Vita homebrew and games are not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }

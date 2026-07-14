@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slice of upstream Vita3K code. It now loads and runs the `module_start` of a deliberately tiny compiled-style Vita ELF inside a bounded guest-thread context, but it does **not** yet execute ordinary VitaSDK homebrew or games.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slice of upstream Vita3K code. It now loads and completes the `module_start` of a deliberately tiny program built by the real VitaSDK toolchain inside a bounded guest-thread context, but it does **not** yet execute general Vita homebrew or games.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -29,22 +29,25 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - a bounded single-thread runner implementing minimal `sceKernelGetThreadId` and `sceKernelExitThread` semantics
 - a generated Thumb-entry module that observes its guest thread UID and exits with a verified status
 - interworking diagnostics covering Thumb PUSH, literal/SP-relative loads and stores, MOV/MOVS, BLX into ARM SVC stubs, and `MOV pc,lr` back to Thumb
+- a second fixture compiled in CI by the pinned official `vitasdk/vitasdk` image rather than hand-encoded by this repository
+- preferred-address loading of its `ET_SCE_RELEXEC` VELF, including 10 verified relocations and real module/import table parsing
+- bounded execution of its compiler-generated Thumb/Thumb-2 prologue, BLX import call, UXTB, and POP return sequence
 - a narrow C++ `CoreBridge` seam for additional core integration
 - no signing credentials or provisioning profiles in CI
 
 See [PORTING.md](PORTING.md) for the integration backlog and known blockers. See [docs/ios-development.md](../docs/ios-development.md) for the complete Windows-first workflow.
 
-## Milestone 9 fixture test
+## Milestone 10 fixture test
 
-The GitHub Actions artifact contains both the unsigned IPA and `milestone9-thumb-homebrew.elf`. The ELF is generated entirely by this repository and contains no Sony firmware or game content.
+The GitHub Actions artifact contains the unsigned IPA, the older generated Milestone 9 ELF, and two outputs built from the repository's tiny C program by the pinned official VitaSDK image: `milestone10-vitasdk-homebrew.velf` and `milestone10-vitasdk-homebrew.self`. None contains Sony firmware or game content.
 
-1. Install the Milestone 9 IPA using your normal signing workflow.
+1. Install the Milestone 10 IPA using your normal signing workflow.
 2. In the iOS Files app, open **On My iPhone → Vita3K iOS → Vita3K → imports**.
-3. Remove the older milestone fixture, then copy `milestone9-thumb-homebrew.elf` into that folder.
+3. Remove the older milestone fixture, then copy only `milestone10-vitasdk-homebrew.velf` into that folder.
 4. Open Vita3K iOS and tap **Rescan Imports**.
-5. Confirm the artifact reports `MAPPED`, `2 function stubs rebound`, `12 instructions`, `2 HLE calls`, and `sceKernelExitThread(42) completed`.
+5. Confirm the artifact reports `MAPPED`, `10 relocation entries/10 verified patches`, `1 function stub rebound`, `6 instructions`, `1 HLE call`, and `module_start returned 1`.
 
-Do not use a VPK, SELF/`eboot.bin`, firmware PUP, or commercial game for this test. Those formats remain outside the executable path. The official VitaSDK [`basic_program`](https://github.com/vitasdk/samples/tree/master/basic_program) sample is the intended next real-homebrew target, after relocatable ELF/SELF handling and additional instruction/HLE coverage are implemented.
+The `.self` is retained as evidence that the same build produced a normal Vita container, but SELF segment extraction remains probe-only; do not use it for this device test. VPK installation, firmware PUP installation, and commercial games also remain outside the executable path.
 
 ## Build contract
 
@@ -64,6 +67,6 @@ cmake --build build-ios --config Release --target Vita3KiOS -- \
 
 This command requires macOS and Xcode; the GitHub Actions workflow runs it remotely for Windows contributors.
 
-`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map a fixed-address plain `ET_SCE_EXEC` file, apply checked relocations, validate its module-info header, inventory import/export NIDs, rewrite ARM function stubs, and execute a Thumb-entry synthetic `module_start` through a single guest-thread context. SELF decoding, relocatable ELF rebasing, general Thumb-2, thread scheduling, broader production HLE coverage, the full CPU backend, renderer, audio, and input remain tracked in `PORTING.md`.
+`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map fixed-address `ET_SCE_EXEC` files and preferred-address `ET_SCE_RELEXEC` VELFs, apply checked relocations, validate module metadata, inventory import/export NIDs, rewrite ARM function stubs, and execute the narrow compiler path used by the Milestone 10 program. General relocatable placement, SELF payload extraction, broader Thumb-2, thread scheduling, production HLE coverage, the full CPU backend, renderer, audio, and input remain tracked in `PORTING.md`.
 
-Milestone 9 rewrites parsed imported-function stubs to Vita3K's ARM `SVC; MOV pc,lr; NID` layout. Its Thumb-entry acceptance routine reaches those stubs with `BLX`, returns to Thumb through the low bit in LR, and round-trips the returned thread UID through guest stack memory before exiting. This is intentionally not advertised as a general ARMv7 interpreter: conditional execution, 32-bit Thumb-2, most addressing modes, floating point/NEON, exceptions, atomics, and most data-processing instructions remain unsupported. Only the first valid fixed-address plain ELF is retained in guest memory; relocatable ELF and SELF containers remain probe-only.
+Milestone 10 preserves the synthetic tests and adds an independently compiled VitaSDK VELF. The loader maps that VELF at its preferred addresses, applies its real compact relocation stream, parses its genuine module/import tables, rebinds `sceKernelGetThreadId`, and completes `module_start` through six guest instructions. This is intentionally not advertised as a general ARMv7 interpreter: conditional execution, most 32-bit Thumb-2, most addressing modes, floating point/NEON, exceptions, atomics, and most data-processing instructions remain unsupported. Relocatable segments are not yet placed at alternative addresses if their preferred ranges are unavailable, and SELF containers remain probe-only.
