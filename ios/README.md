@@ -16,6 +16,7 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - bounded header probing for Vita SELF/ELF, VPK/ZIP, and PARAM.SFO candidates before any guest-memory mapping
 - a portable 4 GiB Vita guest-address-space reservation with one-page commit, read/write, decommit, and protection diagnostics
 - validated ELF `PT_LOAD` segment plans with 32-bit address-overflow and file-range checks
+- checked guest-segment mapping with file-byte copying, BSS zero-fill, final host-page protection, readback, and unmapping diagnostics
 - a narrow C++ `CoreBridge` seam for additional core integration
 - no signing credentials or provisioning profiles in CI
 
@@ -39,4 +40,6 @@ cmake --build build-ios --config Release --target Vita3KiOS -- \
 
 This command requires macOS and Xcode; the GitHub Actions workflow runs it remotely for Windows contributors.
 
-`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve the guest address space and plan safe ELF loads, but it does not copy segments into guest memory yet. Relocations, module metadata, the CPU execution backend, renderer, audio, and input remain tracked in `PORTING.md`.
+`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve the guest address space and safely map a synthetic ELF segment. Mapping a real imported ELF, SELF decoding, relocations, module metadata, the CPU execution backend, renderer, audio, and input remain tracked in `PORTING.md`.
+
+The current range tracker deliberately rejects segments whose aligned host pages overlap. Real Vita binaries can contain adjacent segments that share a host page, especially on devices with 16 KiB pages. A later loader milestone must merge those page requirements before real imports can be considered generally loadable.

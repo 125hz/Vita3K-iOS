@@ -21,6 +21,7 @@ struct CoreStatus {
     bool self_tests_passed;
     bool storage_ready;
     bool guest_memory_ready;
+    bool segment_mapping_ready;
     std::uint64_t guest_memory_size;
     std::size_t host_page_size;
     std::string storage_root;

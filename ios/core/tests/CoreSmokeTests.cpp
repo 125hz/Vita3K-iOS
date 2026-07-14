@@ -23,7 +23,8 @@ int main() {
 
     const auto status = vita3k::ios::initialize_core(test_root);
     if (!status.linked || !status.self_tests_passed || !status.storage_ready ||
-        !status.guest_memory_ready || status.guest_memory_size != (1ULL << 32)) {
+        !status.guest_memory_ready || !status.segment_mapping_ready ||
+        status.guest_memory_size != (1ULL << 32)) {
         std::cerr << status.summary << '\n';
         return 1;
     }

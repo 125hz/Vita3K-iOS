@@ -10,7 +10,7 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 | Frontend/lifecycle | Desktop `main.cpp`, Qt windows, SDL desktop events | Drive initialization, pause, resume, and shutdown from UIKit scenes/controllers | App backgrounds and resumes without losing emulator state |
 | Renderer | Apple desktop path uses Vulkan through MoltenVK and a Cocoa-backed `CAMetalLayer` | Choose and package an iOS-compatible MoltenVK build or create a native Metal backend; accept an `MTKView`/`CAMetalLayer` supplied by UIKit | Clear and present one emulator-owned frame on device |
 | CPU/JIT | Dynarmic and memory helpers are built for current desktop/Android hosts | Cross-compile Dynarmic for `arm64-apple-ios`; isolate executable-memory allocation, protection transitions, cache invalidation, and exception handling | Execute a deterministic guest-code unit test on device |
-| Guest memory | Core reserves a contiguous 4 GiB region and uses POSIX signals/mach context details on Apple | **Started:** portable 4 GiB reservation plus page commit/read-write/protect diagnostic; add range allocator, segment mapping, and iOS fault handling | Native tests pass; physical-device diagnostic pending |
+| Guest memory | Core reserves a contiguous 4 GiB region and uses POSIX signals/mach context details on Apple | **Started:** portable 4 GiB reservation plus checked segment copy, BSS zero-fill, page protection, readback, and unmap diagnostic; add shared-page segment merging and iOS fault handling | Native tests pass; physical-device Milestone 3 diagnostic pending |
 | Dependencies | Boost, FFmpeg, SDL, Qt, Vulkan/MoltenVK and other submodules follow desktop/Android recipes | Inventory each dependency, disable unused ones, and build required libraries for `iphoneos arm64` | Reproducible dependency build with no simulator/macOS slices |
 | Filesystem | Desktop paths, dialogs, and writable locations | **Started:** sandbox layout, import enumeration, and bounded SELF/ELF/VPK/SFO header probing exist; add document picker and Vita VFS mapping | Synthetic Vita ELF passes native smoke test; real fixture/device import pending |
 | Audio/input | Desktop SDL/Qt device and event assumptions | Add AVAudioEngine/SDL-iOS audio path, GameController, and touch input adapters | Controller and audio loopback diagnostics pass |
@@ -20,11 +20,12 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 
 1. **Done for the first dependency-free slice:** create `vita3k_ios_core`, cross-compile the ARM encoder/NID database for iPhone `arm64`, and run on-device self-tests.
 2. **Done for plain ELF planning:** bounded SELF/ELF validation now emits checked `PT_LOAD` plans; SELF segment payload decoding remains pending.
-3. **Started:** portable guest-memory reservation and page-protection diagnostics exist; next map validated plain-ELF segments and zero-fill their BSS ranges.
-4. Run loader and CPU unit tests against legal homebrew fixtures before adding presentation.
-5. Connect the renderer to the existing `MTKView` host.
-6. Add sandboxed storage, controller, touch, and audio adapters.
-7. Only after interpreter-mode boot is stable, integrate and validate the ARM64 JIT platform layer.
+3. **Done for synthetic segments:** portable guest-memory reservation and mapping diagnostics copy file data, zero-fill BSS, apply final page permissions, read back, and unmap the test range.
+4. Map a real imported plain ELF, merge permissions for segments sharing a 16 KiB host page, then extract module metadata and apply relocations.
+5. Run loader and CPU unit tests against legal homebrew fixtures before adding presentation.
+6. Connect the renderer to the existing `MTKView` host.
+7. Add sandboxed storage, controller, touch, and audio adapters.
+8. Only after interpreter-mode boot is stable, integrate and validate the ARM64 JIT platform layer.
 
 Keep platform checks narrow. Prefer interfaces such as `HostFilesystem`, `HostDisplay`, `HostAudio`, and `JitMemory` over broad `#ifdef __APPLE__` blocks: on current upstream, `__APPLE__` often means macOS and is not sufficient to identify UIKit/iOS behavior.
 
