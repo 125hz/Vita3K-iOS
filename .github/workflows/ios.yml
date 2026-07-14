@@ -50,7 +50,7 @@ jobs:
           ctest --test-dir build-core-tests --output-on-failure
           mkdir -p artifacts
           ./build-core-tests/vita3k_ios_core_smoke_tests \
-            --emit-fixture artifacts/milestone8-compiled-homebrew.elf
+            --emit-fixture artifacts/milestone9-thumb-homebrew.elf
 
       - name: Configure iOS application and core target
         run: |
@@ -86,6 +86,6 @@ jobs:
           name: Vita3K-iOS-${{ github.sha }}-unsigned
           path: |
             artifacts/Vita3K-iOS-unsigned.ipa
-            artifacts/milestone8-compiled-homebrew.elf
+            artifacts/milestone9-thumb-homebrew.elf
           if-no-files-found: error
           retention-days: 14

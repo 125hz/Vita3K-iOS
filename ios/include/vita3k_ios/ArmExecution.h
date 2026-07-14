@@ -77,6 +77,7 @@ public:
 
 private:
     [[nodiscard]] ArmExecutionResult step();
+    [[nodiscard]] ArmExecutionResult step_thumb();
 
     GuestMemory &memory_;
     const HLEDispatcher &hle_dispatcher_;

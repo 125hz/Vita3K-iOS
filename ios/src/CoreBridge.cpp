@@ -115,7 +115,7 @@ bool run_segment_mapping_test(GuestMemory &memory, std::string &error) {
 bool run_loader_pipeline_test(GuestMemory &memory, ImportBindingResult &binding_result,
     GuestThreadRunResult &thread_result, std::string &error) {
     constexpr std::uint32_t test_address = 0x20000;
-    constexpr std::uint32_t module_start = 0x60;
+    constexpr std::uint32_t module_start = 0x61;
     constexpr std::uint32_t get_thread_id_nid = 0x0FB972F9;
     constexpr std::uint32_t exit_thread_nid = 0x0C8A38E1;
     const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
@@ -136,17 +136,21 @@ bool run_loader_pipeline_test(GuestMemory &memory, ImportBindingResult &binding_
     write_value(payload, 0x34, static_cast<std::uint32_t>(0x51F7A4D2));
     write_value(payload, 0x44, module_start);
 
-    const std::array<std::uint32_t, 8> guest_program{
-        0xE92D4010u, // PUSH {r4, lr}
-        0xEBFFFFF5u, // BL 0x40: rewritten sceKernelGetThreadId import stub
-        0xE1A04000u, // MOV r4, r0
-        0xE58D4000u, // STR r4, [sp]
-        0xE59D2000u, // LDR r2, [sp]
-        0xE8BD4010u, // POP {r4, lr}
-        encode_arm_inst(INSTRUCTION_MOVW, 42, 0),
-        0xEBFFFFF3u // BL 0x50: rewritten sceKernelExitThread import stub
+    const std::array<std::uint16_t, 9> guest_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4B04u, // LDR r3, [pc, #16]: address of ARM get-thread-ID stub
+        0x4798u, // BLX r3: enter the ARM import trampoline
+        0x4604u, // MOV r4, r0
+        0x9400u, // STR r4, [sp]
+        0x9A00u, // LDR r2, [sp]
+        0x202Au, // MOVS r0, #42
+        0x4B02u, // LDR r3, [pc, #8]: address of ARM exit-thread stub
+        0x4798u // BLX r3
     };
-    std::memcpy(payload.data() + module_start, guest_program.data(), sizeof(guest_program));
+    std::memcpy(payload.data() + (module_start & ~1u), guest_program.data(),
+        sizeof(guest_program));
+    write_value(payload, 0x74, test_address + static_cast<std::uint32_t>(0x40));
+    write_value(payload, 0x78, test_address + static_cast<std::uint32_t>(0x50));
 
     write_value(payload, 0x80, static_cast<std::uint16_t>(0x20));
     write_value(payload, 0x82, static_cast<std::uint16_t>(1));
@@ -229,7 +233,7 @@ bool run_loader_pipeline_test(GuestMemory &memory, ImportBindingResult &binding_
         return false;
     }
     if (!thread_result.started || !thread_result.exited ||
-        thread_result.instruction_count != 11 ||
+        thread_result.instruction_count != 12 ||
         thread_result.hle_dispatch_count != 2 || thread_result.exit_status != 42 ||
         thread_result.observed_thread_id != static_cast<std::uint32_t>(thread_result.thread_id)) {
         error = "The loaded module_start/thread diagnostic failed: " + thread_result.detail;
@@ -416,7 +420,7 @@ void update_status_from_storage() {
             " instructions + " + std::to_string(core_status.hle_test_dispatch_count) +
             " bound NID call)"
         : "FAILED");
-    summary << "\nLoaded entry/thread: " << (core_status.guest_thread_ready
+    summary << "\nThumb/ARM entry/thread: " << (core_status.guest_thread_ready
         ? "passed (" + std::to_string(core_status.thread_test_instruction_count) +
             " instructions + " + std::to_string(core_status.thread_test_hle_dispatch_count) +
             " kernel HLE calls + exit " + std::to_string(core_status.thread_test_exit_status) + ")"
@@ -437,7 +441,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: add Thumb-2 and more libc/kernel HLE for a tiny VitaSDK homebrew. Rendering is not active yet.";
+    summary << "\n\nNext: load a tiny real VitaSDK ELF, then add each required Thumb-2 instruction and libc/kernel HLE call from its diagnostic trace. Rendering is not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }

@@ -136,7 +136,7 @@ Every subsystem integrated into `CoreBridge` should log:
 
 Keep logging bounded before the emulator core is enabled: add rotation (for example, three 5 MiB files) before high-frequency CPU or renderer tracing. Never log game keys, account credentials, or copyrighted game content.
 
-For the Milestone 8 loader diagnostic, download `milestone8-compiled-homebrew.elf` from the same Actions artifact as the IPA. Copy it through the Files app to `Documents/Vita3K/imports`, then tap **Rescan Imports**. A successful diagnostic reports `MAPPED`, two rebound function stubs, 11 executed instructions, two HLE calls, and exit status 42. VPK, SELF, relocatable ELF, firmware, and commercial-game files remain outside the executable path.
+For the Milestone 9 loader diagnostic, download `milestone9-thumb-homebrew.elf` from the same Actions artifact as the IPA. Remove the older fixture from `Documents/Vita3K/imports`, copy the new file through the Files app, then tap **Rescan Imports**. A successful diagnostic reports `MAPPED`, two rebound function stubs, 12 executed instructions across Thumb and ARM modes, two HLE calls, and exit status 42. VPK, SELF, relocatable ELF, firmware, and commercial-game files remain outside the executable path.
 
 Keep firmware files such as `fontpkg.pup`, `preinstall.pup`, and the system update PUP on the local device/PC. Do not add them to Git, CI caches, or Actions artifacts. Firmware selection and extraction will be added after the iOS build includes the upstream crypto, package, FAT/exFAT, and psvpfs dependencies needed by `install_pup`.
 

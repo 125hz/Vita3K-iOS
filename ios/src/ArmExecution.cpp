@@ -76,7 +76,8 @@ void ArmInterpreter::reset(std::uint32_t entry_point, std::uint32_t stack_pointe
     state_ = {};
     state_.registers[register_sp] = stack_pointer;
     state_.registers[register_lr] = link_register;
-    state_.registers[register_pc] = entry_point & ~3u;
+    state_.thumb = (entry_point & 1u) != 0;
+    state_.registers[register_pc] = entry_point & (state_.thumb ? ~1u : ~3u);
 }
 
 ArmExecutionResult ArmInterpreter::run(std::size_t instruction_limit) {
@@ -106,12 +107,7 @@ ArmExecutionResult ArmInterpreter::run(std::size_t instruction_limit) {
 ArmExecutionResult ArmInterpreter::step() {
     const auto pc = state_.registers[register_pc];
     if (state_.thumb) {
-        return {
-            .reason = ArmStopReason::unsupported_thumb,
-            .instructions_executed = state_.instruction_count,
-            .final_pc = pc,
-            .detail = "Thumb execution is not implemented in the Milestone 8 interpreter."
-        };
+        return step_thumb();
     }
 
     std::array<std::uint8_t, sizeof(std::uint32_t)> bytes{};
@@ -187,7 +183,13 @@ ArmExecutionResult ArmInterpreter::step() {
     if ((instruction & 0x0FFF0FF0u) == 0x01A00000u) {
         const auto destination = (instruction >> 12) & 0xFu;
         const auto source = instruction & 0xFu;
-        state_.registers[destination] = state_.registers[source];
+        const auto value = state_.registers[source];
+        if (destination == register_pc) {
+            state_.thumb = (value & 1u) != 0;
+            state_.registers[register_pc] = value & (state_.thumb ? ~1u : ~3u);
+        } else {
+            state_.registers[destination] = value;
+        }
         return {
             .reason = ArmStopReason::instruction_limit,
             .instructions_executed = state_.instruction_count,
@@ -448,6 +450,197 @@ ArmExecutionResult ArmInterpreter::step() {
         .final_pc = pc,
         .last_instruction = instruction,
         .detail = "Unsupported ARM instruction " + hexadecimal(instruction) +
+            " at " + hexadecimal(pc) + "."
+    };
+}
+
+ArmExecutionResult ArmInterpreter::step_thumb() {
+    const auto pc = state_.registers[register_pc];
+    std::array<std::uint8_t, sizeof(std::uint16_t)> bytes{};
+    std::string memory_error;
+    if (!memory_.read(pc, bytes, memory_error)) {
+        return {
+            .reason = ArmStopReason::memory_fault,
+            .instructions_executed = state_.instruction_count,
+            .final_pc = pc,
+            .detail = "Thumb instruction fetch failed at " + hexadecimal(pc) + ": " +
+                memory_error
+        };
+    }
+
+    std::uint16_t instruction = 0;
+    std::memcpy(&instruction, bytes.data(), sizeof(instruction));
+    state_.registers[register_pc] = pc + 2;
+    ++state_.instruction_count;
+
+    const auto continued = [&]() {
+        return ArmExecutionResult{
+            .reason = ArmStopReason::instruction_limit,
+            .instructions_executed = state_.instruction_count,
+            .final_pc = state_.registers[register_pc],
+            .last_instruction = instruction
+        };
+    };
+
+    // PUSH {R0-R7, LR}. This covers the compact compiler prologue used by the
+    // Milestone 9 fixture without claiming the wider Thumb-2 encodings.
+    if ((instruction & 0xFE00u) == 0xB400u) {
+        const auto register_list = static_cast<std::uint16_t>(
+            (instruction & 0x00FFu) | ((instruction & 0x0100u) != 0 ? (1u << register_lr) : 0));
+        const auto register_count = std::popcount(register_list);
+        if (register_count == 0) {
+            return {
+                .reason = ArmStopReason::unsupported_instruction,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb PUSH has an empty register list."
+            };
+        }
+        const auto byte_count = static_cast<std::uint32_t>(register_count * sizeof(std::uint32_t));
+        const auto old_sp = state_.registers[register_sp];
+        if (old_sp < byte_count) {
+            return {
+                .reason = ArmStopReason::memory_fault,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb PUSH underflowed guest address space."
+            };
+        }
+        const auto new_sp = old_sp - byte_count;
+        auto cursor = new_sp;
+        for (std::size_t index = 0; index < state_.registers.size(); ++index) {
+            if ((register_list & (1u << index)) == 0) {
+                continue;
+            }
+            std::array<std::uint8_t, sizeof(std::uint32_t)> word{};
+            std::memcpy(word.data(), &state_.registers[index], sizeof(std::uint32_t));
+            std::string stack_error;
+            if (!memory_.write(cursor, word, stack_error)) {
+                return {
+                    .reason = ArmStopReason::memory_fault,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = instruction,
+                    .detail = "Thumb PUSH failed: " + stack_error
+                };
+            }
+            cursor += sizeof(std::uint32_t);
+        }
+        state_.registers[register_sp] = new_sp;
+        return continued();
+    }
+
+    // LDR Rt, [PC, #imm8*4]. Thumb uses Align(PC+4, 4) as the literal base.
+    if ((instruction & 0xF800u) == 0x4800u) {
+        const auto destination = (instruction >> 8) & 0x7u;
+        const auto address = ((pc + 4u) & ~3u) + ((instruction & 0xFFu) << 2);
+        std::array<std::uint8_t, sizeof(std::uint32_t)> word{};
+        std::string data_error;
+        if (!memory_.read(address, word, data_error)) {
+            return {
+                .reason = ArmStopReason::memory_fault,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb literal LDR failed: " + data_error
+            };
+        }
+        std::memcpy(&state_.registers[destination], word.data(), sizeof(std::uint32_t));
+        return continued();
+    }
+
+    // BLX Rm. LR records a Thumb return address and the low target bit selects
+    // the next instruction set. The fixture uses this to call ARM import stubs.
+    if ((instruction & 0xFF87u) == 0x4780u) {
+        const auto source = (instruction >> 3) & 0xFu;
+        const auto target = state_.registers[source];
+        state_.registers[register_lr] = (pc + 2u) | 1u;
+        state_.thumb = (target & 1u) != 0;
+        state_.registers[register_pc] = target & (state_.thumb ? ~1u : ~3u);
+        return continued();
+    }
+
+    // MOV (register), including the high-register encoding but excluding PC.
+    if ((instruction & 0xFF00u) == 0x4600u) {
+        const auto destination = (instruction & 0x7u) | ((instruction >> 4) & 0x8u);
+        const auto source = (instruction >> 3) & 0xFu;
+        if (destination == register_pc) {
+            return {
+                .reason = ArmStopReason::unsupported_instruction,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb MOV to PC is outside the Milestone 9 subset."
+            };
+        }
+        state_.registers[destination] = state_.registers[source];
+        return continued();
+    }
+
+    // STR/LDR Rt, [SP, #imm8*4].
+    if ((instruction & 0xF000u) == 0x9000u) {
+        const bool load = (instruction & 0x0800u) != 0;
+        const auto data_register = (instruction >> 8) & 0x7u;
+        const auto address = state_.registers[register_sp] + ((instruction & 0xFFu) << 2);
+        std::array<std::uint8_t, sizeof(std::uint32_t)> word{};
+        std::string data_error;
+        if (load) {
+            if (!memory_.read(address, word, data_error)) {
+                return {
+                    .reason = ArmStopReason::memory_fault,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = instruction,
+                    .detail = "Thumb SP-relative LDR failed: " + data_error
+                };
+            }
+            std::memcpy(&state_.registers[data_register], word.data(), sizeof(std::uint32_t));
+        } else {
+            std::memcpy(word.data(), &state_.registers[data_register], sizeof(std::uint32_t));
+            if (!memory_.write(address, word, data_error)) {
+                return {
+                    .reason = ArmStopReason::memory_fault,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = instruction,
+                    .detail = "Thumb SP-relative STR failed: " + data_error
+                };
+            }
+        }
+        return continued();
+    }
+
+    // MOVS Rd, #imm8. Flag updates are intentionally not consumed yet.
+    if ((instruction & 0xF800u) == 0x2000u) {
+        const auto destination = (instruction >> 8) & 0x7u;
+        state_.registers[destination] = instruction & 0xFFu;
+        return continued();
+    }
+
+    if (instruction == 0xBF00u) {
+        return continued();
+    }
+
+    // A leading 11101/11110/11111 halfword begins a 32-bit Thumb-2 encoding.
+    if ((instruction & 0xF800u) >= 0xE800u) {
+        return {
+            .reason = ArmStopReason::unsupported_thumb,
+            .instructions_executed = state_.instruction_count,
+            .final_pc = pc,
+            .last_instruction = instruction,
+            .detail = "Unsupported 32-bit Thumb-2 instruction prefix " +
+                hexadecimal(instruction) + " at " + hexadecimal(pc) + "."
+        };
+    }
+
+    return {
+        .reason = ArmStopReason::unsupported_instruction,
+        .instructions_executed = state_.instruction_count,
+        .final_pc = pc,
+        .last_instruction = instruction,
+        .detail = "Unsupported 16-bit Thumb instruction " + hexadecimal(instruction) +
             " at " + hexadecimal(pc) + "."
     };
 }

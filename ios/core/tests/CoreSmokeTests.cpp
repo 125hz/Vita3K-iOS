@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
         !status.arm_execution_ready ||
         !status.guest_thread_ready ||
         status.arm_test_instruction_count != 7 || status.hle_test_dispatch_count != 1 ||
-        status.thread_test_instruction_count != 11 ||
+        status.thread_test_instruction_count != 12 ||
         status.thread_test_hle_dispatch_count != 2 || status.thread_test_exit_status != 42 ||
         status.thread_test_bound_stub_count != 2 ||
         status.guest_memory_size != (1ULL << 32)) {
@@ -102,21 +102,24 @@ int main(int argc, char **argv) {
     write_value(elf, 192, static_cast<std::uint32_t>(0xA0));
     write_value(elf, 196, static_cast<std::uint32_t>(0xD4));
     write_value(elf, 200, static_cast<std::uint32_t>(0x1234ABCD));
-    write_value(elf, 216, static_cast<std::uint32_t>(0x60));
+    write_value(elf, 216, static_cast<std::uint32_t>(0x61));
 
     constexpr std::uint32_t get_thread_id_nid = 0x0FB972F9;
     constexpr std::uint32_t exit_thread_nid = 0x0C8A38E1;
-    const std::array<std::uint32_t, 8> guest_program{
-        0xE92D4010u,
-        0xEBFFFFF5u,
-        0xE1A04000u,
-        0xE58D4000u,
-        0xE59D2000u,
-        0xE8BD4010u,
-        0xE300002Au,
-        0xEBFFFFF3u
+    const std::array<std::uint16_t, 9> guest_program{
+        0xB510u,
+        0x4B04u,
+        0x4798u,
+        0x4604u,
+        0x9400u,
+        0x9A00u,
+        0x202Au,
+        0x4B02u,
+        0x4798u
     };
     std::memcpy(elf.data() + 244, guest_program.data(), sizeof(guest_program));
+    write_value(elf, 264, static_cast<std::uint32_t>(0x81000040));
+    write_value(elf, 268, static_cast<std::uint32_t>(0x81000050));
 
     write_value(elf, 276, static_cast<std::uint16_t>(0x20));
     write_value(elf, 278, static_cast<std::uint16_t>(1));
@@ -155,7 +158,7 @@ int main(int argc, char **argv) {
         }
         if (error || !std::filesystem::copy_file(fixture, emitted_fixture,
                 std::filesystem::copy_options::overwrite_existing, error)) {
-            std::cerr << "Could not emit the Milestone 8 fixture: " << error.message() << '\n';
+            std::cerr << "Could not emit the Milestone 9 fixture: " << error.message() << '\n';
             return 4;
         }
     }
@@ -181,8 +184,8 @@ int main(int argc, char **argv) {
         rescanned.imported_artifacts.front().exported_nid_count != 1 ||
         rescanned.imported_artifacts.front().imported_nid_count != 2 ||
         rescanned.imported_artifacts.front().bound_import_stub_count != 2 ||
-        rescanned.imported_artifacts.front().module_start_address != 0x81000060 ||
-        rescanned.imported_artifacts.front().executed_instruction_count != 11 ||
+        rescanned.imported_artifacts.front().module_start_address != 0x81000061 ||
+        rescanned.imported_artifacts.front().executed_instruction_count != 12 ||
         rescanned.imported_artifacts.front().hle_dispatch_count != 2 ||
         rescanned.imported_artifacts.front().thread_exit_status != 42 ||
         rescanned.imported_artifacts.front().module_name != "synthetic-homebrew" ||
@@ -193,7 +196,7 @@ int main(int argc, char **argv) {
 
     std::filesystem::remove_all(test_root, error);
     if (!emitted_fixture.empty()) {
-        std::cout << "Emitted legal Milestone 8 fixture: " << emitted_fixture << '\n';
+        std::cout << "Emitted legal Milestone 9 fixture: " << emitted_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

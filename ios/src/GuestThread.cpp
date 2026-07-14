@@ -40,8 +40,9 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         .attempted = true,
         .thread_id = first_diagnostic_thread_id
     };
-    if (entry_point == 0 || (entry_point & 3u) != 0) {
-        result.detail = "The module_start entry point is zero, Thumb, or not ARM-word aligned.";
+    const bool thumb_entry = (entry_point & 1u) != 0;
+    if (entry_point == 0 || (!thumb_entry && (entry_point & 3u) != 0)) {
+        result.detail = "The module_start entry point is zero or not aligned for ARM/Thumb.";
         return result;
     }
     if (stack_pointer == 0 || (stack_pointer & 7u) != 0) {
