@@ -18,6 +18,7 @@ struct PlainElfLoadResult {
     bool relocations_applied = false;
     bool module_tables_parsed = false;
     bool module_start_valid = false;
+    bool module_start_from_export = false;
     bool import_stubs_bound = false;
     std::uint64_t file_bytes = 0;
     std::uint64_t memory_bytes = 0;

@@ -179,6 +179,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_install_zip_fixture;
     std::filesystem::path emitted_self_fixture;
     std::filesystem::path emitted_m16_install_zip_fixture;
+    std::filesystem::path emitted_m18_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -194,6 +195,8 @@ int main(int argc, char **argv) {
             emitted_self_fixture = argv[++index];
         } else if (argument == "--emit-m16-install-zip-fixture" && index + 1 < argc) {
             emitted_m16_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m18-install-zip-fixture" && index + 1 < argc) {
+            emitted_m18_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -203,6 +206,7 @@ int main(int argc, char **argv) {
                          "[--emit-install-zip-fixture <path>] "
                          "[--emit-self-fixture <path>] "
                          "[--emit-m16-install-zip-fixture <path>] "
+                         "[--emit-m18-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -325,7 +329,7 @@ int main(int argc, char **argv) {
     write_value(elf, 336, static_cast<std::uint32_t>(0x810000DC));
     write_value(elf, 340, static_cast<std::uint32_t>(0x810000E4));
     write_value(elf, 360, static_cast<std::uint32_t>(0x935CD196));
-    write_value(elf, 364, static_cast<std::uint32_t>(0x81000040));
+    write_value(elf, 364, static_cast<std::uint32_t>(0x81000061));
     write_value(elf, 368, get_thread_id_nid);
     write_value(elf, 372, exit_thread_nid);
     write_value(elf, 376, static_cast<std::uint32_t>(0x81000040));
@@ -341,9 +345,18 @@ int main(int argc, char **argv) {
     const auto plain_self = make_plain_self(elf);
     const auto m16_install_zip = vita3k::ios::make_synthetic_install_zip(
         plain_self, plain_self);
+    auto lifecycle_elf = elf;
+    write_value(lifecycle_elf, 216, static_cast<std::uint32_t>(0x70));
+    const auto lifecycle_self = make_plain_self(lifecycle_elf);
+    const auto m18_install_zip = vita3k::ios::make_synthetic_install_zip(
+        lifecycle_self, lifecycle_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
+    }
+    if (m18_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 18 lifecycle-export fixture.\n";
+        return 42;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -368,6 +381,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 16 installation fixture.\n";
             return 36;
+        }
+    }
+    if (!emitted_m18_install_zip_fixture.empty()) {
+        if (!emitted_m18_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m18_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m18_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m18_install_zip.data()),
+            static_cast<std::streamsize>(m18_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 18 lifecycle-export fixture.\n";
+            return 43;
         }
     }
 
@@ -439,6 +465,7 @@ int main(int argc, char **argv) {
         !rescanned.imported_artifacts.front().module_tables_parsed ||
         !rescanned.imported_artifacts.front().import_stubs_bound ||
         !rescanned.imported_artifacts.front().module_start_valid ||
+        !rescanned.imported_artifacts.front().module_start_from_export ||
         !rescanned.imported_artifacts.front().execution_attempted ||
         !rescanned.imported_artifacts.front().thread_exited ||
         rescanned.imported_artifacts.front().relocation_entry_count != 1 ||
@@ -636,7 +663,37 @@ int main(int argc, char **argv) {
         return 41;
     }
 
-    auto encrypted_self = plain_self;
+    const auto m18_archive_path = test_root / "milestone18-lifecycle-export.zip";
+    std::ofstream m18_archive_stream(m18_archive_path, std::ios::binary);
+    m18_archive_stream.write(reinterpret_cast<const char *>(m18_install_zip.data()),
+        static_cast<std::streamsize>(m18_install_zip.size()));
+    m18_archive_stream.close();
+    const auto m18_install = vita3k::ios::install_game_archive(m18_archive_path);
+    if (!m18_install.success || m18_install.file_count != 6) {
+        std::cerr << m18_install.detail << '\n';
+        return 44;
+    }
+    const auto lifecycle_prepared =
+        vita3k::ios::prepare_installed_title("M15TEST01", true);
+    const auto lifecycle_prepared_status = vita3k::ios::query_core_status();
+    if (!lifecycle_prepared.selected || !lifecycle_prepared.loaded ||
+        !lifecycle_prepared.module_start_from_export ||
+        lifecycle_prepared.module_start_address != 0x81000061 ||
+        lifecycle_prepared.detail.find("via lifecycle export") == std::string::npos ||
+        !lifecycle_prepared_status.selected_boot_available) {
+        std::cerr << lifecycle_prepared.detail << '\n'
+                  << lifecycle_prepared_status.summary << '\n';
+        return 45;
+    }
+    const auto lifecycle_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!lifecycle_boot.started || !lifecycle_boot.exited || lifecycle_boot.returned ||
+        lifecycle_boot.instruction_count != 12 ||
+        lifecycle_boot.hle_dispatch_count != 2 || lifecycle_boot.exit_status != 42) {
+        std::cerr << lifecycle_boot.detail << '\n';
+        return 46;
+    }
+
+    auto encrypted_self = lifecycle_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
     const auto installed_patch_eboot =
@@ -725,6 +782,10 @@ int main(int argc, char **argv) {
     if (!emitted_m16_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 16 installation fixture: "
                   << emitted_m16_install_zip_fixture << '\n';
+    }
+    if (!emitted_m18_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 18 lifecycle-export fixture: "
+                  << emitted_m18_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

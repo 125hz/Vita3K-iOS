@@ -141,11 +141,23 @@ ModuleTableSummary parse_module_tables(GuestMemory &memory,
         const auto tls_count = read_u32(record, 12);
         const auto symbol_count = static_cast<std::uint64_t>(function_count) +
             variable_count + tls_count;
+        std::vector<std::uint32_t> symbol_nids;
+        std::vector<std::uint32_t> symbol_addresses;
         if (symbol_count > maximum_symbols ||
             !read_nid_table(memory, read_u32(record, 24), symbol_count,
-                result.exported_nids, error)) {
+                symbol_nids, error) ||
+            !read_address_table(memory, read_u32(record, 28), symbol_count,
+                symbol_addresses, error)) {
             result.detail = error.empty() ? "A module export symbol count is excessive." : error;
             return result;
+        }
+        result.exported_nids.insert(result.exported_nids.end(),
+            symbol_nids.begin(), symbol_nids.end());
+        for (std::size_t index = 0; index < symbol_nids.size(); ++index) {
+            result.exported_symbols.push_back({
+                .nid = symbol_nids[index],
+                .address = symbol_addresses[index]
+            });
         }
         ++result.export_library_count;
         result.exported_function_count += function_count;

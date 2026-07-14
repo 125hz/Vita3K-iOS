@@ -148,6 +148,8 @@ For Milestone 16, open **Game Library** and select an installed title. **Prefer 
 
 For Milestone 17, re-select a successfully prepared title and tap **Attempt Boot (256 Instructions)**. The confirmation is an intentional safety boundary. The call uses only the portable interpreter, cannot activate JIT, is capped at 256 instructions, and consumes the prepared state so it cannot be repeated without a clean reload. Capture the first unsupported opcode/PC, memory fault, unbound HLE NID, return, exit, or instruction-limit message. Share the diagnostic text only; never upload the selected game executable.
 
+For Milestone 18, re-select the installed title and confirm the preparation detail says `via lifecycle export`. This proves that the loader used the `NID_MODULE_START` address from the export entry table instead of interpreting a module-info-relative location as the first instruction. Run the same one-shot bounded attempt and capture the corrected first CPU or HLE boundary. The CI artifact's `milestone18-lifecycle-export.zip` is the legal regression test; its synthetic `M15TEST01` must exit with status 42.
+
 Keep firmware files such as `fontpkg.pup`, `preinstall.pup`, and the system update PUP on the local device/PC. Do not add them to Git, CI caches, or Actions artifacts. Firmware selection and extraction will be added after the iOS build includes the upstream crypto, package, FAT/exFAT, and psvpfs dependencies needed by `install_pup`.
 
 ## 8. Keeping the fork current
@@ -168,7 +170,7 @@ Resolve conflicts by preserving the early iOS-only branch in the root `CMakeList
 
 Ask for one verifiable subsystem at a time and require the Windows build plus the unsigned-IPA workflow to remain green. A useful task template is:
 
-> On branch `ios-port`, implement the next item in `ios/PORTING.md`: [one item]. Preserve desktop and Android behavior. Add a platform interface instead of broad Apple conditionals, add tests runnable on Windows where possible, keep `VITA3K_IOS_LINK_CORE=ON` building, and state exactly what remains stubbed. Do not add signing, sideloading, JIT activation, proprietary firmware, or game files.
+> On branch `ios-port`, read `ios/NEXT-MILESTONE-HANDOFF.md`, inspect the latest device diagnostic, and implement exactly one next bounded milestone. Preserve desktop and Android behavior. Add Windows-runnable regression coverage, keep `.github/workflows/ios.yml` producing an unsigned IPA plus legal synthetic test fixtures, run the portable tests, push `ios-port`, wait for the Action, and report the artifact name and SHA-256. Do not add signing, sideloading, JIT activation, proprietary firmware, keys, or game files. State exactly what remains stubbed and do not claim a commercial game is playable.
 
 Good early assignments are dependency inventory, extracting a headless core target, sandbox path mapping, a renderer surface interface, or a deterministic CPU/memory unit-test harness. “Build the whole emulator” is too broad to diagnose when CI fails.
 

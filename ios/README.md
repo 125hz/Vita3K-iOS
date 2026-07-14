@@ -168,3 +168,15 @@ Keep Amagami, firmware PUPs, keys, and other proprietary content on your device.
 4. Capture the **Boot Boundary Captured** alert and the `Controlled boot attempt:` line.
 
 This is interpreter-only and does not enable JIT. The executable can be attempted only once per preparation, and the interpreter stops on the first unsupported instruction, memory fault, unimplemented HLE call, normal return/exit, or the 256-instruction ceiling. For a commercial game, an early diagnostic stop is expected and is not a crash or a playable boot. Re-select the title before each later attempt so guest memory is reloaded cleanly.
+
+## Milestone 18 lifecycle-entry resolution test
+
+Milestone 17 exposed `0xF62F7FFF` at `0x810176B8` before executing an instruction from Amagami. Upstream Vita3K does not treat the module-info header's `module_start` field as final: the `NID_MODULE_START` lifecycle export can replace it after the export tables are loaded. Milestone 18 preserves export addresses and applies that same override before binding imports or enabling the bounded attempt.
+
+1. Install the Milestone 18 IPA and open **Game Library**.
+2. Select `PCSG00291` with **Prefer Installed Patch** enabled.
+3. Confirm **Executable Prepared** includes `module_start ... via lifecycle export`.
+4. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
+5. Share the new diagnostic text or screenshot. A new unsupported instruction or HLE boundary is expected; a playable frame is not.
+
+The Actions artifact also includes `milestone18-lifecycle-export.zip`. Its module header deliberately points at the wrong executable location while its lifecycle export points at a legal synthetic Thumb program. Installing, preparing, and attempting `M15TEST01` from that archive must complete 12 instructions, two HLE calls, and exit with status 42. This fixture contains no game or firmware data.

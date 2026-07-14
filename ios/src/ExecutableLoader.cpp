@@ -25,6 +25,7 @@ namespace {
 constexpr std::uint16_t et_sce_exec = 0xFE00;
 constexpr std::uint16_t et_sce_relexec = 0xFE04;
 constexpr std::uint32_t diagnostic_stack_address = 0x7FF00000;
+constexpr std::uint32_t nid_module_start = 0x935CD196;
 constexpr std::size_t module_info_size = 0x5C;
 constexpr std::size_t module_name_offset = 4;
 constexpr std::size_t module_name_size = 27;
@@ -74,6 +75,17 @@ std::string sanitize_module_name(std::span<const std::uint8_t> bytes) {
         name.push_back(std::isprint(value) != 0 ? static_cast<char>(value) : '?');
     }
     return name.empty() ? "<unnamed>" : name;
+}
+
+bool is_executable_entry(const ExecutableProbeResult &probe, std::uint32_t address) {
+    const auto code_address = address & ~1u;
+    return std::ranges::any_of(probe.load_segments,
+        [code_address](const LoadSegmentPlan &segment) {
+            const auto start = static_cast<std::uint64_t>(segment.virtual_address);
+            const auto end = start + segment.memory_size;
+            return (segment.flags & guest_flag_execute) != 0 && code_address >= start &&
+                static_cast<std::uint64_t>(code_address) + sizeof(std::uint32_t) <= end;
+        });
 }
 
 } // namespace
@@ -259,21 +271,7 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
             return result;
         }
         result.module_start_address = static_cast<std::uint32_t>(start_address_64);
-        const auto code_address = result.module_start_address & ~1u;
-        const auto executable_segment = std::find_if(probe.load_segments.begin(),
-            probe.load_segments.end(), [code_address](const LoadSegmentPlan &segment) {
-                const auto start = static_cast<std::uint64_t>(segment.virtual_address);
-                const auto end = start + segment.memory_size;
-                return (segment.flags & guest_flag_execute) != 0 && code_address >= start &&
-                    static_cast<std::uint64_t>(code_address) + sizeof(std::uint32_t) <= end;
-            });
-        if (executable_segment == probe.load_segments.end()) {
-            std::string unmap_error;
-            (void)memory.unmap_all_segments(unmap_error);
-            result.detail = "The module_start address is outside executable guest memory.";
-            return result;
-        }
-        result.module_start_valid = true;
+        result.module_start_valid = is_executable_entry(probe, result.module_start_address);
     }
 
     for (const auto &segment : probe.load_segments) {
@@ -296,6 +294,22 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
         std::string unmap_error;
         (void)memory.unmap_all_segments(unmap_error);
         result.detail = "Module-table parsing failed: " + module_tables.detail;
+        return result;
+    }
+    const auto lifecycle_start = std::ranges::find(module_tables.exported_symbols,
+        nid_module_start, &ExportedSymbol::nid);
+    if (lifecycle_start != module_tables.exported_symbols.end() &&
+        lifecycle_start->address != 0 && lifecycle_start->address != 0xFFFFFFFFu) {
+        result.module_start_address = lifecycle_start->address;
+        result.module_start_from_export = true;
+        result.module_start_valid = is_executable_entry(probe, result.module_start_address);
+    }
+    if (result.module_start_address != 0 && !result.module_start_valid) {
+        std::string unmap_error;
+        (void)memory.unmap_all_segments(unmap_error);
+        result.detail = result.module_start_from_export
+            ? "The lifecycle-export module_start address is outside executable guest memory."
+            : "The module-info module_start address is outside executable guest memory.";
         return result;
     }
     const auto import_binding = bind_import_stubs(memory,
@@ -340,6 +354,9 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
     if (result.module_start_valid) {
         detail << "; module_start 0x" << std::hex << std::uppercase << std::setw(8)
                << std::setfill('0') << result.module_start_address << std::dec;
+        if (result.module_start_from_export) {
+            detail << " via lifecycle export";
+        }
         if (result.temporary_stack_pointer != 0) {
             detail << " with temporary SP 0x" << std::hex << std::uppercase
                    << std::setw(8) << std::setfill('0') << result.temporary_stack_pointer

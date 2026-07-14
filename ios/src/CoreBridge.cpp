@@ -568,6 +568,7 @@ void update_status_from_storage() {
             .module_tables_parsed = load.module_tables_parsed,
             .import_stubs_bound = load.import_stubs_bound,
             .module_start_valid = load.module_start_valid,
+            .module_start_from_export = load.module_start_from_export,
             .execution_attempted = thread.attempted,
             .thread_exited = thread.exited,
             .thread_returned = thread.returned,
@@ -653,7 +654,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: prepare an installed title, then use Attempt Boot once to capture the first unsupported CPU instruction or unimplemented HLE call. The bounded interpreter cannot run general Vita games yet.";
+    summary << "\n\nNext: prepare an installed title using its lifecycle module_start export, then use Attempt Boot once to capture the first real CPU or HLE boundary. The bounded interpreter cannot run general Vita games yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
@@ -865,6 +866,7 @@ TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer
             result.imported_nid_count = load.imported_nid_count;
             result.bound_import_stub_count = load.bound_import_stub_count;
             result.module_start_address = load.module_start_address;
+            result.module_start_from_export = load.module_start_from_export;
             result.detail = load.detail;
             if (load.loaded && load.module_start_valid &&
                 load.temporary_stack_pointer != 0) {

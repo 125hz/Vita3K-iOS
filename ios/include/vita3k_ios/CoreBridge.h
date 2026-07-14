@@ -28,6 +28,7 @@ struct TitlePreparationResult {
     bool probe_valid{};
     bool self_segments_plain{};
     bool loaded{};
+    bool module_start_from_export{};
     std::string title_id;
     std::string title;
     std::string source;
@@ -91,6 +92,7 @@ struct ImportedArtifact {
     bool module_tables_parsed;
     bool import_stubs_bound;
     bool module_start_valid;
+    bool module_start_from_export;
     bool execution_attempted;
     bool thread_exited;
     bool thread_returned;

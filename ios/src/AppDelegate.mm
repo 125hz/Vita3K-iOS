@@ -155,7 +155,7 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Vita3K iOS - Core Milestone 17";
+    title.text = @"Vita3K iOS - Core Milestone 18";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
     title.textAlignment = NSTextAlignmentCenter;
