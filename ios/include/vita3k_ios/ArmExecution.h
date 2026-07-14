@@ -15,6 +15,8 @@ struct ArmCpuState {
     std::array<std::uint32_t, 16> registers{};
     std::uint32_t cpsr = 0;
     bool thumb = false;
+    bool stop_requested = false;
+    std::int32_t stop_code = 0;
     std::uint64_t instruction_count = 0;
 };
 

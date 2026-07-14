@@ -178,6 +178,19 @@ ArmExecutionResult ArmInterpreter::step() {
         };
     }
 
+    // MOV Rd, Rm without a shift.
+    if ((instruction & 0x0FFF0FF0u) == 0x01A00000u) {
+        const auto destination = (instruction >> 12) & 0xFu;
+        const auto source = instruction & 0xFu;
+        state_.registers[destination] = state_.registers[source];
+        return {
+            .reason = ArmStopReason::instruction_limit,
+            .instructions_executed = state_.instruction_count,
+            .final_pc = state_.registers[register_pc],
+            .last_instruction = instruction
+        };
+    }
+
     // SVC #imm. Vita3K's ARM trampolines place the imported NID in r12.
     if ((instruction & 0x0F000000u) == 0x0F000000u) {
         const auto nid = state_.registers[register_hle_nid];
@@ -193,6 +206,16 @@ ArmExecutionResult ArmInterpreter::step() {
             };
         }
         state_.registers[0] = static_cast<std::uint32_t>(dispatched.return_value);
+        if (state_.stop_requested) {
+            return {
+                .reason = ArmStopReason::halted,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = state_.registers[register_pc],
+                .last_instruction = instruction,
+                .last_hle_nid = nid,
+                .detail = "HLE call " + dispatched.name + " requested a clean thread stop."
+            };
+        }
         return {
             .reason = ArmStopReason::instruction_limit,
             .instructions_executed = state_.instruction_count,

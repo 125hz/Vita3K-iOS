@@ -25,7 +25,10 @@ int main() {
     if (!status.linked || !status.self_tests_passed || !status.storage_ready ||
         !status.guest_memory_ready || !status.segment_mapping_ready ||
         !status.loader_pipeline_ready || !status.arm_execution_ready ||
+        !status.guest_thread_ready ||
         status.arm_test_instruction_count != 7 || status.hle_test_dispatch_count != 1 ||
+        status.thread_test_instruction_count != 8 ||
+        status.thread_test_hle_dispatch_count != 2 || status.thread_test_exit_status != 42 ||
         status.guest_memory_size != (1ULL << 32)) {
         std::cerr << status.summary << '\n';
         return 1;
@@ -89,6 +92,26 @@ int main() {
     write_value(elf, 192, static_cast<std::uint32_t>(0xA0));
     write_value(elf, 196, static_cast<std::uint32_t>(0xD4));
     write_value(elf, 200, static_cast<std::uint32_t>(0x1234ABCD));
+    write_value(elf, 216, static_cast<std::uint32_t>(0x60));
+
+    constexpr std::uint32_t get_thread_id_nid = 0x0FB972F9;
+    constexpr std::uint32_t exit_thread_nid = 0x0C8A38E1;
+    const auto encode_mov = [](std::uint32_t opcode, std::uint32_t immediate,
+                                std::uint32_t destination) {
+        return opcode | ((immediate & 0xF000u) << 4) |
+            (destination << 12) | (immediate & 0xFFFu);
+    };
+    const std::array<std::uint32_t, 8> guest_program{
+        encode_mov(0xE3000000u, get_thread_id_nid & 0xFFFFu, 12),
+        encode_mov(0xE3400000u, get_thread_id_nid >> 16, 12),
+        0xEF000000u,
+        0xE1A02000u,
+        encode_mov(0xE3000000u, 42, 0),
+        encode_mov(0xE3000000u, exit_thread_nid & 0xFFFFu, 12),
+        encode_mov(0xE3400000u, exit_thread_nid >> 16, 12),
+        0xEF000000u
+    };
+    std::memcpy(elf.data() + 244, guest_program.data(), sizeof(guest_program));
 
     write_value(elf, 276, static_cast<std::uint16_t>(0x20));
     write_value(elf, 278, static_cast<std::uint16_t>(1));
@@ -99,14 +122,16 @@ int main() {
 
     write_value(elf, 308, static_cast<std::uint16_t>(0x34));
     write_value(elf, 310, static_cast<std::uint16_t>(1));
-    write_value(elf, 314, static_cast<std::uint16_t>(1));
+    write_value(elf, 314, static_cast<std::uint16_t>(2));
     write_value(elf, 324, static_cast<std::uint32_t>(0x11223344));
     write_value(elf, 336, static_cast<std::uint32_t>(0x810000DC));
-    write_value(elf, 340, static_cast<std::uint32_t>(0x810000E0));
+    write_value(elf, 340, static_cast<std::uint32_t>(0x810000E4));
     write_value(elf, 360, static_cast<std::uint32_t>(0x935CD196));
     write_value(elf, 364, static_cast<std::uint32_t>(0x81000040));
-    write_value(elf, 368, static_cast<std::uint32_t>(0x210C0046));
-    write_value(elf, 372, static_cast<std::uint32_t>(0x81000044));
+    write_value(elf, 368, get_thread_id_nid);
+    write_value(elf, 372, exit_thread_nid);
+    write_value(elf, 376, static_cast<std::uint32_t>(0x81000040));
+    write_value(elf, 380, static_cast<std::uint32_t>(0x8100004C));
 
     for (std::size_t index = 404; index < 420; ++index) {
         elf[index] = static_cast<std::uint8_t>(index - 388);
@@ -130,12 +155,19 @@ int main() {
         !rescanned.imported_artifacts.front().module_info_valid ||
         !rescanned.imported_artifacts.front().relocations_applied ||
         !rescanned.imported_artifacts.front().module_tables_parsed ||
+        !rescanned.imported_artifacts.front().module_start_valid ||
+        !rescanned.imported_artifacts.front().execution_attempted ||
+        !rescanned.imported_artifacts.front().thread_exited ||
         rescanned.imported_artifacts.front().relocation_entry_count != 1 ||
         rescanned.imported_artifacts.front().relocation_patch_count != 1 ||
         rescanned.imported_artifacts.front().export_library_count != 1 ||
         rescanned.imported_artifacts.front().import_library_count != 1 ||
         rescanned.imported_artifacts.front().exported_nid_count != 1 ||
-        rescanned.imported_artifacts.front().imported_nid_count != 1 ||
+        rescanned.imported_artifacts.front().imported_nid_count != 2 ||
+        rescanned.imported_artifacts.front().module_start_address != 0x81000060 ||
+        rescanned.imported_artifacts.front().executed_instruction_count != 8 ||
+        rescanned.imported_artifacts.front().hle_dispatch_count != 2 ||
+        rescanned.imported_artifacts.front().thread_exit_status != 42 ||
         rescanned.imported_artifacts.front().module_name != "synthetic-homebrew" ||
         rescanned.imported_artifacts.front().module_nid != 0x1234ABCD) {
         std::cerr << rescanned.summary << '\n';

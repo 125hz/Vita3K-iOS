@@ -3,6 +3,7 @@
 #include <vita3k_ios/ExecutableLoader.h>
 #include <vita3k_ios/ExecutableProbe.h>
 #include <vita3k_ios/GuestMemory.h>
+#include <vita3k_ios/GuestThread.h>
 #include <vita3k_ios/HostFilesystem.h>
 #include <vita3k_ios/ModuleTableParser.h>
 #include <vita3k_ios/RelocationEngine.h>
@@ -110,8 +111,12 @@ bool run_segment_mapping_test(GuestMemory &memory, std::string &error) {
     return true;
 }
 
-bool run_loader_pipeline_test(GuestMemory &memory, std::string &error) {
+bool run_loader_pipeline_test(GuestMemory &memory, GuestThreadRunResult &thread_result,
+    std::string &error) {
     constexpr std::uint32_t test_address = 0x20000;
+    constexpr std::uint32_t module_start = 0x60;
+    constexpr std::uint32_t get_thread_id_nid = 0x0FB972F9;
+    constexpr std::uint32_t exit_thread_nid = 0x0C8A38E1;
     const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
     if (memory_size_64 < 0x200 || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
         error = "The host page size is invalid for the loader pipeline diagnostic.";
@@ -128,6 +133,19 @@ bool run_loader_pipeline_test(GuestMemory &memory, std::string &error) {
     write_value(payload, 0x2C, static_cast<std::uint32_t>(0xA0));
     write_value(payload, 0x30, static_cast<std::uint32_t>(0xD4));
     write_value(payload, 0x34, static_cast<std::uint32_t>(0x51F7A4D2));
+    write_value(payload, 0x44, module_start);
+
+    const std::array<std::uint32_t, 8> guest_program{
+        encode_arm_inst(INSTRUCTION_MOVW, get_thread_id_nid & 0xFFFFu, 12),
+        encode_arm_inst(INSTRUCTION_MOVT, get_thread_id_nid >> 16, 12),
+        encode_arm_inst(INSTRUCTION_SYSCALL, 0, 0),
+        0xE1A02000u, // MOV r2, r0; preserve the UID returned by sceKernelGetThreadId.
+        encode_arm_inst(INSTRUCTION_MOVW, 42, 0),
+        encode_arm_inst(INSTRUCTION_MOVW, exit_thread_nid & 0xFFFFu, 12),
+        encode_arm_inst(INSTRUCTION_MOVT, exit_thread_nid >> 16, 12),
+        encode_arm_inst(INSTRUCTION_SYSCALL, 0, 0)
+    };
+    std::memcpy(payload.data() + module_start, guest_program.data(), sizeof(guest_program));
 
     write_value(payload, 0x80, static_cast<std::uint16_t>(0x20));
     write_value(payload, 0x82, static_cast<std::uint16_t>(1));
@@ -138,14 +156,16 @@ bool run_loader_pipeline_test(GuestMemory &memory, std::string &error) {
 
     write_value(payload, 0xA0, static_cast<std::uint16_t>(0x34));
     write_value(payload, 0xA2, static_cast<std::uint16_t>(1));
-    write_value(payload, 0xA6, static_cast<std::uint16_t>(1));
+    write_value(payload, 0xA6, static_cast<std::uint16_t>(2));
     write_value(payload, 0xB0, static_cast<std::uint32_t>(0x11223344));
     write_value(payload, 0xBC, test_address + static_cast<std::uint32_t>(0xDC));
-    write_value(payload, 0xC0, test_address + static_cast<std::uint32_t>(0xE0));
+    write_value(payload, 0xC0, test_address + static_cast<std::uint32_t>(0xE4));
     write_value(payload, 0xD4, static_cast<std::uint32_t>(0x935CD196));
     write_value(payload, 0xD8, test_address + static_cast<std::uint32_t>(0x40));
-    write_value(payload, 0xDC, static_cast<std::uint32_t>(0x210C0046));
-    write_value(payload, 0xE0, test_address + static_cast<std::uint32_t>(0x44));
+    write_value(payload, 0xDC, get_thread_id_nid);
+    write_value(payload, 0xE0, exit_thread_nid);
+    write_value(payload, 0xE4, test_address + static_cast<std::uint32_t>(0x40));
+    write_value(payload, 0xE8, test_address + static_cast<std::uint32_t>(0x4C));
 
     constexpr std::uint32_t read_execute_flags = 5;
     if (!memory.map_segment(test_address, payload, memory_size, read_execute_flags, error)) {
@@ -169,6 +189,10 @@ bool run_loader_pipeline_test(GuestMemory &memory, std::string &error) {
     const auto applied = apply_relocations(relocation, segment_plans, memory);
     const auto tables = parse_module_tables(memory, test_address, memory_size,
         std::span(payload).first(0x5C));
+    if (tables.success) {
+        thread_result = run_guest_module_start(memory, test_address + module_start,
+            test_address + memory_size, tables.imported_nids, "ios-module-start-selftest");
+    }
 
     std::array<std::uint8_t, 4> patched_bytes{};
     std::uint32_t patched_value = 0;
@@ -190,8 +214,15 @@ bool run_loader_pipeline_test(GuestMemory &memory, std::string &error) {
     if (!patch_read || patched_value != test_address + 0x1234 ||
         applied.entry_count != 1 || applied.patched_value_count != 1 ||
         tables.export_library_count != 1 || tables.import_library_count != 1 ||
-        tables.exported_nids.size() != 1 || tables.imported_nids.size() != 1) {
+        tables.exported_nids.size() != 1 || tables.imported_nids.size() != 2) {
         error = "The relocation/module-table diagnostic produced unexpected results.";
+        return false;
+    }
+    if (!thread_result.started || !thread_result.exited ||
+        thread_result.instruction_count != guest_program.size() ||
+        thread_result.hle_dispatch_count != 2 || thread_result.exit_status != 42 ||
+        thread_result.observed_thread_id != static_cast<std::uint32_t>(thread_result.thread_id)) {
+        error = "The loaded module_start/thread diagnostic failed: " + thread_result.detail;
         return false;
     }
     if (!unmapped) {
@@ -299,17 +330,25 @@ void update_status_from_storage() {
         const auto size = entry.file_size(error);
         const auto probe = probe_artifact(entry.path());
         PlainElfLoadResult load;
+        GuestThreadRunResult thread;
         if (loaded_filename.empty() && guest_memory && core_status.loader_pipeline_ready &&
             probe.structurally_valid && probe.kind == "Vita ELF") {
             load = load_plain_elf(entry.path(), probe, *guest_memory);
             if (load.loaded) {
                 loaded_filename = entry.path().filename().string();
+                if (load.module_start_valid && load.temporary_stack_pointer != 0) {
+                    thread = run_guest_module_start(*guest_memory, load.module_start_address,
+                        load.temporary_stack_pointer, load.imported_nids, load.module_name);
+                }
             }
         }
 
         std::string detail = probe.detail;
         if (load.attempted) {
             detail += " Loader: " + load.detail;
+        }
+        if (thread.attempted) {
+            detail += " Thread: " + thread.detail;
         }
         core_status.imported_artifacts.push_back({
             .filename = entry.path().filename().string(),
@@ -322,6 +361,9 @@ void update_status_from_storage() {
             .module_info_valid = load.module_info_valid,
             .relocations_applied = load.relocations_applied,
             .module_tables_parsed = load.module_tables_parsed,
+            .module_start_valid = load.module_start_valid,
+            .execution_attempted = thread.attempted,
+            .thread_exited = thread.exited,
             .module_name = load.module_name,
             .module_nid = load.module_nid,
             .relocation_segment_count = probe.relocation_segments.size(),
@@ -331,6 +373,10 @@ void update_status_from_storage() {
             .import_library_count = load.import_library_count,
             .exported_nid_count = load.exported_nid_count,
             .imported_nid_count = load.imported_nid_count,
+            .module_start_address = load.module_start_address,
+            .executed_instruction_count = thread.instruction_count,
+            .hle_dispatch_count = thread.hle_dispatch_count,
+            .thread_exit_status = thread.exit_status,
             .detail = std::move(detail)
         });
     }
@@ -347,12 +393,17 @@ void update_status_from_storage() {
         ? "passed (shared-page permission merge)"
         : "FAILED");
     summary << "\nRelocation/tables: " << (core_status.loader_pipeline_ready
-        ? "passed (verified patch + 1 export/1 import)"
+        ? "passed (verified patch + 1 export/1 import library)"
         : "FAILED");
     summary << "\nARM execution/HLE: " << (core_status.arm_execution_ready
         ? "passed (" + std::to_string(core_status.arm_test_instruction_count) +
             " instructions + " + std::to_string(core_status.hle_test_dispatch_count) +
             " bound NID call)"
+        : "FAILED");
+    summary << "\nLoaded entry/thread: " << (core_status.guest_thread_ready
+        ? "passed (" + std::to_string(core_status.thread_test_instruction_count) +
+            " instructions + " + std::to_string(core_status.thread_test_hle_dispatch_count) +
+            " kernel HLE calls + exit " + std::to_string(core_status.thread_test_exit_status) + ")"
         : "FAILED");
     summary << "\nStorage: " << (core_status.storage_ready ? "ready" : "FAILED") << "\n"
             << "Import candidates: " << core_status.imported_artifacts.size() << "\n"
@@ -370,7 +421,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: run a mapped homebrew entry point with thread state and real HLE stubs. Rendering is not active yet.";
+    summary << "\n\nNext: expand ARM/Thumb coverage and HLE services for a tiny real homebrew. Rendering is not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
@@ -389,8 +440,9 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     const bool protection_test_passed = reserved && guest_memory->run_commit_protection_test(memory_error);
     const bool segment_mapping_passed = protection_test_passed &&
         run_segment_mapping_test(*guest_memory, memory_error);
+    GuestThreadRunResult thread_test;
     const bool loader_pipeline_passed = segment_mapping_passed &&
-        run_loader_pipeline_test(*guest_memory, memory_error);
+        run_loader_pipeline_test(*guest_memory, thread_test, memory_error);
     std::string execution_error;
     const bool arm_execution_passed = loader_pipeline_passed &&
         run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count,
@@ -399,6 +451,10 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;
     core_status.arm_execution_ready = arm_execution_passed;
+    core_status.guest_thread_ready = loader_pipeline_passed && thread_test.exited;
+    core_status.thread_test_instruction_count = thread_test.instruction_count;
+    core_status.thread_test_hle_dispatch_count = thread_test.hle_dispatch_count;
+    core_status.thread_test_exit_status = thread_test.exit_status;
     core_status.guest_memory_size = reserved ? guest_memory->size() : 0;
     core_status.host_page_size = reserved ? guest_memory->host_page_size() : 0;
     host_storage = initialize_host_storage(documents_root);

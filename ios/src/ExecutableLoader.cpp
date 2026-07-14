@@ -24,6 +24,9 @@ constexpr std::size_t module_info_size = 0x5C;
 constexpr std::size_t module_name_offset = 4;
 constexpr std::size_t module_name_size = 27;
 constexpr std::size_t module_nid_offset = 0x34;
+constexpr std::size_t module_start_offset = 0x44;
+constexpr std::uint32_t guest_flag_execute = 1;
+constexpr std::uint32_t guest_flag_write = 2;
 
 bool read_file_range(std::ifstream &stream, std::uint32_t offset,
     std::span<std::uint8_t> output) {
@@ -194,7 +197,46 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
         module_name_offset, module_name_size));
     std::memcpy(&result.module_nid, module_info.data() + module_nid_offset,
         sizeof(result.module_nid));
+    std::memcpy(&result.module_start_offset, module_info.data() + module_start_offset,
+        sizeof(result.module_start_offset));
     result.module_info_valid = true;
+
+    if (result.module_start_offset != 0 && result.module_start_offset != 0xFFFFFFFFu) {
+        const auto start_address_64 = static_cast<std::uint64_t>(module_segment->virtual_address) +
+            result.module_start_offset;
+        if (start_address_64 > std::numeric_limits<std::uint32_t>::max()) {
+            std::string unmap_error;
+            (void)memory.unmap_all_segments(unmap_error);
+            result.detail = "The module_start address overflows guest address space.";
+            return result;
+        }
+        result.module_start_address = static_cast<std::uint32_t>(start_address_64);
+        const auto code_address = result.module_start_address & ~1u;
+        const auto executable_segment = std::find_if(probe.load_segments.begin(),
+            probe.load_segments.end(), [code_address](const LoadSegmentPlan &segment) {
+                const auto start = static_cast<std::uint64_t>(segment.virtual_address);
+                const auto end = start + segment.memory_size;
+                return (segment.flags & guest_flag_execute) != 0 && code_address >= start &&
+                    static_cast<std::uint64_t>(code_address) + sizeof(std::uint32_t) <= end;
+            });
+        if (executable_segment == probe.load_segments.end()) {
+            std::string unmap_error;
+            (void)memory.unmap_all_segments(unmap_error);
+            result.detail = "The module_start address is outside executable guest memory.";
+            return result;
+        }
+        result.module_start_valid = true;
+    }
+
+    for (const auto &segment : probe.load_segments) {
+        if ((segment.flags & guest_flag_write) == 0 || segment.memory_size < 16) {
+            continue;
+        }
+        const auto end = static_cast<std::uint64_t>(segment.virtual_address) + segment.memory_size;
+        if (end <= std::numeric_limits<std::uint32_t>::max()) {
+            result.temporary_stack_pointer = static_cast<std::uint32_t>(end) & ~7u;
+        }
+    }
 
     const auto module_tables = parse_module_tables(memory,
         module_segment->virtual_address, module_segment->memory_size, module_info);
@@ -209,6 +251,7 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
     result.import_library_count = module_tables.import_library_count;
     result.exported_nid_count = module_tables.exported_nids.size();
     result.imported_nid_count = module_tables.imported_nids.size();
+    result.imported_nids = module_tables.imported_nids;
     result.loaded = true;
 
     std::ostringstream detail;
@@ -222,7 +265,19 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
            << result.export_library_count << " export libraries/"
            << result.exported_nid_count << " NIDs; "
            << result.import_library_count << " import libraries/"
-           << result.imported_nid_count << " NIDs.";
+           << result.imported_nid_count << " NIDs";
+    if (result.module_start_valid) {
+        detail << "; module_start 0x" << std::hex << std::uppercase << std::setw(8)
+               << std::setfill('0') << result.module_start_address << std::dec;
+        if (result.temporary_stack_pointer != 0) {
+            detail << " with temporary SP 0x" << std::hex << std::uppercase
+                   << std::setw(8) << std::setfill('0') << result.temporary_stack_pointer
+                   << std::dec;
+        }
+    } else {
+        detail << "; no module_start";
+    }
+    detail << ".";
     result.detail = detail.str();
     return result;
 }

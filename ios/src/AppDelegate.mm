@@ -23,7 +23,7 @@
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Vita3K iOS — Core Milestone 6";
+    title.text = @"Vita3K iOS — Core Milestone 7";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
     title.textAlignment = NSTextAlignmentCenter;
