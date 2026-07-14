@@ -3,9 +3,11 @@
 
 #include <vita3k_ios/CoreBridge.h>
 #include <vita3k_ios/IOSLogger.h>
+#import <vita3k_ios/IOSMetalRenderer.h>
 
 @interface VitaViewController : UIViewController
 @property(nonatomic, strong) UILabel *detailsLabel;
+@property(nonatomic, strong) VitaMetalRenderer *renderer;
 @end
 
 @implementation VitaViewController
@@ -23,7 +25,7 @@
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Vita3K iOS — Core Milestone 10";
+    title.text = @"Vita3K iOS — Core Milestone 11";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
     title.textAlignment = NSTextAlignmentCenter;
@@ -55,7 +57,17 @@
         [stack.widthAnchor constraintLessThanOrEqualToConstant:680.0]
     ]];
 
+    __weak VitaViewController *weakSelf = self;
+    self.renderer = [[VitaMetalRenderer alloc] initWithView:(MTKView *)self.view completion:^{
+        [weakSelf refreshStatus];
+    }];
+
     [self refreshStatus];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [self.renderer requestFirstFrame];
 }
 
 - (void)refreshStatus {

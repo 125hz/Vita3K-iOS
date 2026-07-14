@@ -4,6 +4,7 @@
 #include <vita3k_ios/ExecutableProbe.h>
 #include <vita3k_ios/GuestMemory.h>
 #include <vita3k_ios/GuestThread.h>
+#include <vita3k_ios/HostDisplay.h>
 #include <vita3k_ios/HostFilesystem.h>
 #include <vita3k_ios/ImportBinder.h>
 #include <vita3k_ios/ModuleTableParser.h>
@@ -28,6 +29,7 @@ namespace {
 std::mutex core_mutex;
 HostStorage host_storage;
 std::unique_ptr<GuestMemory> guest_memory;
+HostDisplay host_display;
 CoreStatus core_status{
     .linked = true,
     .self_tests_passed = false,
@@ -41,6 +43,35 @@ bool run_upstream_self_tests() {
     const bool nid_database_ok = std::string_view(import_name(0x210C0046u)) == "__sceAppMgrGetAppState";
     const bool unknown_nid_ok = std::string_view(import_name(0xFFFFFFFFu)) == "UNRECOGNISED";
     return arm_encoder_ok && thumb_encoder_ok && nid_database_ok && unknown_nid_ok;
+}
+
+void update_renderer_status() {
+    const auto display = host_display.status();
+    core_status.renderer_attached = display.attached;
+    core_status.renderer_frame_presented = display.first_frame_presented;
+    core_status.renderer_submitted_frame_count = display.submitted_frame_count;
+    core_status.renderer_presented_frame_count = display.presented_frame_count;
+
+    const auto marker = core_status.summary.find("\nRenderer:");
+    if (marker != std::string::npos) {
+        const auto end = core_status.summary.find('\n', marker + 1);
+        core_status.summary.erase(marker,
+            end == std::string::npos ? std::string::npos : end - marker);
+    }
+    std::ostringstream line;
+    line << "\nRenderer: ";
+    if (display.first_frame_presented) {
+        line << "passed (first core-owned Metal frame presented)";
+    } else if (display.frame_in_flight) {
+        line << "ready (diagnostic frame in flight)";
+    } else if (display.attached) {
+        line << "ready (Metal host attached)";
+    } else {
+        line << "waiting for MTKView host";
+    }
+    const auto storage = core_status.summary.find("\nStorage:");
+    core_status.summary.insert(storage == std::string::npos ? core_status.summary.size() : storage,
+        line.str());
 }
 
 template <typename T, std::size_t Size>
@@ -444,17 +475,19 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: expand the real VitaSDK program one service at a time, then connect its first renderer-owned frame. General Vita homebrew and games are not active yet.";
+    summary << "\n\nNext: add controller and touch adapters, then bring up bounded audio. General Vita homebrew and games are not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
     core_status.summary = summary.str();
+    update_renderer_status();
 }
 
 } // namespace
 
 CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     std::lock_guard lock(core_mutex);
+    host_display = HostDisplay{};
     core_status.self_tests_passed = run_upstream_self_tests();
     guest_memory = std::make_unique<GuestMemory>();
     std::string memory_error;
@@ -505,6 +538,30 @@ CoreStatus rescan_imports() {
     scan_imports(host_storage);
     update_status_from_storage();
     return core_status;
+}
+
+bool attach_host_display(std::uint32_t width, std::uint32_t height, std::string &error) {
+    std::lock_guard lock(core_mutex);
+    const bool attached = host_display.attach(width, height, error);
+    update_renderer_status();
+    return attached;
+}
+
+std::optional<HostDisplayFrame> acquire_host_display_frame(std::uint32_t width,
+    std::uint32_t height, std::string &error) {
+    std::lock_guard lock(core_mutex);
+    auto frame = host_display.acquire_frame(width, height, error);
+    update_renderer_status();
+    return frame;
+}
+
+bool complete_host_display_frame(std::uint64_t identifier, bool presented,
+    std::string detail, std::string &error) {
+    std::lock_guard lock(core_mutex);
+    const bool completed = host_display.complete_frame(identifier, presented,
+        std::move(detail), error);
+    update_renderer_status();
+    return completed;
 }
 
 } // namespace vita3k::ios

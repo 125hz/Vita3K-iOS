@@ -1,4 +1,5 @@
 #include <vita3k_ios/CoreBridge.h>
+#include <vita3k_ios/HostDisplay.h>
 
 #include <array>
 #include <cstdint>
@@ -18,6 +19,37 @@ void write_value(std::array<std::uint8_t, Size> &image, std::size_t offset, T va
 } // namespace
 
 int main(int argc, char **argv) {
+    vita3k::ios::HostDisplay display;
+    std::string display_error;
+    if (display.attach(0, 1080, display_error)) {
+        std::cerr << "The display accepted a zero-width drawable.\n";
+        return 7;
+    }
+    if (!display.attach(1920, 1080, display_error)) {
+        std::cerr << display_error << '\n';
+        return 8;
+    }
+    const auto display_frame = display.acquire_frame(1920, 1080, display_error);
+    if (!display_frame || display_frame->identifier == 0 ||
+        display_frame->width != 1920 || display_frame->height != 1080 ||
+        display.acquire_frame(1920, 1080, display_error)) {
+        std::cerr << "The display did not enforce a single diagnostic frame in flight.\n";
+        return 9;
+    }
+    if (!display.complete_frame(display_frame->identifier, true, {}, display_error)) {
+        std::cerr << display_error << '\n';
+        return 10;
+    }
+    const auto display_status = display.status();
+    if (!display_status.attached || display_status.frame_in_flight ||
+        !display_status.first_frame_presented ||
+        display_status.submitted_frame_count != 1 ||
+        display_status.presented_frame_count != 1 ||
+        display.acquire_frame(1920, 1080, display_error)) {
+        std::cerr << "The display did not retain its first-presented-frame state.\n";
+        return 11;
+    }
+
     std::filesystem::path emitted_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
@@ -42,6 +74,8 @@ int main(int argc, char **argv) {
         !status.loader_pipeline_ready || !status.import_binding_ready ||
         !status.arm_execution_ready ||
         !status.guest_thread_ready ||
+        status.renderer_attached || status.renderer_frame_presented ||
+        status.summary.find("Renderer: waiting for MTKView host") == std::string::npos ||
         status.arm_test_instruction_count != 7 || status.hle_test_dispatch_count != 1 ||
         status.thread_test_instruction_count != 12 ||
         status.thread_test_hle_dispatch_count != 2 || status.thread_test_exit_status != 42 ||
@@ -234,6 +268,27 @@ int main(int argc, char **argv) {
             return 6;
         }
         std::cout << "Verified real VitaSDK diagnostic:\n" << real_status.summary << '\n';
+    }
+
+    if (!vita3k::ios::attach_host_display(1280, 720, display_error)) {
+        std::cerr << display_error << '\n';
+        return 12;
+    }
+    const auto bridge_frame = vita3k::ios::acquire_host_display_frame(
+        1280, 720, display_error);
+    if (!bridge_frame || !vita3k::ios::complete_host_display_frame(
+            bridge_frame->identifier, true, {}, display_error)) {
+        std::cerr << (display_error.empty() ? "The core display bridge did not complete a frame."
+                                           : display_error) << '\n';
+        return 13;
+    }
+    const auto rendered_status = vita3k::ios::query_core_status();
+    if (!rendered_status.renderer_attached || !rendered_status.renderer_frame_presented ||
+        rendered_status.renderer_submitted_frame_count != 1 ||
+        rendered_status.renderer_presented_frame_count != 1 ||
+        rendered_status.summary.find("Renderer: passed") == std::string::npos) {
+        std::cerr << rendered_status.summary << '\n';
+        return 14;
     }
 
     std::filesystem::remove_all(test_root, error);

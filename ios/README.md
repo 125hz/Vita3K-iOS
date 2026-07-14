@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slice of upstream Vita3K code. It now loads and completes the `module_start` of a deliberately tiny program built by the real VitaSDK toolchain inside a bounded guest-thread context, but it does **not** yet execute general Vita homebrew or games.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slice of upstream Vita3K code. It now loads and completes the `module_start` of a deliberately tiny program built by the real VitaSDK toolchain, then clears and presents one core-owned Metal diagnostic frame. It does **not** yet execute general Vita homebrew, render Vita graphics, or run games.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -32,6 +32,9 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - a second fixture compiled in CI by the pinned official `vitasdk/vitasdk` image rather than hand-encoded by this repository
 - preferred-address loading of its `ET_SCE_RELEXEC` VELF, including 10 verified relocations and real module/import table parsing
 - bounded execution of its compiler-generated Thumb/Thumb-2 prologue, BLX import call, UXTB, and POP return sequence
+- a portable `HostDisplay` seam with deterministic attach, acquire, and completion state
+- an `MTKViewDelegate` that submits, clears, and presents one core-owned diagnostic frame through a Metal command queue
+- renderer status that changes to `passed` only after the command buffer completes on device
 - a narrow C++ `CoreBridge` seam for additional core integration
 - no signing credentials or provisioning profiles in CI
 
@@ -48,6 +51,15 @@ The GitHub Actions artifact contains the unsigned IPA, the older generated Miles
 5. Confirm the artifact reports `MAPPED`, `10 relocation entries/10 verified patches`, `1 function stub rebound`, `6 instructions`, `1 HLE call`, and `module_start returned 1`.
 
 The `.self` is retained as evidence that the same build produced a normal Vita container, but SELF segment extraction remains probe-only; do not use it for this device test. VPK installation, firmware PUP installation, and commercial games also remain outside the executable path.
+
+## Milestone 11 renderer test
+
+1. Install and open the Milestone 11 IPA on a physical iPhone or iPad.
+2. Confirm the app background changes to the core-owned blue Metal clear color.
+3. Confirm the status reports `Renderer: passed (first core-owned Metal frame presented)`.
+4. Optionally repeat the Milestone 10 VELF test; the loader diagnostic and renderer status should both remain visible.
+
+This frame contains no Vita display output. It proves only that the portable core can own a frame request, UIKit can supply the drawable, and Metal can complete a clear/present command buffer on the device.
 
 ## Build contract
 
@@ -67,6 +79,8 @@ cmake --build build-ios --config Release --target Vita3KiOS -- \
 
 This command requires macOS and Xcode; the GitHub Actions workflow runs it remotely for Windows contributors.
 
-`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map fixed-address `ET_SCE_EXEC` files and preferred-address `ET_SCE_RELEXEC` VELFs, apply checked relocations, validate module metadata, inventory import/export NIDs, rewrite ARM function stubs, and execute the narrow compiler path used by the Milestone 10 program. General relocatable placement, SELF payload extraction, broader Thumb-2, thread scheduling, production HLE coverage, the full CPU backend, renderer, audio, and input remain tracked in `PORTING.md`.
+`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map fixed-address `ET_SCE_EXEC` files and preferred-address `ET_SCE_RELEXEC` VELFs, apply checked relocations, validate module metadata, inventory import/export NIDs, rewrite ARM function stubs, execute the narrow compiler path used by the Milestone 10 program, and present one diagnostic Metal frame. General relocatable placement, SELF payload extraction, broader Thumb-2, thread scheduling, production HLE coverage, the Vita renderer, audio, and input remain tracked in `PORTING.md`.
 
 Milestone 10 preserves the synthetic tests and adds an independently compiled VitaSDK VELF. The loader maps that VELF at its preferred addresses, applies its real compact relocation stream, parses its genuine module/import tables, rebinds `sceKernelGetThreadId`, and completes `module_start` through six guest instructions. This is intentionally not advertised as a general ARMv7 interpreter: conditional execution, most 32-bit Thumb-2, most addressing modes, floating point/NEON, exceptions, atomics, and most data-processing instructions remain unsupported. Relocatable segments are not yet placed at alternative addresses if their preferred ranges are unavailable, and SELF containers remain probe-only.
+
+Milestone 11 adds only the host-display boundary and the first Metal clear/present. It does not link the upstream Vulkan renderer, decode GXM commands, translate shaders, or display guest output.

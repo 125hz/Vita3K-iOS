@@ -9,8 +9,10 @@
 Vita3K is an experimental PlayStation Vita emulator for Windows, Linux, macOS and Android.
 
 An experimental iOS build pipeline is documented in
-[`ios/README.md`](ios/README.md). It produces an unsigned UIKit/Metal IPA and
-links the first dependency-free Vita3K core slice; it does not yet execute Vita software. The remaining porting blockers are tracked
+[`ios/README.md`](ios/README.md). It produces an unsigned UIKit/Metal IPA,
+links the first dependency-free Vita3K core slice, completes one deliberately
+tiny VitaSDK program, and presents one core-owned Metal diagnostic frame. It
+does not yet execute general Vita software or render Vita graphics. The remaining porting blockers are tracked
 in [`ios/PORTING.md`](ios/PORTING.md).
 
 * [Website](https://vita3k.org/) (information for users)

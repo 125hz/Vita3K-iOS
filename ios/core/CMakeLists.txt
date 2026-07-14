@@ -11,6 +11,7 @@ add_library(vita3k_ios_core STATIC
     ../src/ExecutableProbe.cpp
     ../src/GuestMemory.cpp
     ../src/GuestThread.cpp
+    ../src/HostDisplay.cpp
     ../src/HostFilesystem.cpp
     ../src/ImportBinder.cpp
     ../src/ModuleTableParser.cpp

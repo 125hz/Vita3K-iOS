@@ -8,7 +8,7 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 |---|---|---|---|
 | Build graph | Non-Android builds unconditionally configure Qt and `gui-qt` | **Started:** `vita3k_ios_core` links the upstream ARM encoder and NID database; continue extracting the loader/memory dependency closure | Core slice links and passes on-device self-tests; full loader still pending |
 | Frontend/lifecycle | Desktop `main.cpp`, Qt windows, SDL desktop events | Drive initialization, pause, resume, and shutdown from UIKit scenes/controllers | App backgrounds and resumes without losing emulator state |
-| Renderer | Apple desktop path uses Vulkan through MoltenVK and a Cocoa-backed `CAMetalLayer` | Choose and package an iOS-compatible MoltenVK build or create a native Metal backend; accept an `MTKView`/`CAMetalLayer` supplied by UIKit | Clear and present one emulator-owned frame on device |
+| Renderer | Apple desktop path uses Vulkan through MoltenVK and a Cocoa-backed `CAMetalLayer` | **Started:** a portable host-display seam now accepts an `MTKView` drawable and reports Metal completion; choose an iOS-compatible MoltenVK build or create a native Metal backend | Physical-device Milestone 11 clear/present pending; Vita graphics remain disconnected |
 | CPU/JIT | Dynarmic and memory helpers are built for current desktop/Android hosts | **Started:** a bounded ARM/Thumb runner now completes a tiny real VitaSDK module through its compiler-generated BLX/UXTB/POP path; continue adding instructions from progressively richer samples | Physical-device Milestone 10 diagnostic pending; general Vita homebrew still unsupported |
 | Guest memory | Core reserves a contiguous 4 GiB region and uses POSIX signals/mach context details on Apple | **Started:** portable 4 GiB reservation, batch mapping, shared-page permission merging, and temporary write/restore transitions for verified relocations; add iOS fault handling | Native tests pass; physical-device Milestone 5 diagnostic pending |
 | Dependencies | Boost, FFmpeg, SDL, Qt, Vulkan/MoltenVK and other submodules follow desktop/Android recipes | Inventory each dependency, disable unused ones, and build required libraries for `iphoneos arm64` | Reproducible dependency build with no simulator/macOS slices |
@@ -28,7 +28,7 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 8. **Done for compiled ARM call plumbing:** rewrite parsed function imports to upstream-style SVC trampolines and execute B/BL, PUSH/POP, word LDR/STR, and return sequences in a generated legal ELF fixture.
 9. **Done for the first interworking seam:** enter a generated module in Thumb mode, use compact compiler-style stack/data instructions, cross into rebound ARM import stubs with BLX, and return to Thumb through LR.
 10. **Done for the first real VitaSDK seam:** compile a tiny C module in CI with a pinned official VitaSDK image, map its VELF at preferred addresses, apply its real relocation stream, bind its import, and complete its compiler-generated entry/return path.
-11. Connect the renderer to the existing `MTKView` host.
+11. **Done for the first host-display seam:** connect the core to the existing `MTKView`, submit one core-owned clear, present its drawable, and report command-buffer completion.
 12. Add sandboxed storage, controller, touch, and audio adapters.
 13. Only after interpreter-mode boot is stable, integrate and validate the ARM64 JIT platform layer.
 
@@ -44,4 +44,4 @@ Keep platform checks narrow. Prefer interfaces such as `HostFilesystem`, `HostDi
 
 ## Definition of a real emulator IPA
 
-Do not label the artifact as a functioning Vita3K port until CI links the upstream core and a physical-device diagnostic run can initialize guest memory, load a legal Vita homebrew executable, execute guest code, and present frames. The existing artifact is a build-pipeline/bootstrap milestone only.
+Do not label the artifact as a functioning Vita3K port until a physical-device diagnostic can initialize guest memory, load a legal Vita homebrew executable, execute guest code, and present guest-renderer output. Milestone 11 presents only a diagnostic clear; the existing artifact remains a build-pipeline/bootstrap milestone.

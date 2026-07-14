@@ -2,8 +2,11 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
+
+#include <vita3k_ios/HostDisplay.h>
 
 namespace vita3k::ios {
 
@@ -51,6 +54,8 @@ struct CoreStatus {
     bool import_binding_ready;
     bool arm_execution_ready;
     bool guest_thread_ready;
+    bool renderer_attached;
+    bool renderer_frame_presented;
     std::uint64_t guest_memory_size;
     std::size_t host_page_size;
     std::uint64_t arm_test_instruction_count;
@@ -59,6 +64,8 @@ struct CoreStatus {
     std::size_t thread_test_hle_dispatch_count;
     std::int32_t thread_test_exit_status;
     std::size_t thread_test_bound_stub_count;
+    std::uint64_t renderer_submitted_frame_count;
+    std::uint64_t renderer_presented_frame_count;
     std::string storage_root;
     std::vector<ImportedArtifact> imported_artifacts;
     std::string summary;
@@ -67,5 +74,10 @@ struct CoreStatus {
 CoreStatus initialize_core(const std::filesystem::path &documents_root);
 CoreStatus query_core_status();
 CoreStatus rescan_imports();
+bool attach_host_display(std::uint32_t width, std::uint32_t height, std::string &error);
+std::optional<HostDisplayFrame> acquire_host_display_frame(std::uint32_t width,
+    std::uint32_t height, std::string &error);
+bool complete_host_display_frame(std::uint64_t identifier, bool presented,
+    std::string detail, std::string &error);
 
 } // namespace vita3k::ios
