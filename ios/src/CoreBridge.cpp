@@ -1,4 +1,5 @@
 #include <vita3k_ios/CoreBridge.h>
+#include <vita3k_ios/ArmExecution.h>
 #include <vita3k_ios/ExecutableLoader.h>
 #include <vita3k_ios/ExecutableProbe.h>
 #include <vita3k_ios/GuestMemory.h>
@@ -200,6 +201,78 @@ bool run_loader_pipeline_test(GuestMemory &memory, std::string &error) {
     return true;
 }
 
+bool run_arm_execution_test(GuestMemory &memory, std::uint64_t &instruction_count,
+    std::size_t &hle_dispatch_count, std::string &error) {
+    constexpr std::uint32_t test_address = 0x30000;
+    constexpr std::uint32_t test_nid = 0x210C0046;
+    constexpr std::uint32_t expected_argument = 0x1244;
+    constexpr std::uint32_t expected_return = 0x600D;
+    constexpr std::uint32_t expected_secondary_register = 0xBEEF;
+
+    const std::array<std::uint32_t, 7> instructions{
+        encode_arm_inst(INSTRUCTION_MOVW, 0x1234, 0),
+        0xE2800010u, // ADD r0, r0, #0x10
+        encode_arm_inst(INSTRUCTION_MOVW, test_nid & 0xFFFFu, 12),
+        encode_arm_inst(INSTRUCTION_MOVT, test_nid >> 16, 12),
+        encode_arm_inst(INSTRUCTION_SYSCALL, 0, 0),
+        encode_arm_inst(INSTRUCTION_MOVW, expected_secondary_register, 1),
+        encode_arm_inst(INSTRUCTION_BRANCH, 0, 14)
+    };
+    std::array<std::uint8_t, sizeof(instructions)> program{};
+    std::memcpy(program.data(), instructions.data(), program.size());
+
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < program.size() ||
+        memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the ARM execution diagnostic.";
+        return false;
+    }
+    if (!memory.map_segment(test_address, program,
+            static_cast<std::uint32_t>(memory_size_64), 5, error)) {
+        return false;
+    }
+
+    HLEDispatcher dispatcher;
+    bool hle_argument_valid = false;
+    hle_dispatch_count = 0;
+    const bool bound = dispatcher.bind(test_nid, "__sceAppMgrGetAppState diagnostic",
+        [&](ArmCpuState &state) -> std::int32_t {
+            ++hle_dispatch_count;
+            hle_argument_valid = state.registers[0] == expected_argument;
+            return static_cast<std::int32_t>(expected_return);
+        });
+
+    ArmInterpreter interpreter(memory, dispatcher);
+    interpreter.reset(test_address, test_address + static_cast<std::uint32_t>(memory_size_64));
+    const auto execution = interpreter.run(32);
+    const auto &state = interpreter.state();
+    instruction_count = execution.instructions_executed;
+
+    std::string unmap_error;
+    const bool unmapped = memory.unmap_all_segments(unmap_error);
+    if (!bound || dispatcher.binding_count() != 1) {
+        error = "The diagnostic HLE binding could not be registered.";
+        return false;
+    }
+    if (!execution.halted()) {
+        error = execution.detail;
+        return false;
+    }
+    if (!hle_argument_valid || hle_dispatch_count != 1 ||
+        state.registers[0] != expected_return ||
+        state.registers[1] != expected_secondary_register ||
+        state.registers[12] != test_nid ||
+        instruction_count != instructions.size()) {
+        error = "The ARM execution/HLE diagnostic produced unexpected register state.";
+        return false;
+    }
+    if (!unmapped) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
 void append_storage_error(std::string message) {
     if (!host_storage.error.empty()) {
         host_storage.error += " | ";
@@ -276,6 +349,11 @@ void update_status_from_storage() {
     summary << "\nRelocation/tables: " << (core_status.loader_pipeline_ready
         ? "passed (verified patch + 1 export/1 import)"
         : "FAILED");
+    summary << "\nARM execution/HLE: " << (core_status.arm_execution_ready
+        ? "passed (" + std::to_string(core_status.arm_test_instruction_count) +
+            " instructions + " + std::to_string(core_status.hle_test_dispatch_count) +
+            " bound NID call)"
+        : "FAILED");
     summary << "\nStorage: " << (core_status.storage_ready ? "ready" : "FAILED") << "\n"
             << "Import candidates: " << core_status.imported_artifacts.size() << "\n"
             << "ELF loader: ";
@@ -292,7 +370,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: connect the ARM interpreter and bind imported NIDs to HLE stubs. Rendering and execution are not active yet.";
+    summary << "\n\nNext: run a mapped homebrew entry point with thread state and real HLE stubs. Rendering is not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
@@ -313,14 +391,22 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
         run_segment_mapping_test(*guest_memory, memory_error);
     const bool loader_pipeline_passed = segment_mapping_passed &&
         run_loader_pipeline_test(*guest_memory, memory_error);
+    std::string execution_error;
+    const bool arm_execution_passed = loader_pipeline_passed &&
+        run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count,
+            core_status.hle_test_dispatch_count, execution_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;
+    core_status.arm_execution_ready = arm_execution_passed;
     core_status.guest_memory_size = reserved ? guest_memory->size() : 0;
     core_status.host_page_size = reserved ? guest_memory->host_page_size() : 0;
     host_storage = initialize_host_storage(documents_root);
     if (!memory_error.empty()) {
         append_storage_error("Guest memory: " + memory_error);
+    }
+    if (!execution_error.empty()) {
+        append_storage_error("ARM execution: " + execution_error);
     }
     update_status_from_storage();
     return core_status;

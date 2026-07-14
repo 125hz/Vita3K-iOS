@@ -37,8 +37,11 @@ struct CoreStatus {
     bool guest_memory_ready;
     bool segment_mapping_ready;
     bool loader_pipeline_ready;
+    bool arm_execution_ready;
     std::uint64_t guest_memory_size;
     std::size_t host_page_size;
+    std::uint64_t arm_test_instruction_count;
+    std::size_t hle_test_dispatch_count;
     std::string storage_root;
     std::vector<ImportedArtifact> imported_artifacts;
     std::string summary;

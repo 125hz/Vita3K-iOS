@@ -5,6 +5,7 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
 endif()
 
 add_library(vita3k_ios_core STATIC
+    ../src/ArmExecution.cpp
     ../src/CoreBridge.cpp
     ../src/ExecutableLoader.cpp
     ../src/ExecutableProbe.cpp

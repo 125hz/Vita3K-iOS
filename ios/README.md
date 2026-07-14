@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slice of upstream Vita3K code. It does **not** yet execute Vita software.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slice of upstream Vita3K code. It now executes a deliberately tiny synthetic ARM diagnostic, but it does **not** yet execute Vita homebrew or games.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -22,6 +22,8 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - extraction of the Vita module name/NID and inventory of `PT_SCE_RELA` relocation payloads
 - bounded application of Vita relocation formats 0–9 and common ARM/Thumb relocation codes, with verified writes to protected guest pages
 - bounded parsing of long/short import records, export records, and their function/variable/TLS NID tables
+- a bounded ARM-mode execution harness with register/PC state, MOVW, MOVT, ADD-immediate, SVC, and BX decoding
+- a reusable NID-to-HLE dispatcher seam, proven by one synthetic SVC call and verified return-register state
 - a narrow C++ `CoreBridge` seam for additional core integration
 - no signing credentials or provisioning profiles in CI
 
@@ -45,6 +47,6 @@ cmake --build build-ios --config Release --target Vita3KiOS -- \
 
 This command requires macOS and Xcode; the GitHub Actions workflow runs it remotely for Windows contributors.
 
-`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map a fixed-address plain `ET_SCE_EXEC` file, apply checked relocations, validate its module-info header, and inventory import/export NIDs. SELF decoding, relocatable ELF rebasing, HLE import binding, the CPU execution backend, renderer, audio, and input remain tracked in `PORTING.md`.
+`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map a fixed-address plain `ET_SCE_EXEC` file, apply checked relocations, validate its module-info header, inventory import/export NIDs, and execute a seven-instruction synthetic ARM routine. SELF decoding, relocatable ELF rebasing, real module-start/thread scheduling, production HLE handlers, the full CPU backend, renderer, audio, and input remain tracked in `PORTING.md`.
 
-Milestone 5 applies recognized `PT_SCE_RELA` entries and rejects malformed, out-of-range, or unsupported records. A mapped result proves safe loading, relocation, and metadata parsing, but imported NIDs are not bound to HLE functions and guest code is not executed yet. Only the first valid fixed-address plain ELF is retained in guest memory; relocatable ELF and SELF containers remain probe-only.
+Milestone 6 fetches ARM instructions from protected guest memory, updates guest registers and PC, dispatches one known NID through a diagnostic HLE handler, resumes guest execution, and returns through a sentinel link register. This is intentionally not advertised as a general ARMv7 interpreter: conditional execution, Thumb/Thumb-2, loads/stores, branches, floating point/NEON, exceptions, atomics, and most data-processing instructions remain unsupported. Imported module tables are not connected to production Vita3K HLE handlers yet. Only the first valid fixed-address plain ELF is retained in guest memory; relocatable ELF and SELF containers remain probe-only.
