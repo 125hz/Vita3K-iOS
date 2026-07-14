@@ -36,8 +36,8 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 14. **Done for bounded package inspection:** identify app/patch roots and reject unsafe archive paths.
 15. **Done for transactional installation:** commit base-app and patch roots together in the private sandbox and inventory installed titles.
 16. **Done for installed-executable preparation:** provide a title library/settings UI, resolve patch-over-base `eboot.bin`, load legal plain SELF segments, and stop explicitly on encrypted segments.
-17. Integrate the protected SELF/decryption dependency closure and attempt a selected title only under a bounded, non-JIT boot harness.
-18. Connect broader kernel/thread/HLE state, then renderer and audio closures in bounded steps.
+17. **Implemented pending device acceptance:** require explicit confirmation, then attempt the prepared module once under a non-JIT interpreter with a hard 256-instruction ceiling and exact stop diagnostics.
+18. Expand CPU instructions or kernel/HLE state only from the captured real-title boundary, then connect renderer and audio closures in bounded steps.
 19. Only after interpreter-mode boot is stable, integrate and validate the ARM64 JIT platform layer.
 
 Current loader limits are intentional: `ET_SCE_RELEXEC` segments are tried only at their preferred addresses, while SELF segments may require container-specific offset/decompression handling. Imported ARM function stubs are rewritten, but variable/TLS imports and Thumb import stubs are not bound. A valid ELF with a `module_start` is attempted with a 256-instruction ceiling; unsupported code stops with a detailed reason. The Milestone 10 interpreter recognizes only the narrow ARM/Thumb subset used by its two acceptance programs, including one 32-bit BL/BLX form. General Thumb-2 remains unsupported, so this must not be treated as a production Vita CPU backend or scheduler.

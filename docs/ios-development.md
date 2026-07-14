@@ -146,6 +146,8 @@ For the Milestone 13 metadata diagnostic, copy `milestone13-synthetic-param.sfo`
 
 For Milestone 16, open **Game Library** and select an installed title. **Prefer Installed Patch** is enabled by default in **Settings**, so a patch `eboot.bin` is prepared before the base app executable. The operation is deliberately non-executing: it validates the SELF and ELF headers, inventories load/compression/encryption state, and maps only structurally valid plain segments. Protected retail SELF files should report that decryption must be integrated. Preserve that exact diagnostic for the next milestone; do not upload the executable or game archive.
 
+For Milestone 17, re-select a successfully prepared title and tap **Attempt Boot (256 Instructions)**. The confirmation is an intentional safety boundary. The call uses only the portable interpreter, cannot activate JIT, is capped at 256 instructions, and consumes the prepared state so it cannot be repeated without a clean reload. Capture the first unsupported opcode/PC, memory fault, unbound HLE NID, return, exit, or instruction-limit message. Share the diagnostic text only; never upload the selected game executable.
+
 Keep firmware files such as `fontpkg.pup`, `preinstall.pup`, and the system update PUP on the local device/PC. Do not add them to Git, CI caches, or Actions artifacts. Firmware selection and extraction will be added after the iOS build includes the upstream crypto, package, FAT/exFAT, and psvpfs dependencies needed by `install_pup`.
 
 ## 8. Keeping the fork current

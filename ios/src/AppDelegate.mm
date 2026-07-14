@@ -125,6 +125,7 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
 @property(nonatomic, strong) UILabel *detailsLabel;
 @property(nonatomic, strong) UIButton *addGameButton;
 @property(nonatomic, strong) UIButton *libraryButton;
+@property(nonatomic, strong) UIButton *bootButton;
 @property(nonatomic, strong) VitaInputAdapter *inputAdapter;
 @property(nonatomic, strong) VitaMetalRenderer *renderer;
 @end
@@ -154,7 +155,7 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Vita3K iOS - Core Milestone 16";
+    title.text = @"Vita3K iOS - Core Milestone 17";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
     title.textAlignment = NSTextAlignmentCenter;
@@ -168,6 +169,9 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
 
     self.addGameButton = [self buttonWithTitle:@"Add Game ZIP/VPK" action:@selector(addGame)];
     self.libraryButton = [self buttonWithTitle:@"Game Library" action:@selector(openLibrary)];
+    self.bootButton = [self buttonWithTitle:@"Attempt Boot (256 Instructions)"
+                                    action:@selector(attemptBoot)];
+    self.bootButton.enabled = NO;
     UIButton *settingsButton = [self buttonWithTitle:@"Settings" action:@selector(openSettings)];
     UIButton *rescanButton = [self buttonWithTitle:@"Rescan Imports" action:@selector(rescanImports)];
 
@@ -183,7 +187,9 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
     secondaryButtons.spacing = 24.0;
 
     UIStackView *stack = [[UIStackView alloc]
-        initWithArrangedSubviews:@[title, self.detailsLabel, primaryButtons, secondaryButtons]];
+        initWithArrangedSubviews:@[
+            title, self.detailsLabel, primaryButtons, self.bootButton, secondaryButtons
+        ]];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 16.0;
@@ -231,6 +237,7 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
 - (void)refreshStatus {
     const auto status = vita3k::ios::query_core_status();
     self.detailsLabel.text = [NSString stringWithUTF8String:status.summary.c_str()];
+    self.bootButton.enabled = status.selected_boot_available;
     self.detailsLabel.hidden = ![[NSUserDefaults standardUserDefaults]
         boolForKey:VitaShowDiagnosticsKey];
 }
@@ -294,6 +301,50 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
             NSString *message = [NSString stringWithUTF8String:result.detail.c_str()];
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:(result.loaded ? @"Executable Prepared" : @"Preparation Stopped")
+                                 message:message
+                          preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+                                                      style:UIAlertActionStyleDefault handler:nil]];
+            [strongSelf presentViewController:alert animated:YES completion:nil];
+        });
+    });
+}
+
+- (void)attemptBoot {
+    UIAlertController *confirmation = [UIAlertController
+        alertControllerWithTitle:@"Controlled Interpreter Attempt"
+                         message:@"Run the prepared module once with a hard ceiling of 256 interpreted instructions? JIT is not used, and execution stops at the first unsupported instruction, memory fault, or unimplemented HLE call."
+                  preferredStyle:UIAlertControllerStyleAlert];
+    [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel"
+                                                      style:UIAlertActionStyleCancel handler:nil]];
+    __weak VitaViewController *weakSelf = self;
+    [confirmation addAction:[UIAlertAction actionWithTitle:@"Run Once"
+                                                      style:UIAlertActionStyleDestructive
+                                                    handler:^(UIAlertAction *action) {
+        (void)action;
+        [weakSelf runPreparedTitle];
+    }]];
+    [self presentViewController:confirmation animated:YES completion:nil];
+}
+
+- (void)runPreparedTitle {
+    self.bootButton.enabled = NO;
+    self.detailsLabel.hidden = NO;
+    self.detailsLabel.text = @"Running the bounded interpreter (maximum 256 instructions)...";
+    __weak VitaViewController *weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        const auto result = vita3k::ios::attempt_prepared_title_boot(256);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            VitaViewController *strongSelf = weakSelf;
+            if (strongSelf == nil)
+                return;
+            vita3k::ios::log_message(
+                (result.exited || result.returned) ? "INFO" : "WARN", result.detail);
+            [strongSelf refreshStatus];
+            NSString *message = [NSString stringWithUTF8String:result.detail.c_str()];
+            UIAlertController *alert = [UIAlertController
+                alertControllerWithTitle:(result.exited || result.returned
+                    ? @"Module Completed" : @"Boot Boundary Captured")
                                  message:message
                           preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"OK"

@@ -606,11 +606,34 @@ int main(int argc, char **argv) {
         prepared.imported_nid_count != 2 || prepared.bound_import_stub_count != 2 ||
         prepared_status.selected_title_id != "M15TEST01" ||
         !prepared_status.selected_executable_loaded ||
+        !prepared_status.selected_boot_available ||
         prepared_status.summary.find("Boot source: patch/eboot.bin") == std::string::npos ||
         prepared_status.summary.find("Executable preparation: Mapped 2") ==
             std::string::npos) {
         std::cerr << prepared.detail << '\n' << prepared_status.summary << '\n';
         return 38;
+    }
+
+    const auto controlled_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    const auto controlled_boot_status = vita3k::ios::query_core_status();
+    if (!controlled_boot.attempted || !controlled_boot.started ||
+        !controlled_boot.exited || controlled_boot.returned ||
+        controlled_boot.instruction_count != 12 ||
+        controlled_boot.hle_dispatch_count != 2 ||
+        controlled_boot.exit_status != 42 ||
+        controlled_boot_status.selected_boot_available ||
+        !controlled_boot_status.selected_boot_attempted ||
+        controlled_boot_status.summary.find(
+            "Controlled boot attempt: interpreter-only, 256-instruction ceiling") ==
+            std::string::npos) {
+        std::cerr << controlled_boot.detail << '\n' << controlled_boot_status.summary << '\n';
+        return 40;
+    }
+    const auto repeated_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (repeated_boot.started || repeated_boot.detail.find("Select the title again") ==
+            std::string::npos) {
+        std::cerr << "A prepared title was allowed to execute more than once.\n";
+        return 41;
     }
 
     auto encrypted_self = plain_self;

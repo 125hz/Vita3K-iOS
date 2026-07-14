@@ -43,6 +43,18 @@ CoreStatus core_status{
     .summary = "Vita3K core slice linked; initialization has not run yet."
 };
 
+struct PreparedExecutableState {
+    bool ready{};
+    std::string title_id;
+    std::string module_name;
+    std::uint32_t module_start_address{};
+    std::uint32_t temporary_stack_pointer{};
+    std::vector<std::uint32_t> imported_nids;
+};
+
+PreparedExecutableState prepared_executable;
+constexpr std::size_t maximum_controlled_boot_instructions = 256;
+
 bool run_upstream_self_tests() {
     const bool arm_encoder_ok = encode_arm_inst(INSTRUCTION_MOVW, 0x1234, 0) == 0xE3010234u;
     const bool thumb_encoder_ok = encode_thumb_inst(INSTRUCTION_BRANCH, 0, 3) != 0;
@@ -472,7 +484,11 @@ void update_status_from_storage() {
     core_status.storage_root = host_storage.root.string();
     core_status.selected_title_id.clear();
     core_status.selected_executable_loaded = false;
+    core_status.selected_boot_available = false;
+    core_status.selected_boot_attempted = false;
     core_status.title_preparation_status.clear();
+    core_status.title_boot_status.clear();
+    prepared_executable = {};
     scan_installed_titles();
     core_status.imported_artifacts.clear();
     core_status.imported_artifacts.reserve(host_storage.imported_files.size());
@@ -637,7 +653,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: use Game Library to prepare an installed eboot.bin, then report the exact SELF/decryption or loader boundary before the first controlled boot attempt. General Vita games are not active yet.";
+    summary << "\n\nNext: prepare an installed title, then use Attempt Boot once to capture the first unsupported CPU instruction or unimplemented HLE call. The bounded interpreter cannot run general Vita games yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
@@ -667,12 +683,29 @@ void update_title_preparation_summary(const TitlePreparationResult &result) {
         lines.str());
 }
 
+void update_title_boot_summary(const TitleBootResult &result, std::size_t instruction_limit) {
+    const auto marker = core_status.summary.find("\nControlled boot attempt:");
+    const auto next = core_status.summary.find("\n\nNext:");
+    if (marker != std::string::npos) {
+        core_status.summary.erase(marker,
+            next == std::string::npos ? std::string::npos : next - marker);
+    }
+    std::ostringstream line;
+    line << "\nControlled boot attempt: interpreter-only, " << instruction_limit
+         << "-instruction ceiling; " << result.detail;
+    const auto insertion = core_status.summary.find("\n\nNext:");
+    core_status.summary.insert(insertion == std::string::npos
+            ? core_status.summary.size() : insertion,
+        line.str());
+}
+
 } // namespace
 
 CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     std::lock_guard lock(core_mutex);
     host_display = HostDisplay{};
     host_input = HostInput{};
+    prepared_executable = {};
     core_status.self_tests_passed = run_upstream_self_tests();
     core_status.upstream_metadata_ready = run_upstream_metadata_test();
     core_status.upstream_archive_ready = run_upstream_archive_test();
@@ -751,6 +784,10 @@ TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer
         .attempted = true,
         .title_id = std::move(title_id)
     };
+    prepared_executable = {};
+    core_status.selected_boot_available = false;
+    core_status.selected_boot_attempted = false;
+    core_status.title_boot_status.clear();
 
     const auto selected = std::ranges::find(core_status.installed_titles,
         result.title_id, &InstalledTitle::title_id);
@@ -829,13 +866,60 @@ TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer
             result.bound_import_stub_count = load.bound_import_stub_count;
             result.module_start_address = load.module_start_address;
             result.detail = load.detail;
+            if (load.loaded && load.module_start_valid &&
+                load.temporary_stack_pointer != 0) {
+                prepared_executable = {
+                    .ready = true,
+                    .title_id = result.title_id,
+                    .module_name = load.module_name,
+                    .module_start_address = load.module_start_address,
+                    .temporary_stack_pointer = load.temporary_stack_pointer,
+                    .imported_nids = load.imported_nids
+                };
+            }
         }
     }
 
     core_status.selected_title_id = result.title_id;
     core_status.selected_executable_loaded = result.loaded;
+    core_status.selected_boot_available = prepared_executable.ready;
     core_status.title_preparation_status = result.detail;
     update_title_preparation_summary(result);
+    return result;
+}
+
+TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
+    std::lock_guard lock(core_mutex);
+    TitleBootResult result{
+        .attempted = true,
+        .title_id = prepared_executable.title_id
+    };
+    if (instruction_limit == 0 ||
+        instruction_limit > maximum_controlled_boot_instructions) {
+        result.detail = "The controlled boot budget must be between 1 and 256 instructions.";
+    } else if (!prepared_executable.ready || !guest_memory) {
+        result.detail = "No prepared executable is available. Select the title again first.";
+    } else {
+        const auto thread = run_guest_module_start(*guest_memory,
+            prepared_executable.module_start_address,
+            prepared_executable.temporary_stack_pointer,
+            prepared_executable.imported_nids,
+            prepared_executable.module_name,
+            instruction_limit);
+        result.started = thread.started;
+        result.exited = thread.exited;
+        result.returned = thread.returned;
+        result.instruction_count = thread.instruction_count;
+        result.hle_dispatch_count = thread.hle_dispatch_count;
+        result.exit_status = thread.exit_status;
+        result.return_value = thread.return_value;
+        result.detail = thread.detail;
+        prepared_executable.ready = false;
+    }
+    core_status.selected_boot_available = prepared_executable.ready;
+    core_status.selected_boot_attempted = result.started;
+    core_status.title_boot_status = result.detail;
+    update_title_boot_summary(result, instruction_limit);
     return result;
 }
 

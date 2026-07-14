@@ -43,6 +43,19 @@ struct TitlePreparationResult {
     std::string detail;
 };
 
+struct TitleBootResult {
+    bool attempted{};
+    bool started{};
+    bool exited{};
+    bool returned{};
+    std::uint64_t instruction_count{};
+    std::size_t hle_dispatch_count{};
+    std::int32_t exit_status{};
+    std::uint32_t return_value{};
+    std::string title_id;
+    std::string detail;
+};
+
 struct GameInstallResult {
     bool attempted{};
     bool success{};
@@ -137,7 +150,10 @@ struct CoreStatus {
     std::string package_install_status;
     std::string selected_title_id;
     bool selected_executable_loaded{};
+    bool selected_boot_available{};
+    bool selected_boot_attempted{};
     std::string title_preparation_status;
+    std::string title_boot_status;
     std::vector<ImportedArtifact> imported_artifacts;
     std::string summary;
 };
@@ -147,6 +163,7 @@ CoreStatus query_core_status();
 CoreStatus rescan_imports();
 GameInstallResult install_game_archive(const std::filesystem::path &archive_path);
 TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer_patch);
+TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit = 256);
 bool attach_host_display(std::uint32_t width, std::uint32_t height, std::string &error);
 std::optional<HostDisplayFrame> acquire_host_display_frame(std::uint32_t width,
     std::uint32_t height, std::string &error);

@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It can transactionally install user-selected app/patch ZIPs, list installed titles, prefer a patch `eboot.bin`, and safely probe a selected Vita SELF before execution. It also loads and completes the `module_start` of a deliberately tiny legal fixture, presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet decrypt protected SELF segments, execute installed games, render Vita graphics, route input to guest services, or run general Vita software.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It can transactionally install user-selected app/patch ZIPs, list installed titles, prefer a patch `eboot.bin`, safely prepare a selected Vita SELF, and make one explicitly confirmed interpreter attempt with a hard 256-instruction ceiling. It also loads and completes the `module_start` of a deliberately tiny legal fixture, presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet execute general installed games, render Vita graphics, route input to guest services, or provide a production CPU/HLE implementation.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -156,6 +156,15 @@ Milestone 15 adds the first end-user import UI and a transactional installer for
 4. The app resolves `ux0/patch/<TITLE_ID>/eboot.bin` first and falls back to the base app only when needed.
 5. Capture the **Preparation Stopped** or **Executable Prepared** message and the `Executable preparation:` diagnostic line.
 
-The Actions artifact includes `milestone16-app-and-patch.zip`, whose base and patch executables are legal synthetic plain SELF containers. Selecting its `M15TEST01` row must report `Executable Prepared`, two load segments, and module `synthetic-homebrew`. A normal protected retail `eboot.bin` is expected to stop at encrypted SELF segments. That is a successful Milestone 16 diagnostic: no encrypted bytes are mapped or executed. Milestone 17 will use the exact device result to integrate the required decryption/loader dependency path and make the first tightly bounded boot attempt.
+The Actions artifact includes `milestone16-app-and-patch.zip`, whose base and patch executables are legal synthetic plain SELF containers. Selecting its `M15TEST01` row must report `Executable Prepared`, two load segments, and module `synthetic-homebrew`. If a protected retail `eboot.bin` reports encrypted segments, no encrypted bytes are mapped or executed. Some user-owned decrypted dumps may already prepare successfully; that result enables the Milestone 17 controlled interpreter attempt.
 
 Keep Amagami, firmware PUPs, keys, and other proprietary content on your device. Do not add them to Git or upload them to GitHub Actions.
+
+## Milestone 17 controlled boot-boundary test
+
+1. Open **Game Library** and select the installed title again so its executable is freshly prepared.
+2. Tap **Attempt Boot (256 Instructions)**.
+3. Read the safety prompt, then choose **Run Once**.
+4. Capture the **Boot Boundary Captured** alert and the `Controlled boot attempt:` line.
+
+This is interpreter-only and does not enable JIT. The executable can be attempted only once per preparation, and the interpreter stops on the first unsupported instruction, memory fault, unimplemented HLE call, normal return/exit, or the 256-instruction ceiling. For a commercial game, an early diagnostic stop is expected and is not a crash or a playable boot. Re-select the title before each later attempt so guest memory is reloaded cleanly.
