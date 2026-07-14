@@ -41,6 +41,7 @@ jobs:
             -w /workspace/ios/fixtures/vitasdk-milestone10 \
             vitasdk/vitasdk@sha256:d9bac0c5d9509dbb0082a077a73b1da4c821dcbe12d8805dced6c1e08334de2f \
             sh -lc '
+              set -eu
               cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel
               cmake --build build --parallel
               find build -maxdepth 2 -type f -print | sort
