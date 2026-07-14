@@ -1,0 +1,193 @@
+#include <vita3k_ios/ExecutableLoader.h>
+
+#include <vita3k_ios/ExecutableProbe.h>
+#include <vita3k_ios/GuestMemory.h>
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <numeric>
+#include <sstream>
+#include <vector>
+
+namespace vita3k::ios {
+namespace {
+
+constexpr std::uint16_t et_sce_exec = 0xFE00;
+constexpr std::size_t module_info_size = 0x5C;
+constexpr std::size_t module_name_offset = 4;
+constexpr std::size_t module_name_size = 27;
+constexpr std::size_t module_nid_offset = 0x34;
+
+bool read_file_range(std::ifstream &stream, std::uint32_t offset,
+    std::span<std::uint8_t> output) {
+    if (output.empty()) {
+        return true;
+    }
+    stream.clear();
+    stream.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    stream.read(reinterpret_cast<char *>(output.data()), static_cast<std::streamsize>(output.size()));
+    return stream.gcount() == static_cast<std::streamsize>(output.size());
+}
+
+std::string sanitize_module_name(std::span<const std::uint8_t> bytes) {
+    const auto terminator = std::find(bytes.begin(), bytes.end(), 0);
+    std::string name;
+    name.reserve(static_cast<std::size_t>(terminator - bytes.begin()));
+    for (auto iterator = bytes.begin(); iterator != terminator; ++iterator) {
+        const auto value = static_cast<unsigned char>(*iterator);
+        name.push_back(std::isprint(value) != 0 ? static_cast<char>(value) : '?');
+    }
+    return name.empty() ? "<unnamed>" : name;
+}
+
+} // namespace
+
+PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
+    const ExecutableProbeResult &probe,
+    GuestMemory &memory) {
+    PlainElfLoadResult result{
+        .attempted = true,
+        .relocation_segment_count = probe.relocation_segments.size()
+    };
+    result.relocation_bytes = std::accumulate(probe.relocation_segments.begin(),
+        probe.relocation_segments.end(), std::uint64_t{0},
+        [](std::uint64_t total, const RelocationSegmentPlan &segment) {
+            return total + segment.file_size;
+        });
+
+    if (!probe.structurally_valid || probe.kind != "Vita ELF") {
+        result.detail = "Only a structurally valid plain Vita ELF can be mapped.";
+        return result;
+    }
+    if (probe.executable_type != et_sce_exec) {
+        result.detail = "Relocatable Vita ELFs require rebasing before their segments can be mapped.";
+        return result;
+    }
+    if (memory.mapped_segment_count() != 0) {
+        result.detail = "Guest memory already contains a loaded executable.";
+        return result;
+    }
+
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+        result.detail = "The plain ELF could not be opened for segment loading.";
+        return result;
+    }
+
+    std::vector<std::vector<std::uint8_t>> payloads(probe.load_segments.size());
+    std::vector<GuestSegmentMapping> mappings;
+    mappings.reserve(probe.load_segments.size());
+    for (std::size_t index = 0; index < probe.load_segments.size(); ++index) {
+        const auto &segment = probe.load_segments[index];
+        payloads[index].resize(segment.file_size);
+        if (!read_file_range(stream, segment.file_offset, payloads[index])) {
+            result.detail = "A validated ELF segment could not be read from disk.";
+            return result;
+        }
+        mappings.push_back({
+            .guest_address = segment.virtual_address,
+            .file_data = payloads[index],
+            .memory_size = segment.memory_size,
+            .guest_flags = segment.flags
+        });
+        result.file_bytes += segment.file_size;
+        result.memory_bytes += segment.memory_size;
+    }
+
+    const auto page_size = static_cast<std::uint64_t>(memory.host_page_size());
+    for (std::size_t left = 0; left < probe.load_segments.size(); ++left) {
+        const auto &a = probe.load_segments[left];
+        const auto a_start = (static_cast<std::uint64_t>(a.virtual_address) / page_size) * page_size;
+        const auto a_end = ((static_cast<std::uint64_t>(a.virtual_address) + a.memory_size +
+                                page_size - 1) /
+            page_size) * page_size;
+        for (std::size_t right = left + 1; right < probe.load_segments.size(); ++right) {
+            const auto &b = probe.load_segments[right];
+            const auto b_start = (static_cast<std::uint64_t>(b.virtual_address) / page_size) * page_size;
+            const auto b_end = ((static_cast<std::uint64_t>(b.virtual_address) + b.memory_size +
+                                    page_size - 1) /
+                page_size) * page_size;
+            if (a_start < b_end && b_start < a_end) {
+                ++result.shared_page_pairs;
+            }
+        }
+    }
+
+    std::string memory_error;
+    if (!memory.map_segments(mappings, memory_error)) {
+        result.detail = "Guest segment mapping failed: " + memory_error;
+        return result;
+    }
+
+    for (std::size_t index = 0; index < probe.load_segments.size(); ++index) {
+        if (payloads[index].empty()) {
+            continue;
+        }
+        std::vector<std::uint8_t> observed(payloads[index].size());
+        if (!memory.read(probe.load_segments[index].virtual_address, observed, memory_error) ||
+            observed != payloads[index]) {
+            std::string unmap_error;
+            (void)memory.unmap_all_segments(unmap_error);
+            result.detail = "Mapped ELF segment readback failed: " + memory_error;
+            return result;
+        }
+    }
+
+    const auto module_segment = std::find_if(probe.load_segments.begin(), probe.load_segments.end(),
+        [&probe](const LoadSegmentPlan &segment) {
+            return segment.program_index == probe.module_info_segment_index;
+        });
+    if (module_segment == probe.load_segments.end() ||
+        probe.module_info_offset > module_segment->memory_size ||
+        module_info_size > module_segment->memory_size - probe.module_info_offset) {
+        std::string unmap_error;
+        (void)memory.unmap_all_segments(unmap_error);
+        result.detail = "The ELF module-info locator does not point inside a loaded segment.";
+        return result;
+    }
+
+    const auto module_address_64 = static_cast<std::uint64_t>(module_segment->virtual_address) +
+        probe.module_info_offset;
+    if (module_address_64 > std::numeric_limits<std::uint32_t>::max()) {
+        std::string unmap_error;
+        (void)memory.unmap_all_segments(unmap_error);
+        result.detail = "The ELF module-info address overflows guest address space.";
+        return result;
+    }
+
+    std::array<std::uint8_t, module_info_size> module_info{};
+    if (!memory.read(static_cast<std::uint32_t>(module_address_64), module_info, memory_error)) {
+        std::string unmap_error;
+        (void)memory.unmap_all_segments(unmap_error);
+        result.detail = "The ELF module-info header could not be read: " + memory_error;
+        return result;
+    }
+
+    result.module_name = sanitize_module_name(std::span(module_info).subspan(
+        module_name_offset, module_name_size));
+    std::memcpy(&result.module_nid, module_info.data() + module_nid_offset,
+        sizeof(result.module_nid));
+    result.module_info_valid = true;
+    result.loaded = true;
+
+    std::ostringstream detail;
+    detail << "Mapped " << probe.load_segments.size() << " segments ("
+           << result.file_bytes << " file bytes, " << result.memory_bytes
+           << " guest bytes); readback passed; module " << result.module_name
+           << " NID 0x" << std::hex << std::uppercase << std::setw(8)
+           << std::setfill('0') << result.module_nid << std::dec << "; "
+           << result.relocation_segment_count << " relocation segments inventoried";
+    if (result.relocation_segment_count != 0) {
+        detail << " but not applied";
+    }
+    detail << ".";
+    result.detail = detail.str();
+    return result;
+}
+
+} // namespace vita3k::ios

@@ -34,7 +34,9 @@ int main() {
         return 2;
     }
 
-    std::array<std::uint8_t, 84> elf{};
+    // Three program headers: two adjacent PT_LOAD segments that share one
+    // 4 KiB Windows host page, plus one PT_SCE_RELA inventory entry.
+    std::array<std::uint8_t, 300> elf{};
     elf[0] = 0x7F;
     elf[1] = 'E';
     elf[2] = 'L';
@@ -48,15 +50,42 @@ int main() {
     write_value(elf, 28, static_cast<std::uint32_t>(52));
     write_value(elf, 40, static_cast<std::uint16_t>(52));
     write_value(elf, 42, static_cast<std::uint16_t>(32));
-    write_value(elf, 44, static_cast<std::uint16_t>(1));
+    write_value(elf, 44, static_cast<std::uint16_t>(3));
+
+    // PT_LOAD #0 contains a complete 0x5C-byte Vita module-info header.
     write_value(elf, 52, static_cast<std::uint32_t>(1));
-    write_value(elf, 56, static_cast<std::uint32_t>(0));
+    write_value(elf, 56, static_cast<std::uint32_t>(148));
     write_value(elf, 60, static_cast<std::uint32_t>(0x81000000));
     write_value(elf, 64, static_cast<std::uint32_t>(0x81000000));
-    write_value(elf, 68, static_cast<std::uint32_t>(52));
-    write_value(elf, 72, static_cast<std::uint32_t>(4096));
+    write_value(elf, 68, static_cast<std::uint32_t>(128));
+    write_value(elf, 72, static_cast<std::uint32_t>(0x800));
     write_value(elf, 76, static_cast<std::uint32_t>(5));
     write_value(elf, 80, static_cast<std::uint32_t>(4096));
+
+    // PT_LOAD #1 is byte-adjacent to #0 but has different guest permissions.
+    write_value(elf, 84, static_cast<std::uint32_t>(1));
+    write_value(elf, 88, static_cast<std::uint32_t>(276));
+    write_value(elf, 92, static_cast<std::uint32_t>(0x81000800));
+    write_value(elf, 96, static_cast<std::uint32_t>(0x81000800));
+    write_value(elf, 100, static_cast<std::uint32_t>(16));
+    write_value(elf, 104, static_cast<std::uint32_t>(0x800));
+    write_value(elf, 108, static_cast<std::uint32_t>(6));
+    write_value(elf, 112, static_cast<std::uint32_t>(4096));
+
+    // PT_SCE_RELA is inventoried but deliberately not applied in Milestone 4.
+    write_value(elf, 116, static_cast<std::uint32_t>(0x60000000));
+    write_value(elf, 120, static_cast<std::uint32_t>(292));
+    write_value(elf, 132, static_cast<std::uint32_t>(8));
+    write_value(elf, 136, static_cast<std::uint32_t>(8));
+    write_value(elf, 144, static_cast<std::uint32_t>(4));
+
+    write_value(elf, 150, static_cast<std::uint16_t>(0x0101));
+    constexpr char module_name[] = "synthetic-homebrew";
+    std::memcpy(elf.data() + 152, module_name, sizeof(module_name) - 1);
+    write_value(elf, 200, static_cast<std::uint32_t>(0x1234ABCD));
+    for (std::size_t index = 276; index < 292; ++index) {
+        elf[index] = static_cast<std::uint8_t>(index - 260);
+    }
 
     const auto fixture = test_root / "Vita3K" / "imports" / "synthetic-homebrew.elf";
     std::ofstream fixture_stream(fixture, std::ios::binary);
@@ -67,12 +96,17 @@ int main() {
     if (rescanned.imported_artifacts.size() != 1 ||
         rescanned.imported_artifacts.front().kind != "Vita ELF" ||
         !rescanned.imported_artifacts.front().structurally_valid ||
-        rescanned.imported_artifacts.front().load_segment_count != 1) {
+        rescanned.imported_artifacts.front().load_segment_count != 2 ||
+        rescanned.imported_artifacts.front().relocation_segment_count != 1 ||
+        !rescanned.imported_artifacts.front().loaded ||
+        !rescanned.imported_artifacts.front().module_info_valid ||
+        rescanned.imported_artifacts.front().module_name != "synthetic-homebrew" ||
+        rescanned.imported_artifacts.front().module_nid != 0x1234ABCD) {
         std::cerr << rescanned.summary << '\n';
         return 3;
     }
 
     std::filesystem::remove_all(test_root, error);
-    std::cout << status.summary << '\n';
+    std::cout << rescanned.summary << '\n';
     return 0;
 }

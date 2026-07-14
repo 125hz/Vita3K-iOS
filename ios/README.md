@@ -17,6 +17,9 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - a portable 4 GiB Vita guest-address-space reservation with one-page commit, read/write, decommit, and protection diagnostics
 - validated ELF `PT_LOAD` segment plans with 32-bit address-overflow and file-range checks
 - checked guest-segment mapping with file-byte copying, BSS zero-fill, final host-page protection, readback, and unmapping diagnostics
+- batch mapping that merges permissions when adjacent Vita segments share a 16 KiB iPhone host page
+- loading and full byte readback of the first valid fixed-address plain Vita ELF in `Documents/Vita3K/imports`
+- extraction of the Vita module name/NID and inventory of `PT_SCE_RELA` relocation payloads
 - a narrow C++ `CoreBridge` seam for additional core integration
 - no signing credentials or provisioning profiles in CI
 
@@ -40,6 +43,6 @@ cmake --build build-ios --config Release --target Vita3KiOS -- \
 
 This command requires macOS and Xcode; the GitHub Actions workflow runs it remotely for Windows contributors.
 
-`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve the guest address space and safely map a synthetic ELF segment. Mapping a real imported ELF, SELF decoding, relocations, module metadata, the CPU execution backend, renderer, audio, and input remain tracked in `PORTING.md`.
+`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space and map a fixed-address plain `ET_SCE_EXEC` file, including shared host pages, then validate its module-info header. SELF decoding, relocatable ELF rebasing, applying relocations, import/export tables, the CPU execution backend, renderer, audio, and input remain tracked in `PORTING.md`.
 
-The current range tracker deliberately rejects segments whose aligned host pages overlap. Real Vita binaries can contain adjacent segments that share a host page, especially on devices with 16 KiB pages. A later loader milestone must merge those page requirements before real imports can be considered generally loadable.
+Milestone 4 inventories `PT_SCE_RELA` payloads but deliberately does not apply them. A mapped result therefore proves safe loading and metadata extraction, not that the executable can run. Only the first valid fixed-address plain ELF is retained in guest memory; relocatable ELF and SELF containers remain probe-only.

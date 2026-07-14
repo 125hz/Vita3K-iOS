@@ -68,6 +68,11 @@ ExecutableProbeResult validate_elf(std::ifstream &stream, std::uint64_t file_siz
         return result;
     }
 
+    result.executable_type = header.e_type;
+    result.entry_point = header.e_entry;
+    result.module_info_offset = header.e_entry & 0x3FFFFFFFu;
+    result.module_info_segment_index = static_cast<std::uint16_t>(header.e_entry >> 30);
+
     if (!self_container) {
         program_table_offset = elf_offset + header.e_phoff;
     }
@@ -88,12 +93,28 @@ ExecutableProbeResult validate_elf(std::ifstream &stream, std::uint64_t file_siz
             result.detail = "Could not read an ELF program header.";
             return result;
         }
+        if (segment.p_type == PT_SCE_RELA) {
+            if (!self_container &&
+                (segment.p_offset > file_size || segment.p_filesz > file_size - segment.p_offset)) {
+                result.detail = "A relocation segment extends outside the ELF file.";
+                return result;
+            }
+            result.relocation_segments.push_back({
+                .program_index = index,
+                .file_offset = segment.p_offset,
+                .file_size = segment.p_filesz
+            });
+            continue;
+        }
         if (segment.p_type != PT_LOAD) {
             continue;
         }
         if (segment.p_memsz < segment.p_filesz) {
             result.detail = "A load segment has a memory size smaller than its file size.";
             return result;
+        }
+        if (segment.p_memsz == 0) {
+            continue;
         }
         if (segment.p_memsz > std::numeric_limits<std::uint32_t>::max() - segment.p_vaddr) {
             result.detail = "A load segment overflows the 32-bit Vita address space.";
@@ -104,6 +125,7 @@ ExecutableProbeResult validate_elf(std::ifstream &stream, std::uint64_t file_siz
             return result;
         }
         result.load_segments.push_back({
+            .program_index = index,
             .file_offset = segment.p_offset,
             .virtual_address = segment.p_vaddr,
             .file_size = segment.p_filesz,
@@ -119,7 +141,8 @@ ExecutableProbeResult validate_elf(std::ifstream &stream, std::uint64_t file_siz
 
     result.structurally_valid = true;
     std::ostringstream detail;
-    detail << "ARM32 Vita ELF; " << result.load_segments.size() << " load segments; entry/module-info 0x"
+    detail << "ARM32 Vita ELF; " << result.load_segments.size() << " load segments; "
+           << result.relocation_segments.size() << " relocation segments; entry/module-info 0x"
            << std::hex << header.e_entry << ".";
     result.detail = detail.str();
     return result;

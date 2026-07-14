@@ -1,9 +1,11 @@
 #include <vita3k_ios/GuestMemory.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <system_error>
+#include <vector>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -29,6 +31,8 @@ std::string host_error_message() {
 constexpr std::uint32_t guest_flag_execute = 1;
 constexpr std::uint32_t guest_flag_write = 2;
 constexpr std::uint32_t guest_flag_read = 4;
+constexpr std::uint32_t supported_guest_flags =
+    guest_flag_execute | guest_flag_write | guest_flag_read;
 
 } // namespace
 
@@ -120,100 +124,202 @@ bool GuestMemory::map_segment(std::uint32_t guest_address,
     std::uint32_t memory_size,
     std::uint32_t guest_flags,
     std::string &error) {
+    const std::array segment{
+        GuestSegmentMapping{
+            .guest_address = guest_address,
+            .file_data = file_data,
+            .memory_size = memory_size,
+            .guest_flags = guest_flags
+        }
+    };
+    return map_segments(segment, error);
+}
+
+bool GuestMemory::map_segments(std::span<const GuestSegmentMapping> segments, std::string &error) {
     if (!ready() || host_page_size_ == 0) {
         error = "Guest memory is not reserved.";
         return false;
     }
-    if (memory_size == 0 || file_data.size() > memory_size) {
-        error = "The guest segment has invalid file and memory sizes.";
+    if (segments.empty()) {
+        error = "No guest segments were supplied.";
         return false;
     }
-    if ((guest_flags & ~(guest_flag_read | guest_flag_write | guest_flag_execute)) != 0) {
-        error = "The guest segment contains unsupported permission flags.";
+    if (!mapped_page_ranges_.empty() || !mapped_segment_ranges_.empty()) {
+        error = "A guest executable is already mapped.";
         return false;
     }
 
-    const auto segment_start = static_cast<std::uint64_t>(guest_address);
-    const auto segment_end = segment_start + memory_size;
-    if (segment_end > size_) {
-        error = "The guest segment exceeds the reserved address space.";
-        return false;
-    }
+    struct PlannedSegment {
+        const GuestSegmentMapping *source;
+        std::uint64_t start;
+        std::uint64_t end;
+        std::uint64_t page_start;
+        std::uint64_t page_end;
+    };
 
     const auto page_size = static_cast<std::uint64_t>(host_page_size_);
-    const auto page_start = (segment_start / page_size) * page_size;
-    const auto page_end = ((segment_end + page_size - 1) / page_size) * page_size;
-    if (page_end > size_ || page_end <= page_start) {
-        error = "The aligned guest segment range is invalid.";
-        return false;
-    }
-    const auto mapped_size = page_end - page_start;
-    const bool overlaps = std::any_of(mapped_ranges_.begin(), mapped_ranges_.end(),
-        [page_start, page_end](const MappedRange &range) {
-            return page_start < range.page_start + range.page_size &&
-                range.page_start < page_end;
+    std::vector<PlannedSegment> planned;
+    std::vector<std::uint64_t> boundaries;
+    planned.reserve(segments.size());
+    boundaries.reserve(segments.size() * 2);
+
+    for (const auto &segment : segments) {
+        if (segment.memory_size == 0 || segment.file_data.size() > segment.memory_size) {
+            error = "A guest segment has invalid file and memory sizes.";
+            return false;
+        }
+        if ((segment.guest_flags & ~supported_guest_flags) != 0) {
+            error = "A guest segment contains unsupported permission flags.";
+            return false;
+        }
+
+        const auto start = static_cast<std::uint64_t>(segment.guest_address);
+        const auto end = start + segment.memory_size;
+        if (end > size_) {
+            error = "A guest segment exceeds the reserved address space.";
+            return false;
+        }
+        const auto page_start = (start / page_size) * page_size;
+        const auto page_end = ((end + page_size - 1) / page_size) * page_size;
+        if (page_end > size_ || page_end <= page_start) {
+            error = "An aligned guest segment range is invalid.";
+            return false;
+        }
+
+        planned.push_back({
+            .source = &segment,
+            .start = start,
+            .end = end,
+            .page_start = page_start,
+            .page_end = page_end
         });
-    if (overlaps) {
-        error = "The guest segment overlaps an already mapped host page.";
-        return false;
+        boundaries.push_back(page_start);
+        boundaries.push_back(page_end);
     }
 
-    auto *page_pointer = static_cast<std::uint8_t *>(base_) + page_start;
+    std::ranges::sort(planned, {}, &PlannedSegment::start);
+    for (std::size_t index = 1; index < planned.size(); ++index) {
+        if (planned[index].start < planned[index - 1].end) {
+            error = "Guest segments overlap in byte address space.";
+            return false;
+        }
+    }
+
+    std::ranges::sort(boundaries);
+    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+
+    std::vector<MappedPageRange> page_ranges;
+    for (std::size_t index = 1; index < boundaries.size(); ++index) {
+        const auto range_start = boundaries[index - 1];
+        const auto range_end = boundaries[index];
+        bool covered = false;
+        std::uint32_t merged_flags = 0;
+        for (const auto &segment : planned) {
+            if (range_start < segment.page_end && segment.page_start < range_end) {
+                covered = true;
+                merged_flags |= segment.source->guest_flags;
+            }
+        }
+        if (!covered) {
+            continue;
+        }
+        if (!page_ranges.empty() &&
+            page_ranges.back().page_start + page_ranges.back().page_size == range_start &&
+            page_ranges.back().guest_flags == merged_flags) {
+            page_ranges.back().page_size += range_end - range_start;
+        } else {
+            page_ranges.push_back({
+                .page_start = range_start,
+                .page_size = range_end - range_start,
+                .guest_flags = merged_flags
+            });
+        }
+    }
+
+    auto rollback = [this](const std::vector<MappedPageRange> &ranges) {
+        for (const auto &range : ranges) {
+            auto *pointer = static_cast<std::uint8_t *>(base_) + range.page_start;
 #ifdef _WIN32
-    void *committed = VirtualAlloc(page_pointer, static_cast<std::size_t>(mapped_size),
-        MEM_COMMIT, PAGE_READWRITE);
-    if (committed != page_pointer) {
-        error = "Could not commit guest segment pages: " + host_error_message();
-        return false;
-    }
+            (void)VirtualFree(pointer, static_cast<std::size_t>(range.page_size), MEM_DECOMMIT);
 #else
-    if (mprotect(page_pointer, static_cast<std::size_t>(mapped_size), PROT_READ | PROT_WRITE) != 0) {
-        error = "Could not make guest segment pages writable: " + host_error_message();
-        return false;
-    }
+            (void)mprotect(pointer, static_cast<std::size_t>(range.page_size), PROT_NONE);
+            (void)madvise(pointer, static_cast<std::size_t>(range.page_size), MADV_DONTNEED);
 #endif
+        }
+    };
 
-    auto *segment_pointer = static_cast<std::uint8_t *>(base_) + segment_start;
-    if (!file_data.empty()) {
-        std::memcpy(segment_pointer, file_data.data(), file_data.size());
-    }
-    std::memset(segment_pointer + file_data.size(), 0, memory_size - file_data.size());
-
+    std::vector<MappedPageRange> committed;
+    committed.reserve(page_ranges.size());
+    for (const auto &range : page_ranges) {
+        auto *pointer = static_cast<std::uint8_t *>(base_) + range.page_start;
 #ifdef _WIN32
-    const DWORD final_protection = (guest_flags & guest_flag_write) != 0
-        ? PAGE_READWRITE
-        : ((guest_flags & (guest_flag_read | guest_flag_execute)) != 0 ? PAGE_READONLY : PAGE_NOACCESS);
-    DWORD previous_protection = 0;
-    if (!VirtualProtect(page_pointer, static_cast<std::size_t>(mapped_size),
-            final_protection, &previous_protection)) {
-        error = "Could not apply final guest segment protection: " + host_error_message();
-        (void)VirtualFree(page_pointer, static_cast<std::size_t>(mapped_size), MEM_DECOMMIT);
-        return false;
-    }
+        void *result = VirtualAlloc(pointer, static_cast<std::size_t>(range.page_size),
+            MEM_COMMIT, PAGE_READWRITE);
+        if (result != pointer) {
+            error = "Could not commit guest segment pages: " + host_error_message();
+            rollback(committed);
+            return false;
+        }
 #else
-    int final_protection = PROT_NONE;
-    if ((guest_flags & guest_flag_write) != 0) {
-        final_protection = PROT_READ | PROT_WRITE;
-    } else if ((guest_flags & (guest_flag_read | guest_flag_execute)) != 0) {
-        // Guest execute permission does not require host execute permission. The
-        // emulator reads these bytes and translates them into a separate JIT area.
-        final_protection = PROT_READ;
-    }
-    if (mprotect(page_pointer, static_cast<std::size_t>(mapped_size), final_protection) != 0) {
-        error = "Could not apply final guest segment protection: " + host_error_message();
-        (void)mprotect(page_pointer, static_cast<std::size_t>(mapped_size), PROT_NONE);
-        (void)madvise(page_pointer, static_cast<std::size_t>(mapped_size), MADV_DONTNEED);
-        return false;
-    }
+        if (mprotect(pointer, static_cast<std::size_t>(range.page_size), PROT_READ | PROT_WRITE) != 0) {
+            error = "Could not make guest segment pages writable: " + host_error_message();
+            rollback(committed);
+            return false;
+        }
 #endif
+        committed.push_back(range);
+    }
 
-    mapped_ranges_.push_back({
-        .page_start = page_start,
-        .page_size = mapped_size,
-        .guest_start = guest_address,
-        .memory_size = memory_size,
-        .guest_flags = guest_flags
-    });
+    for (const auto &segment : planned) {
+        auto *pointer = static_cast<std::uint8_t *>(base_) + segment.start;
+        if (!segment.source->file_data.empty()) {
+            std::memcpy(pointer, segment.source->file_data.data(), segment.source->file_data.size());
+        }
+        std::memset(pointer + segment.source->file_data.size(), 0,
+            segment.source->memory_size - segment.source->file_data.size());
+    }
+
+    for (const auto &range : page_ranges) {
+        auto *pointer = static_cast<std::uint8_t *>(base_) + range.page_start;
+#ifdef _WIN32
+        const DWORD final_protection = (range.guest_flags & guest_flag_write) != 0
+            ? PAGE_READWRITE
+            : ((range.guest_flags & (guest_flag_read | guest_flag_execute)) != 0
+                    ? PAGE_READONLY
+                    : PAGE_NOACCESS);
+        DWORD previous_protection = 0;
+        if (!VirtualProtect(pointer, static_cast<std::size_t>(range.page_size),
+                final_protection, &previous_protection)) {
+            error = "Could not apply final guest segment protection: " + host_error_message();
+            rollback(committed);
+            return false;
+        }
+#else
+        int final_protection = PROT_NONE;
+        if ((range.guest_flags & guest_flag_write) != 0) {
+            final_protection = PROT_READ | PROT_WRITE;
+        } else if ((range.guest_flags & (guest_flag_read | guest_flag_execute)) != 0) {
+            // Guest execute permission does not require host execute permission.
+            // The CPU backend reads guest bytes and emits code in a separate JIT area.
+            final_protection = PROT_READ;
+        }
+        if (mprotect(pointer, static_cast<std::size_t>(range.page_size), final_protection) != 0) {
+            error = "Could not apply final guest segment protection: " + host_error_message();
+            rollback(committed);
+            return false;
+        }
+#endif
+    }
+
+    mapped_page_ranges_ = std::move(page_ranges);
+    mapped_segment_ranges_.reserve(planned.size());
+    for (const auto &segment : planned) {
+        mapped_segment_ranges_.push_back({
+            .guest_start = segment.source->guest_address,
+            .memory_size = segment.source->memory_size,
+            .guest_flags = segment.source->guest_flags
+        });
+    }
     return true;
 }
 
@@ -225,14 +331,14 @@ bool GuestMemory::read(std::uint32_t guest_address,
     }
     const auto read_start = static_cast<std::uint64_t>(guest_address);
     const auto read_end = read_start + output.size();
-    const auto mapping = std::find_if(mapped_ranges_.begin(), mapped_ranges_.end(),
-        [read_start, read_end](const MappedRange &range) {
+    const auto mapping = std::find_if(mapped_segment_ranges_.begin(), mapped_segment_ranges_.end(),
+        [read_start, read_end](const MappedSegmentRange &range) {
             const auto range_start = static_cast<std::uint64_t>(range.guest_start);
             const auto range_end = range_start + range.memory_size;
             return read_start >= range_start && read_end <= range_end &&
-                (range.guest_flags & (guest_flag_read | guest_flag_execute)) != 0;
+                (range.guest_flags & supported_guest_flags) != 0;
         });
-    if (mapping == mapped_ranges_.end()) {
+    if (mapping == mapped_segment_ranges_.end()) {
         error = "The requested guest range is not inside a readable mapped segment.";
         return false;
     }
@@ -244,45 +350,55 @@ bool GuestMemory::read(std::uint32_t guest_address,
 bool GuestMemory::unmap_segment(std::uint32_t guest_address,
     std::uint32_t memory_size,
     std::string &error) {
-    const auto mapping = std::find_if(mapped_ranges_.begin(), mapped_ranges_.end(),
-        [guest_address, memory_size](const MappedRange &range) {
-            return range.guest_start == guest_address && range.memory_size == memory_size;
-        });
-    if (mapping == mapped_ranges_.end()) {
-        error = "The requested guest segment is not mapped.";
+    if (mapped_segment_ranges_.size() != 1 ||
+        mapped_segment_ranges_.front().guest_start != guest_address ||
+        mapped_segment_ranges_.front().memory_size != memory_size) {
+        error = "Individual unmapping is only supported for a single mapped segment.";
         return false;
     }
+    return unmap_all_segments(error);
+}
 
-    auto *page_pointer = static_cast<std::uint8_t *>(base_) + mapping->page_start;
+bool GuestMemory::unmap_all_segments(std::string &error) {
+    bool success = true;
+    for (const auto &range : mapped_page_ranges_) {
+        auto *pointer = static_cast<std::uint8_t *>(base_) + range.page_start;
 #ifdef _WIN32
-    if (!VirtualFree(page_pointer, static_cast<std::size_t>(mapping->page_size), MEM_DECOMMIT)) {
-        error = "Could not decommit guest segment pages: " + host_error_message();
-        return false;
-    }
+        if (!VirtualFree(pointer, static_cast<std::size_t>(range.page_size), MEM_DECOMMIT)) {
+            if (success) {
+                error = "Could not decommit guest segment pages: " + host_error_message();
+            }
+            success = false;
+        }
 #else
-    if (mprotect(page_pointer, static_cast<std::size_t>(mapping->page_size), PROT_NONE) != 0) {
-        error = "Could not protect unmapped guest segment pages: " + host_error_message();
-        return false;
-    }
-    (void)madvise(page_pointer, static_cast<std::size_t>(mapping->page_size), MADV_DONTNEED);
+        if (mprotect(pointer, static_cast<std::size_t>(range.page_size), PROT_NONE) != 0) {
+            if (success) {
+                error = "Could not protect unmapped guest segment pages: " + host_error_message();
+            }
+            success = false;
+        } else {
+            (void)madvise(pointer, static_cast<std::size_t>(range.page_size), MADV_DONTNEED);
+        }
 #endif
-    mapped_ranges_.erase(mapping);
-    return true;
+    }
+    mapped_page_ranges_.clear();
+    mapped_segment_ranges_.clear();
+    return success;
 }
 
 void GuestMemory::release() {
-    if (base_ == nullptr) {
-        return;
-    }
+    if (base_ != nullptr) {
 #ifdef _WIN32
-    (void)VirtualFree(base_, 0, MEM_RELEASE);
+        (void)VirtualFree(base_, 0, MEM_RELEASE);
 #else
-    (void)munmap(base_, static_cast<std::size_t>(size_));
+        (void)munmap(base_, static_cast<std::size_t>(size_));
 #endif
+    }
     base_ = nullptr;
     size_ = 0;
     host_page_size_ = 0;
-    mapped_ranges_.clear();
+    mapped_page_ranges_.clear();
+    mapped_segment_ranges_.clear();
 }
 
 } // namespace vita3k::ios

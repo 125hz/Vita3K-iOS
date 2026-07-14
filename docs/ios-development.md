@@ -4,7 +4,7 @@ This guide sets up a Vita3K fork so Windows is the primary editing and testing e
 
 ## 1. What this branch can and cannot do
 
-Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application host, a Metal view, lifecycle handling, persistent logs, sandbox storage, the first dependency-free upstream core slice, a 4 GiB guest-address-space diagnostic, safe ELF load-segment planning, and a synthetic segment map/copy/BSS/protection/readback test. It does not yet contain a working Vita emulator because real imported ELF/SELF loading, shared-page segment handling, relocations, module metadata, the CPU backend, renderer, and the wider dependency graph have not been ported to iOS. `VITA3K_IOS_LINK_CORE=ON` is required.
+Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application host, a Metal view, lifecycle handling, persistent logs, sandbox storage, the first dependency-free upstream core slice, a 4 GiB guest address space, shared-page-aware segment mapping, and fixed-address plain Vita ELF loading with module-info extraction. It does not yet contain a working Vita emulator because SELF decoding, relocatable ELF rebasing, applying relocations, import/export tables, the CPU backend, renderer, and the wider dependency graph have not been ported to iOS. `VITA3K_IOS_LINK_CORE=ON` is required.
 
 Use the pipeline as a stable first milestone: every future porting change should keep the bootstrap IPA green while moving one subsystem across the `CoreBridge` boundary.
 
@@ -135,6 +135,8 @@ Every subsystem integrated into `CoreBridge` should log:
 - active guest thread and fatal exception breadcrumb.
 
 Keep logging bounded before the emulator core is enabled: add rotation (for example, three 5 MiB files) before high-frequency CPU or renderer tracing. Never log game keys, account credentials, or copyrighted game content.
+
+For the Milestone 4 loader diagnostic, copy a legal, decrypted, fixed-address plain Vita ELF into `Documents/Vita3K/imports` through the Files app, then tap **Rescan Imports**. A successful diagnostic reports `MAPPED`, the module name/NID, copied byte counts, and the number of relocation segments inventoried. VPK, SELF, and relocatable ELF files remain probe-only; the app does not extract, rebase, relocate, or execute them yet.
 
 ## 8. Keeping the fork current
 

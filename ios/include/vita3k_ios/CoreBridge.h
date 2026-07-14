@@ -13,6 +13,12 @@ struct ImportedArtifact {
     std::string kind;
     bool structurally_valid;
     std::size_t load_segment_count;
+    bool load_attempted;
+    bool loaded;
+    bool module_info_valid;
+    std::string module_name;
+    std::uint32_t module_nid;
+    std::size_t relocation_segment_count;
     std::string detail;
 };
 
