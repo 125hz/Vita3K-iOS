@@ -18,6 +18,10 @@ constexpr std::size_t register_sp = 13;
 constexpr std::size_t register_lr = 14;
 constexpr std::size_t register_pc = 15;
 constexpr std::size_t register_hle_nid = 12;
+constexpr std::uint32_t flag_negative = 1u << 31;
+constexpr std::uint32_t flag_zero = 1u << 30;
+constexpr std::uint32_t flag_carry = 1u << 29;
+constexpr std::uint32_t flag_overflow = 1u << 28;
 
 std::string hexadecimal(std::uint32_t value) {
     std::ostringstream stream;
@@ -32,6 +36,177 @@ std::uint32_t decode_arm_immediate(std::uint32_t instruction) {
     return std::rotr(immediate, static_cast<int>(rotation));
 }
 
+void set_flag(ArmCpuState &state, std::uint32_t flag, bool value) {
+    if (value) {
+        state.cpsr |= flag;
+    } else {
+        state.cpsr &= ~flag;
+    }
+}
+
+bool get_flag(const ArmCpuState &state, std::uint32_t flag) {
+    return (state.cpsr & flag) != 0;
+}
+
+void set_negative_zero(ArmCpuState &state, std::uint32_t value) {
+    set_flag(state, flag_negative, (value & 0x80000000u) != 0);
+    set_flag(state, flag_zero, value == 0);
+}
+
+struct ArithmeticResult {
+    std::uint32_t value{};
+    bool carry{};
+    bool overflow{};
+};
+
+ArithmeticResult add_with_carry(std::uint32_t left, std::uint32_t right, bool carry_in) {
+    const auto unsigned_sum = static_cast<std::uint64_t>(left) + right + static_cast<std::uint32_t>(carry_in);
+    const auto value = static_cast<std::uint32_t>(unsigned_sum);
+    const bool overflow = ((~(left ^ right) & (left ^ value)) & 0x80000000u) != 0;
+    return {
+        .value = value,
+        .carry = (unsigned_sum >> 32) != 0,
+        .overflow = overflow
+    };
+}
+
+void set_arithmetic_flags(ArmCpuState &state, const ArithmeticResult &result) {
+    set_negative_zero(state, result.value);
+    set_flag(state, flag_carry, result.carry);
+    set_flag(state, flag_overflow, result.overflow);
+}
+
+struct ShiftResult {
+    std::uint32_t value{};
+    bool carry{};
+};
+
+ShiftResult logical_shift_left(std::uint32_t value, std::uint32_t amount, bool carry_in) {
+    if (amount == 0) {
+        return { value, carry_in };
+    }
+    if (amount < 32) {
+        return { value << amount, ((value >> (32u - amount)) & 1u) != 0 };
+    }
+    return { 0, amount == 32 && (value & 1u) != 0 };
+}
+
+ShiftResult logical_shift_right(std::uint32_t value, std::uint32_t amount, bool carry_in) {
+    if (amount == 0) {
+        return { value, carry_in };
+    }
+    if (amount < 32) {
+        return { value >> amount, ((value >> (amount - 1u)) & 1u) != 0 };
+    }
+    return { 0, amount == 32 && (value & 0x80000000u) != 0 };
+}
+
+ShiftResult arithmetic_shift_right(std::uint32_t value, std::uint32_t amount,
+    bool carry_in) {
+    if (amount == 0) {
+        return { value, carry_in };
+    }
+    if (amount < 32) {
+        return {
+            static_cast<std::uint32_t>(static_cast<std::int32_t>(value) >> amount),
+            ((value >> (amount - 1u)) & 1u) != 0
+        };
+    }
+    const bool sign = (value & 0x80000000u) != 0;
+    return { sign ? std::numeric_limits<std::uint32_t>::max() : 0u, sign };
+}
+
+ShiftResult rotate_right(std::uint32_t value, std::uint32_t amount, bool carry_in) {
+    if (amount == 0) {
+        return { value, carry_in };
+    }
+    const auto rotation = amount & 31u;
+    if (rotation == 0) {
+        return { value, (value & 0x80000000u) != 0 };
+    }
+    const auto result = std::rotr(value, static_cast<int>(rotation));
+    return { result, (result & 0x80000000u) != 0 };
+}
+
+bool condition_passed(const ArmCpuState &state, std::uint32_t condition) {
+    const bool negative = get_flag(state, flag_negative);
+    const bool zero = get_flag(state, flag_zero);
+    const bool carry = get_flag(state, flag_carry);
+    const bool overflow = get_flag(state, flag_overflow);
+    switch (condition) {
+    case 0x0:
+        return zero;
+    case 0x1:
+        return !zero;
+    case 0x2:
+        return carry;
+    case 0x3:
+        return !carry;
+    case 0x4:
+        return negative;
+    case 0x5:
+        return !negative;
+    case 0x6:
+        return overflow;
+    case 0x7:
+        return !overflow;
+    case 0x8:
+        return carry && !zero;
+    case 0x9:
+        return !carry || zero;
+    case 0xA:
+        return negative == overflow;
+    case 0xB:
+        return negative != overflow;
+    case 0xC:
+        return !zero && negative == overflow;
+    case 0xD:
+        return zero || negative != overflow;
+    default:
+        return false;
+    }
+}
+
+template <typename T>
+bool read_guest_value(GuestMemory &memory, std::uint32_t address, T &value,
+    std::string &error) {
+    std::array<std::uint8_t, sizeof(T)> bytes{};
+    if (!memory.read(address, bytes, error)) {
+        return false;
+    }
+    std::memcpy(&value, bytes.data(), sizeof(value));
+    return true;
+}
+
+template <typename T>
+bool write_guest_value(GuestMemory &memory, std::uint32_t address, T value,
+    std::string &error) {
+    std::array<std::uint8_t, sizeof(T)> bytes{};
+    std::memcpy(bytes.data(), &value, sizeof(value));
+    return memory.write(address, bytes, error);
+}
+
+std::string thumb_lookahead(GuestMemory &memory, std::uint32_t address,
+    std::size_t halfword_count = 6) {
+    std::ostringstream stream;
+    stream << " Lookahead:";
+    for (std::size_t index = 0; index < halfword_count; ++index) {
+        const auto offset = static_cast<std::uint64_t>(index) * sizeof(std::uint16_t);
+        if (static_cast<std::uint64_t>(address) + offset > std::numeric_limits<std::uint32_t>::max()) {
+            break;
+        }
+        const auto current = address + static_cast<std::uint32_t>(offset);
+        std::uint16_t value = 0;
+        std::string error;
+        if (!read_guest_value(memory, current, value, error)) {
+            break;
+        }
+        stream << ' ' << hexadecimal(current) << "=0x" << std::hex << std::uppercase
+               << std::setfill('0') << std::setw(4) << value;
+    }
+    return stream.str();
+}
+
 } // namespace
 
 bool HLEDispatcher::bind(std::uint32_t nid, std::string name, HLEHandler handler) {
@@ -42,11 +217,9 @@ bool HLEDispatcher::bind(std::uint32_t nid, std::string name, HLEHandler handler
     if (existing != bindings_.end()) {
         return false;
     }
-    bindings_.push_back({
-        .nid = nid,
+    bindings_.push_back({ .nid = nid,
         .name = std::move(name),
-        .handler = std::move(handler)
-    });
+        .handler = std::move(handler) });
     return true;
 }
 
@@ -130,8 +303,7 @@ ArmExecutionResult ArmInterpreter::step() {
             .instructions_executed = state_.instruction_count,
             .final_pc = pc,
             .last_instruction = instruction,
-            .detail = "Only unconditional AL instructions are implemented; decoded " +
-                hexadecimal(instruction) + " at " + hexadecimal(pc) + "."
+            .detail = "Only unconditional AL instructions are implemented; decoded " + hexadecimal(instruction) + " at " + hexadecimal(pc) + "."
         };
     }
 
@@ -155,8 +327,7 @@ ArmExecutionResult ArmInterpreter::step() {
     if ((instruction & 0x0FF00000u) == 0x03400000u) {
         const auto destination = (instruction >> 12) & 0xFu;
         const auto immediate = ((instruction >> 4) & 0xF000u) | (instruction & 0xFFFu);
-        state_.registers[destination] =
-            (state_.registers[destination] & 0xFFFFu) | (immediate << 16);
+        state_.registers[destination] = (state_.registers[destination] & 0xFFFFu) | (immediate << 16);
         return {
             .reason = ArmStopReason::instruction_limit,
             .instructions_executed = state_.instruction_count,
@@ -169,8 +340,7 @@ ArmExecutionResult ArmInterpreter::step() {
     if ((instruction & 0x0FF00000u) == 0x02800000u) {
         const auto source = (instruction >> 16) & 0xFu;
         const auto destination = (instruction >> 12) & 0xFu;
-        state_.registers[destination] =
-            state_.registers[source] + decode_arm_immediate(instruction);
+        state_.registers[destination] = state_.registers[source] + decode_arm_immediate(instruction);
         return {
             .reason = ArmStopReason::instruction_limit,
             .instructions_executed = state_.instruction_count,
@@ -230,8 +400,7 @@ ArmExecutionResult ArmInterpreter::step() {
         const auto base_register = (instruction >> 16) & 0xFu;
         const auto data_register = (instruction >> 12) & 0xFu;
         const auto offset = instruction & 0xFFFu;
-        const auto address64 = static_cast<std::int64_t>(state_.registers[base_register]) +
-            (add_offset ? static_cast<std::int64_t>(offset) : -static_cast<std::int64_t>(offset));
+        const auto address64 = static_cast<std::int64_t>(state_.registers[base_register]) + (add_offset ? static_cast<std::int64_t>(offset) : -static_cast<std::int64_t>(offset));
         if (address64 < 0 || address64 > std::numeric_limits<std::uint32_t>::max()) {
             return {
                 .reason = ArmStopReason::memory_fault,
@@ -363,8 +532,7 @@ ArmExecutionResult ArmInterpreter::step() {
             std::memcpy(&state_.registers[index], word.data(), sizeof(std::uint32_t));
             cursor += sizeof(std::uint32_t);
         }
-        state_.registers[register_sp] +=
-            static_cast<std::uint32_t>(register_count * sizeof(std::uint32_t));
+        state_.registers[register_sp] += static_cast<std::uint32_t>(register_count * sizeof(std::uint32_t));
         return {
             .reason = ArmStopReason::instruction_limit,
             .instructions_executed = state_.instruction_count,
@@ -378,10 +546,7 @@ ArmExecutionResult ArmInterpreter::step() {
         auto nid = state_.registers[register_hle_nid];
         std::array<std::uint8_t, sizeof(std::uint32_t)> inline_nid_bytes{};
         std::string inline_error;
-        if (state_.registers[register_pc] <=
-                std::numeric_limits<std::uint32_t>::max() - sizeof(std::uint32_t) &&
-            memory_.read(state_.registers[register_pc] + sizeof(std::uint32_t),
-                inline_nid_bytes, inline_error)) {
+        if (state_.registers[register_pc] <= std::numeric_limits<std::uint32_t>::max() - sizeof(std::uint32_t) && memory_.read(state_.registers[register_pc] + sizeof(std::uint32_t), inline_nid_bytes, inline_error)) {
             std::uint32_t inline_nid = 0;
             std::memcpy(&inline_nid, inline_nid_bytes.data(), sizeof(inline_nid));
             if (hle_dispatcher_.has_binding(inline_nid)) {
@@ -449,8 +614,7 @@ ArmExecutionResult ArmInterpreter::step() {
         .instructions_executed = state_.instruction_count,
         .final_pc = pc,
         .last_instruction = instruction,
-        .detail = "Unsupported ARM instruction " + hexadecimal(instruction) +
-            " at " + hexadecimal(pc) + "."
+        .detail = "Unsupported ARM instruction " + hexadecimal(instruction) + " at " + hexadecimal(pc) + "."
     };
 }
 
@@ -463,8 +627,7 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
             .reason = ArmStopReason::memory_fault,
             .instructions_executed = state_.instruction_count,
             .final_pc = pc,
-            .detail = "Thumb instruction fetch failed at " + hexadecimal(pc) + ": " +
-                memory_error
+            .detail = "Thumb instruction fetch failed at " + hexadecimal(pc) + ": " + memory_error
         };
     }
 
@@ -481,6 +644,183 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
             .last_instruction = instruction
         };
     };
+    const auto memory_fault = [&](std::string operation, const std::string &error) {
+        return ArmExecutionResult{
+            .reason = ArmStopReason::memory_fault,
+            .instructions_executed = state_.instruction_count,
+            .final_pc = pc,
+            .last_instruction = instruction,
+            .detail = std::move(operation) + " failed: " + error
+        };
+    };
+
+    // LSL/LSR/ASR (immediate), including the architectural shift-by-32 forms.
+    const auto shift_immediate_opcode = instruction & 0xF800u;
+    if (shift_immediate_opcode == 0x0000u || shift_immediate_opcode == 0x0800u || shift_immediate_opcode == 0x1000u) {
+        const auto amount_field = (instruction >> 6) & 0x1Fu;
+        const auto source = (instruction >> 3) & 0x7u;
+        const auto destination = instruction & 0x7u;
+        const bool carry_in = get_flag(state_, flag_carry);
+        ShiftResult shifted;
+        if (shift_immediate_opcode == 0x0000u) {
+            shifted = logical_shift_left(state_.registers[source], amount_field, carry_in);
+        } else if (shift_immediate_opcode == 0x0800u) {
+            shifted = logical_shift_right(
+                state_.registers[source], amount_field == 0 ? 32u : amount_field, carry_in);
+        } else {
+            shifted = arithmetic_shift_right(
+                state_.registers[source], amount_field == 0 ? 32u : amount_field, carry_in);
+        }
+        state_.registers[destination] = shifted.value;
+        set_negative_zero(state_, shifted.value);
+        set_flag(state_, flag_carry, shifted.carry);
+        return continued();
+    }
+
+    // ADD/SUB with either a register or imm3 operand.
+    if ((instruction & 0xF800u) == 0x1800u) {
+        const bool immediate = (instruction & 0x0400u) != 0;
+        const bool subtract = (instruction & 0x0200u) != 0;
+        const auto operand_field = (instruction >> 6) & 0x7u;
+        const auto source = (instruction >> 3) & 0x7u;
+        const auto destination = instruction & 0x7u;
+        const auto operand = immediate ? operand_field : state_.registers[operand_field];
+        const auto result = subtract
+            ? add_with_carry(state_.registers[source], ~operand, true)
+            : add_with_carry(state_.registers[source], operand, false);
+        state_.registers[destination] = result.value;
+        set_arithmetic_flags(state_, result);
+        return continued();
+    }
+
+    // MOVS/CMP/ADDS/SUBS with imm8.
+    const auto immediate_opcode = instruction & 0xF800u;
+    if (immediate_opcode == 0x2000u || immediate_opcode == 0x2800u || immediate_opcode == 0x3000u || immediate_opcode == 0x3800u) {
+        const auto destination = (instruction >> 8) & 0x7u;
+        const auto immediate = static_cast<std::uint32_t>(instruction & 0xFFu);
+        if (immediate_opcode == 0x2000u) {
+            state_.registers[destination] = immediate;
+            set_negative_zero(state_, immediate);
+        } else {
+            const bool subtract = immediate_opcode == 0x2800u || immediate_opcode == 0x3800u;
+            const auto result = subtract
+                ? add_with_carry(state_.registers[destination], ~immediate, true)
+                : add_with_carry(state_.registers[destination], immediate, false);
+            if (immediate_opcode != 0x2800u) {
+                state_.registers[destination] = result.value;
+            }
+            set_arithmetic_flags(state_, result);
+        }
+        return continued();
+    }
+
+    // Thumb data-processing register operations. These provide the flag state
+    // consumed by the conditional-branch family below.
+    if ((instruction & 0xFC00u) == 0x4000u) {
+        const auto operation = (instruction >> 6) & 0xFu;
+        const auto source = (instruction >> 3) & 0x7u;
+        const auto destination = instruction & 0x7u;
+        const auto left = state_.registers[destination];
+        const auto right = state_.registers[source];
+        const bool carry_in = get_flag(state_, flag_carry);
+        std::uint32_t value = left;
+        bool write_result = true;
+        bool update_carry = false;
+        bool carry = carry_in;
+        bool arithmetic_flags = false;
+        ArithmeticResult arithmetic;
+        switch (operation) {
+        case 0x0: // AND
+            value = left & right;
+            break;
+        case 0x1: // EOR
+            value = left ^ right;
+            break;
+        case 0x2: { // LSL register
+            const auto shifted = logical_shift_left(left, right & 0xFFu, carry_in);
+            value = shifted.value;
+            carry = shifted.carry;
+            update_carry = (right & 0xFFu) != 0;
+            break;
+        }
+        case 0x3: { // LSR register
+            const auto shifted = logical_shift_right(left, right & 0xFFu, carry_in);
+            value = shifted.value;
+            carry = shifted.carry;
+            update_carry = (right & 0xFFu) != 0;
+            break;
+        }
+        case 0x4: { // ASR register
+            const auto shifted = arithmetic_shift_right(left, right & 0xFFu, carry_in);
+            value = shifted.value;
+            carry = shifted.carry;
+            update_carry = (right & 0xFFu) != 0;
+            break;
+        }
+        case 0x5: // ADC
+            arithmetic = add_with_carry(left, right, carry_in);
+            value = arithmetic.value;
+            arithmetic_flags = true;
+            break;
+        case 0x6: // SBC
+            arithmetic = add_with_carry(left, ~right, carry_in);
+            value = arithmetic.value;
+            arithmetic_flags = true;
+            break;
+        case 0x7: { // ROR register
+            const auto shifted = rotate_right(left, right & 0xFFu, carry_in);
+            value = shifted.value;
+            carry = shifted.carry;
+            update_carry = (right & 0xFFu) != 0;
+            break;
+        }
+        case 0x8: // TST
+            value = left & right;
+            write_result = false;
+            break;
+        case 0x9: // RSB #0
+            arithmetic = add_with_carry(0, ~right, true);
+            value = arithmetic.value;
+            arithmetic_flags = true;
+            break;
+        case 0xA: // CMP
+            arithmetic = add_with_carry(left, ~right, true);
+            value = arithmetic.value;
+            arithmetic_flags = true;
+            write_result = false;
+            break;
+        case 0xB: // CMN
+            arithmetic = add_with_carry(left, right, false);
+            value = arithmetic.value;
+            arithmetic_flags = true;
+            write_result = false;
+            break;
+        case 0xC: // ORR
+            value = left | right;
+            break;
+        case 0xD: // MUL
+            value = left * right;
+            break;
+        case 0xE: // BIC
+            value = left & ~right;
+            break;
+        case 0xF: // MVN
+            value = ~right;
+            break;
+        }
+        if (write_result) {
+            state_.registers[destination] = value;
+        }
+        if (arithmetic_flags) {
+            set_arithmetic_flags(state_, arithmetic);
+        } else {
+            set_negative_zero(state_, value);
+            if (update_carry) {
+                set_flag(state_, flag_carry, carry);
+            }
+        }
+        return continued();
+    }
 
     // PUSH {R0-R7, LR}. This covers the compact compiler prologue used by the
     // Milestone 9 fixture without claiming the wider Thumb-2 encodings.
@@ -551,31 +891,154 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         return continued();
     }
 
-    // BLX Rm. LR records a Thumb return address and the low target bit selects
-    // the next instruction set. The fixture uses this to call ARM import stubs.
-    if ((instruction & 0xFF87u) == 0x4780u) {
+    // BX/BLX Rm. BLX records a Thumb return address; the target low bit selects
+    // the next instruction set for both forms.
+    if ((instruction & 0xFF87u) == 0x4700u || (instruction & 0xFF87u) == 0x4780u) {
+        const bool link = (instruction & 0x0080u) != 0;
         const auto source = (instruction >> 3) & 0xFu;
         const auto target = state_.registers[source];
-        state_.registers[register_lr] = (pc + 2u) | 1u;
+        if (link) {
+            state_.registers[register_lr] = (pc + 2u) | 1u;
+        }
         state_.thumb = (target & 1u) != 0;
         state_.registers[register_pc] = target & (state_.thumb ? ~1u : ~3u);
         return continued();
     }
 
-    // MOV (register), including the high-register encoding but excluding PC.
-    if ((instruction & 0xFF00u) == 0x4600u) {
+    // ADD/CMP/MOV high-register operations.
+    if ((instruction & 0xFC00u) == 0x4400u && ((instruction >> 8) & 0x3u) != 0x3u) {
+        const auto operation = (instruction >> 8) & 0x3u;
         const auto destination = (instruction & 0x7u) | ((instruction >> 4) & 0x8u);
         const auto source = (instruction >> 3) & 0xFu;
-        if (destination == register_pc) {
-            return {
-                .reason = ArmStopReason::unsupported_instruction,
-                .instructions_executed = state_.instruction_count,
-                .final_pc = pc,
-                .last_instruction = instruction,
-                .detail = "Thumb MOV to PC is outside the Milestone 9 subset."
-            };
+        if (operation == 0x0u) {
+            const auto value = state_.registers[destination] + state_.registers[source];
+            if (destination == register_pc) {
+                state_.thumb = true;
+                state_.registers[register_pc] = value & ~1u;
+            } else {
+                state_.registers[destination] = value;
+            }
+        } else if (operation == 0x1u) {
+            const auto result = add_with_carry(
+                state_.registers[destination], ~state_.registers[source], true);
+            set_arithmetic_flags(state_, result);
+        } else {
+            const auto value = state_.registers[source];
+            if (destination == register_pc) {
+                state_.thumb = true;
+                state_.registers[register_pc] = value & ~1u;
+            } else {
+                state_.registers[destination] = value;
+            }
         }
-        state_.registers[destination] = state_.registers[source];
+        return continued();
+    }
+
+    // Register-offset word/halfword/byte loads and stores, including signed loads.
+    if ((instruction & 0xF000u) == 0x5000u) {
+        const auto operation = (instruction >> 9) & 0x7u;
+        const auto offset_register = (instruction >> 6) & 0x7u;
+        const auto base_register = (instruction >> 3) & 0x7u;
+        const auto data_register = instruction & 0x7u;
+        const auto address = state_.registers[base_register] + state_.registers[offset_register];
+        std::string error;
+        if (operation == 0x0u) {
+            if (!write_guest_value(memory_, address, state_.registers[data_register], error)) {
+                return memory_fault("Thumb STR (register)", error);
+            }
+        } else if (operation == 0x1u) {
+            if (!write_guest_value(memory_, address,
+                    static_cast<std::uint16_t>(state_.registers[data_register]), error)) {
+                return memory_fault("Thumb STRH (register)", error);
+            }
+        } else if (operation == 0x2u) {
+            if (!write_guest_value(memory_, address,
+                    static_cast<std::uint8_t>(state_.registers[data_register]), error)) {
+                return memory_fault("Thumb STRB (register)", error);
+            }
+        } else if (operation == 0x3u) {
+            std::int8_t value = 0;
+            if (!read_guest_value(memory_, address, value, error)) {
+                return memory_fault("Thumb LDRSB (register)", error);
+            }
+            state_.registers[data_register] = static_cast<std::uint32_t>(
+                static_cast<std::int32_t>(value));
+        } else if (operation == 0x4u) {
+            if (!read_guest_value(memory_, address, state_.registers[data_register], error)) {
+                return memory_fault("Thumb LDR (register)", error);
+            }
+        } else if (operation == 0x5u) {
+            std::uint16_t value = 0;
+            if (!read_guest_value(memory_, address, value, error)) {
+                return memory_fault("Thumb LDRH (register)", error);
+            }
+            state_.registers[data_register] = value;
+        } else if (operation == 0x6u) {
+            std::uint8_t value = 0;
+            if (!read_guest_value(memory_, address, value, error)) {
+                return memory_fault("Thumb LDRB (register)", error);
+            }
+            state_.registers[data_register] = value;
+        } else {
+            std::int16_t value = 0;
+            if (!read_guest_value(memory_, address, value, error)) {
+                return memory_fault("Thumb LDRSH (register)", error);
+            }
+            state_.registers[data_register] = static_cast<std::uint32_t>(
+                static_cast<std::int32_t>(value));
+        }
+        return continued();
+    }
+
+    // Immediate-offset word and byte loads/stores.
+    if ((instruction & 0xE000u) == 0x6000u) {
+        const bool byte_access = (instruction & 0x1000u) != 0;
+        const bool load = (instruction & 0x0800u) != 0;
+        const auto immediate = (instruction >> 6) & 0x1Fu;
+        const auto base_register = (instruction >> 3) & 0x7u;
+        const auto data_register = instruction & 0x7u;
+        const auto address = state_.registers[base_register] + (byte_access ? immediate : immediate << 2);
+        std::string error;
+        if (byte_access) {
+            if (load) {
+                std::uint8_t value = 0;
+                if (!read_guest_value(memory_, address, value, error)) {
+                    return memory_fault("Thumb LDRB (immediate)", error);
+                }
+                state_.registers[data_register] = value;
+            } else if (!write_guest_value(memory_, address,
+                           static_cast<std::uint8_t>(state_.registers[data_register]), error)) {
+                return memory_fault("Thumb STRB (immediate)", error);
+            }
+        } else if (load) {
+            if (!read_guest_value(memory_, address, state_.registers[data_register], error)) {
+                return memory_fault("Thumb LDR (immediate)", error);
+            }
+        } else if (!write_guest_value(
+                       memory_, address, state_.registers[data_register], error)) {
+            return memory_fault("Thumb STR (immediate)", error);
+        }
+        return continued();
+    }
+
+    // Immediate-offset halfword loads/stores.
+    if ((instruction & 0xF000u) == 0x8000u) {
+        const bool load = (instruction & 0x0800u) != 0;
+        const auto immediate = ((instruction >> 6) & 0x1Fu) << 1;
+        const auto base_register = (instruction >> 3) & 0x7u;
+        const auto data_register = instruction & 0x7u;
+        const auto address = state_.registers[base_register] + immediate;
+        std::string error;
+        if (load) {
+            std::uint16_t value = 0;
+            if (!read_guest_value(memory_, address, value, error)) {
+                return memory_fault("Thumb LDRH (immediate)", error);
+            }
+            state_.registers[data_register] = value;
+        } else if (!write_guest_value(memory_, address,
+                       static_cast<std::uint16_t>(state_.registers[data_register]), error)) {
+            return memory_fault("Thumb STRH (immediate)", error);
+        }
         return continued();
     }
 
@@ -612,18 +1075,55 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         return continued();
     }
 
-    // MOVS Rd, #imm8. Flag updates are intentionally not consumed yet.
-    if ((instruction & 0xF800u) == 0x2000u) {
+    // ADR and ADD Rd, SP, #imm8*4.
+    if ((instruction & 0xF000u) == 0xA000u) {
+        const bool use_stack = (instruction & 0x0800u) != 0;
         const auto destination = (instruction >> 8) & 0x7u;
-        state_.registers[destination] = instruction & 0xFFu;
+        const auto immediate = static_cast<std::uint32_t>(instruction & 0xFFu) << 2;
+        const auto base = use_stack ? state_.registers[register_sp] : ((pc + 4u) & ~3u);
+        state_.registers[destination] = base + immediate;
         return continued();
     }
 
-    // UXTB Rd, Rm.
-    if ((instruction & 0xFFC0u) == 0xB2C0u) {
+    // ADD/SUB SP, #imm7*4. The accepted Amagami Milestone 19 boundary is B082.
+    if ((instruction & 0xFF00u) == 0xB000u) {
+        const bool subtract = (instruction & 0x0080u) != 0;
+        const auto immediate = static_cast<std::uint32_t>(instruction & 0x7Fu) << 2;
+        state_.registers[register_sp] = subtract
+            ? state_.registers[register_sp] - immediate
+            : state_.registers[register_sp] + immediate;
+        return continued();
+    }
+
+    // Compare-and-branch on zero/nonzero. This forward-only form does not consume flags.
+    if ((instruction & 0xF500u) == 0xB100u) {
+        const bool nonzero = (instruction & 0x0800u) != 0;
+        const auto source = instruction & 0x7u;
+        const auto immediate = ((instruction & 0x0200u) >> 3) | ((instruction & 0x00F8u) >> 2);
+        const bool take_branch = (state_.registers[source] != 0) == nonzero;
+        if (take_branch) {
+            state_.registers[register_pc] = pc + 4u + immediate;
+        }
+        return continued();
+    }
+
+    // SXTH/SXTB/UXTH/UXTB.
+    if ((instruction & 0xFF00u) == 0xB200u) {
+        const auto operation = (instruction >> 6) & 0x3u;
         const auto source = (instruction >> 3) & 0x7u;
         const auto destination = instruction & 0x7u;
-        state_.registers[destination] = state_.registers[source] & 0xFFu;
+        const auto value = state_.registers[source];
+        if (operation == 0x0u) {
+            state_.registers[destination] = static_cast<std::uint32_t>(
+                static_cast<std::int32_t>(static_cast<std::int16_t>(value)));
+        } else if (operation == 0x1u) {
+            state_.registers[destination] = static_cast<std::uint32_t>(
+                static_cast<std::int32_t>(static_cast<std::int8_t>(value)));
+        } else if (operation == 0x2u) {
+            state_.registers[destination] = value & 0xFFFFu;
+        } else {
+            state_.registers[destination] = value & 0xFFu;
+        }
         return continued();
     }
 
@@ -660,8 +1160,7 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
             std::memcpy(&state_.registers[index], word.data(), sizeof(std::uint32_t));
             cursor += sizeof(std::uint32_t);
         }
-        state_.registers[register_sp] +=
-            static_cast<std::uint32_t>(register_count * sizeof(std::uint32_t));
+        state_.registers[register_sp] += static_cast<std::uint32_t>(register_count * sizeof(std::uint32_t));
         if ((register_list & (1u << register_pc)) != 0) {
             const auto target = state_.registers[register_pc];
             if (target == 0) {
@@ -679,7 +1178,83 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         return continued();
     }
 
+    // STMIA/LDMIA over the compact low-register list.
+    if ((instruction & 0xF000u) == 0xC000u) {
+        const bool load = (instruction & 0x0800u) != 0;
+        const auto base_register = (instruction >> 8) & 0x7u;
+        const auto register_list = static_cast<std::uint8_t>(instruction & 0xFFu);
+        const auto register_count = std::popcount(register_list);
+        if (register_count == 0) {
+            return {
+                .reason = ArmStopReason::unsupported_instruction,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb STM/LDM has an empty register list."
+            };
+        }
+        auto cursor = state_.registers[base_register];
+        for (std::size_t index = 0; index < 8; ++index) {
+            if ((register_list & (1u << index)) == 0) {
+                continue;
+            }
+            std::string error;
+            if (load) {
+                if (!read_guest_value(memory_, cursor, state_.registers[index], error)) {
+                    return memory_fault("Thumb LDMIA", error);
+                }
+            } else if (!write_guest_value(memory_, cursor, state_.registers[index], error)) {
+                return memory_fault("Thumb STMIA", error);
+            }
+            cursor += sizeof(std::uint32_t);
+        }
+        if (!load || (register_list & (1u << base_register)) == 0) {
+            state_.registers[base_register] += static_cast<std::uint32_t>(
+                register_count * sizeof(std::uint32_t));
+        }
+        return continued();
+    }
+
     if (instruction == 0xBF00u) {
+        return continued();
+    }
+
+    // Conditional branch. Conditions E and F are reserved for UDF/SVC here.
+    if ((instruction & 0xF000u) == 0xD000u && ((instruction >> 8) & 0xFu) < 0xEu) {
+        const auto condition = (instruction >> 8) & 0xFu;
+        if (condition_passed(state_, condition)) {
+            const auto encoded = static_cast<std::uint32_t>(instruction & 0xFFu) << 1;
+            const auto offset = static_cast<std::int32_t>(encoded << 23) >> 23;
+            const auto target = static_cast<std::int64_t>(pc) + 4 + offset;
+            if (target < 0 || target > std::numeric_limits<std::uint32_t>::max()) {
+                return {
+                    .reason = ArmStopReason::unsupported_instruction,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = instruction,
+                    .detail = "Thumb conditional branch target leaves guest address space."
+                };
+            }
+            state_.registers[register_pc] = static_cast<std::uint32_t>(target) & ~1u;
+        }
+        return continued();
+    }
+
+    // Unconditional 16-bit branch.
+    if ((instruction & 0xF800u) == 0xE000u) {
+        const auto encoded = static_cast<std::uint32_t>(instruction & 0x07FFu) << 1;
+        const auto offset = static_cast<std::int32_t>(encoded << 20) >> 20;
+        const auto target = static_cast<std::int64_t>(pc) + 4 + offset;
+        if (target < 0 || target > std::numeric_limits<std::uint32_t>::max()) {
+            return {
+                .reason = ArmStopReason::unsupported_instruction,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = pc,
+                .last_instruction = instruction,
+                .detail = "Thumb branch target leaves guest address space."
+            };
+        }
+        state_.registers[register_pc] = static_cast<std::uint32_t>(target) & ~1u;
         return continued();
     }
 
@@ -700,10 +1275,8 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         }
         std::uint16_t register_list = 0;
         std::memcpy(&register_list, lower_bytes.data(), sizeof(register_list));
-        const auto packed_instruction = static_cast<std::uint32_t>(instruction) |
-            (static_cast<std::uint32_t>(register_list) << 16);
-        const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) |
-            register_list;
+        const auto packed_instruction = static_cast<std::uint32_t>(instruction) | (static_cast<std::uint32_t>(register_list) << 16);
+        const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) | register_list;
         state_.registers[register_pc] = pc + 4u;
 
         const auto invalid_registers = static_cast<std::uint16_t>(
@@ -715,8 +1288,7 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
                 .instructions_executed = state_.instruction_count,
                 .final_pc = pc,
                 .last_instruction = packed_instruction,
-                .detail = "Unsupported or unpredictable Thumb-2 PUSH.W " +
-                    hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
+                .detail = "Unsupported or unpredictable Thumb-2 PUSH.W " + hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
             };
         }
 
@@ -784,8 +1356,7 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
             const auto i1 = (~(j1 ^ sign)) & 1u;
             const auto i2 = (~(j2 ^ sign)) & 1u;
             const bool link_to_thumb = (lower & 0x1000u) != 0;
-            std::uint32_t encoded_offset = (sign << 24) | (i1 << 23) | (i2 << 22) |
-                ((instruction & 0x03FFu) << 12);
+            std::uint32_t encoded_offset = (sign << 24) | (i1 << 23) | (i2 << 22) | ((instruction & 0x03FFu) << 12);
             if (link_to_thumb) {
                 encoded_offset |= (lower & 0x07FFu) << 1;
             } else {
@@ -799,21 +1370,18 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
                     .reason = ArmStopReason::unsupported_instruction,
                     .instructions_executed = state_.instruction_count,
                     .final_pc = pc,
-                    .last_instruction = static_cast<std::uint32_t>(instruction) |
-                        (static_cast<std::uint32_t>(lower) << 16),
+                    .last_instruction = static_cast<std::uint32_t>(instruction) | (static_cast<std::uint32_t>(lower) << 16),
                     .detail = "Thumb-2 branch target leaves guest address space."
                 };
             }
             state_.registers[register_lr] = (pc + 4u) | 1u;
             state_.thumb = link_to_thumb;
-            state_.registers[register_pc] = static_cast<std::uint32_t>(target64) &
-                (state_.thumb ? ~1u : ~3u);
+            state_.registers[register_pc] = static_cast<std::uint32_t>(target64) & (state_.thumb ? ~1u : ~3u);
             return {
                 .reason = ArmStopReason::instruction_limit,
                 .instructions_executed = state_.instruction_count,
                 .final_pc = state_.registers[register_pc],
-                .last_instruction = static_cast<std::uint32_t>(instruction) |
-                    (static_cast<std::uint32_t>(lower) << 16)
+                .last_instruction = static_cast<std::uint32_t>(instruction) | (static_cast<std::uint32_t>(lower) << 16)
             };
         }
     }
@@ -833,17 +1401,14 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         }
         std::uint16_t lower = 0;
         std::memcpy(&lower, lower_bytes.data(), sizeof(lower));
-        const auto packed_instruction = static_cast<std::uint32_t>(instruction) |
-            (static_cast<std::uint32_t>(lower) << 16);
-        const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) |
-            lower;
+        const auto packed_instruction = static_cast<std::uint32_t>(instruction) | (static_cast<std::uint32_t>(lower) << 16);
+        const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) | lower;
         return {
             .reason = ArmStopReason::unsupported_thumb,
             .instructions_executed = state_.instruction_count,
             .final_pc = pc,
             .last_instruction = packed_instruction,
-            .detail = "Unsupported 32-bit Thumb-2 instruction " +
-                hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
+            .detail = "Unsupported 32-bit Thumb-2 instruction " + hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "." + thumb_lookahead(memory_, pc + 4u)
         };
     }
 
@@ -852,8 +1417,7 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         .instructions_executed = state_.instruction_count,
         .final_pc = pc,
         .last_instruction = instruction,
-        .detail = "Unsupported 16-bit Thumb instruction " + hexadecimal(instruction) +
-            " at " + hexadecimal(pc) + "."
+        .detail = "Unsupported 16-bit Thumb instruction " + hexadecimal(instruction) + " at " + hexadecimal(pc) + "." + thumb_lookahead(memory_, pc + 2u)
     };
 }
 

@@ -1,5 +1,5 @@
-#include <vita3k_ios/CoreBridge.h>
 #include <vita3k_ios/ArmExecution.h>
+#include <vita3k_ios/CoreBridge.h>
 #include <vita3k_ios/ExecutableLoader.h>
 #include <vita3k_ios/ExecutableProbe.h>
 #include <vita3k_ios/GuestMemory.h>
@@ -10,8 +10,8 @@
 #include <vita3k_ios/ImportBinder.h>
 #include <vita3k_ios/ModuleTableParser.h>
 #include <vita3k_ios/RelocationEngine.h>
-#include <vita3k_ios/VitaAppMetadata.h>
 #include <vita3k_ios/VitaAppArchive.h>
+#include <vita3k_ios/VitaAppMetadata.h>
 
 #include <nids/functions.h>
 #include <packages/archive.h>
@@ -67,21 +67,14 @@ bool run_upstream_metadata_test() {
     const auto fixture = make_synthetic_param_sfo(
         "M13TEST01", "Vita3K iOS upstream metadata probe");
     const auto metadata = parse_vita_app_metadata(fixture);
-    return metadata.parsed && metadata.title_id == "M13TEST01" &&
-        metadata.title == "Vita3K iOS upstream metadata probe" &&
-        metadata.category == "gd" && metadata.app_version == "01.00";
+    return metadata.parsed && metadata.title_id == "M13TEST01" && metadata.title == "Vita3K iOS upstream metadata probe" && metadata.category == "gd" && metadata.app_version == "01.00";
 }
 
 bool run_upstream_archive_test() {
     const auto fixture = make_synthetic_vpk();
     const auto archive = packages::inspect_archive(fixture);
     const auto unsafe = packages::inspect_archive(make_synthetic_vpk(true));
-    return archive.inspected && archive.valid && archive.file_count == 3 &&
-        archive.applications.size() == 1 &&
-        archive.applications.front().title_id == "M14TEST01" &&
-        archive.applications.front().title == "Vita3K iOS archive inspection probe" &&
-        archive.applications.front().install_target == "ux0/app/M14TEST01" &&
-        unsafe.inspected && !unsafe.valid && unsafe.unsafe_path_count == 1;
+    return archive.inspected && archive.valid && archive.file_count == 3 && archive.applications.size() == 1 && archive.applications.front().title_id == "M14TEST01" && archive.applications.front().title == "Vita3K iOS archive inspection probe" && archive.applications.front().install_target == "ux0/app/M14TEST01" && unsafe.inspected && !unsafe.valid && unsafe.unsafe_path_count == 1;
 }
 
 void update_renderer_status() {
@@ -184,14 +177,12 @@ bool run_segment_mapping_test(GuestMemory &memory, std::string &error) {
             .guest_address = test_address,
             .file_data = first_file_bytes,
             .memory_size = half_page,
-            .guest_flags = 5
-        },
+            .guest_flags = 5 },
         GuestSegmentMapping{
             .guest_address = test_address + half_page,
             .file_data = second_file_bytes,
             .memory_size = half_page,
-            .guest_flags = 6
-        }
+            .guest_flags = 6 }
     };
     if (!memory.map_segments(mappings, error)) {
         return false;
@@ -201,15 +192,9 @@ bool run_segment_mapping_test(GuestMemory &memory, std::string &error) {
     std::array<std::uint8_t, 32> second_observed{};
     const bool first_read_ok = memory.read(test_address, first_observed, error);
     const bool second_read_ok = memory.read(test_address + half_page, second_observed, error);
-    const bool file_copy_ok = first_read_ok && second_read_ok &&
-        std::equal(first_file_bytes.begin(), first_file_bytes.end(), first_observed.begin()) &&
-        std::equal(second_file_bytes.begin(), second_file_bytes.end(), second_observed.begin());
-    const bool first_bss_zeroed = first_read_ok &&
-        std::all_of(first_observed.begin() + first_file_bytes.size(), first_observed.end(),
-            [](std::uint8_t value) { return value == 0; });
-    const bool second_bss_zeroed = second_read_ok &&
-        std::all_of(second_observed.begin() + second_file_bytes.size(), second_observed.end(),
-            [](std::uint8_t value) { return value == 0; });
+    const bool file_copy_ok = first_read_ok && second_read_ok && std::equal(first_file_bytes.begin(), first_file_bytes.end(), first_observed.begin()) && std::equal(second_file_bytes.begin(), second_file_bytes.end(), second_observed.begin());
+    const bool first_bss_zeroed = first_read_ok && std::all_of(first_observed.begin() + first_file_bytes.size(), first_observed.end(), [](std::uint8_t value) { return value == 0; });
+    const bool second_bss_zeroed = second_read_ok && std::all_of(second_observed.begin() + second_file_bytes.size(), second_observed.end(), [](std::uint8_t value) { return value == 0; });
 
     std::string unmap_error;
     const bool unmapped = memory.unmap_all_segments(unmap_error);
@@ -300,8 +285,7 @@ bool run_loader_pipeline_test(GuestMemory &memory, ImportBindingResult &binding_
             .virtual_address = test_address,
             .file_size = static_cast<std::uint32_t>(payload.size()),
             .memory_size = memory_size,
-            .flags = read_execute_flags
-        }
+            .flags = read_execute_flags }
     };
     std::array<std::uint8_t, 12> relocation{};
     write_value(relocation, 0, static_cast<std::uint32_t>(0x00000200));
@@ -336,11 +320,7 @@ bool run_loader_pipeline_test(GuestMemory &memory, ImportBindingResult &binding_
         error = tables.detail;
         return false;
     }
-    if (!patch_read || patched_value != test_address + 0x1234 ||
-        applied.entry_count != 1 || applied.patched_value_count != 1 ||
-        tables.export_library_count != 1 || tables.import_library_count != 1 ||
-        tables.exported_nids.size() != 1 || tables.imported_nids.size() != 2 ||
-        tables.imported_function_stubs.size() != 2) {
+    if (!patch_read || patched_value != test_address + 0x1234 || applied.entry_count != 1 || applied.patched_value_count != 1 || tables.export_library_count != 1 || tables.import_library_count != 1 || tables.exported_nids.size() != 1 || tables.imported_nids.size() != 2 || tables.imported_function_stubs.size() != 2) {
         error = "The relocation/module-table diagnostic produced unexpected results.";
         return false;
     }
@@ -348,10 +328,7 @@ bool run_loader_pipeline_test(GuestMemory &memory, ImportBindingResult &binding_
         error = "The compiled import-stub diagnostic failed: " + binding_result.detail;
         return false;
     }
-    if (!thread_result.started || !thread_result.exited ||
-        thread_result.instruction_count != 12 ||
-        thread_result.hle_dispatch_count != 2 || thread_result.exit_status != 42 ||
-        thread_result.observed_thread_id != static_cast<std::uint32_t>(thread_result.thread_id)) {
+    if (!thread_result.started || !thread_result.exited || thread_result.instruction_count != 12 || thread_result.hle_dispatch_count != 2 || thread_result.exit_status != 42 || thread_result.observed_thread_id != static_cast<std::uint32_t>(thread_result.thread_id)) {
         error = "The loaded module_start/thread diagnostic failed: " + thread_result.detail;
         return false;
     }
@@ -383,8 +360,7 @@ bool run_arm_execution_test(GuestMemory &memory, std::uint64_t &instruction_coun
     std::memcpy(program.data(), instructions.data(), program.size());
 
     const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
-    if (memory_size_64 < program.size() ||
-        memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+    if (memory_size_64 < program.size() || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
         error = "The host page size is invalid for the ARM execution diagnostic.";
         return false;
     }
@@ -419,11 +395,7 @@ bool run_arm_execution_test(GuestMemory &memory, std::uint64_t &instruction_coun
         error = execution.detail;
         return false;
     }
-    if (!hle_argument_valid || hle_dispatch_count != 1 ||
-        state.registers[0] != expected_return ||
-        state.registers[1] != expected_secondary_register ||
-        state.registers[12] != test_nid ||
-        instruction_count != instructions.size()) {
+    if (!hle_argument_valid || hle_dispatch_count != 1 || state.registers[0] != expected_return || state.registers[1] != expected_secondary_register || state.registers[12] != test_nid || instruction_count != instructions.size()) {
         error = "The ARM execution/HLE diagnostic produced unexpected register state.";
         return false;
     }
@@ -446,8 +418,7 @@ bool run_thumb2_wide_push_test(GuestMemory &memory, std::string &error) {
     write_value(program, 10, static_cast<std::uint16_t>(0xA55A));
 
     const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
-    if (memory_size_64 < program.size() ||
-        memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+    if (memory_size_64 < program.size() || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
         error = "The host page size is invalid for the Thumb-2 PUSH.W diagnostic.";
         return false;
     }
@@ -478,19 +449,136 @@ bool run_thumb2_wide_push_test(GuestMemory &memory, std::string &error) {
 
     std::string unmap_error;
     const bool unmapped = memory.unmap_all_segments(unmap_error);
-    if (wide_execution.reason != ArmStopReason::instruction_limit ||
-        wide_execution.instructions_executed != 1 ||
-        wide_state.registers[13] != initial_sp - 12u ||
-        wide_state.registers[15] != test_address + 4u || !stack_read ||
-        saved_registers[0] != r0_value || saved_registers[1] != r8_value ||
-        saved_registers[2] != lr_value) {
+    if (wide_execution.reason != ArmStopReason::instruction_limit || wide_execution.instructions_executed != 1 || wide_state.registers[13] != initial_sp - 12u || wide_state.registers[15] != test_address + 4u || !stack_read || saved_registers[0] != r0_value || saved_registers[1] != r8_value || saved_registers[2] != lr_value) {
         error = "Thumb-2 PUSH.W produced unexpected stack or register state.";
         return false;
     }
-    if (unsupported_execution.reason != ArmStopReason::unsupported_thumb ||
-        unsupported_execution.last_instruction != 0xA55AE8FFu ||
-        unsupported_execution.detail.find("0xE8FFA55A") == std::string::npos) {
+    if (unsupported_execution.reason != ArmStopReason::unsupported_thumb || unsupported_execution.last_instruction != 0xA55AE8FFu || unsupported_execution.detail.find("0xE8FFA55A") == std::string::npos || unsupported_execution.detail.find("Lookahead:") == std::string::npos) {
         error = "The unsupported Thumb-2 diagnostic did not retain both halfwords.";
+        return false;
+    }
+    if (!unmapped) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
+bool run_thumb_compiler_baseline_test(GuestMemory &memory, std::string &error) {
+    constexpr std::uint32_t test_address = 0x50000;
+    std::array<std::uint8_t, 0x100> program{};
+
+    write_value(program, 0x00, static_cast<std::uint16_t>(0xB082)); // SUB sp, #8
+
+    write_value(program, 0x20, static_cast<std::uint16_t>(0x2005)); // MOVS r0, #5
+    write_value(program, 0x22, static_cast<std::uint16_t>(0x3003)); // ADDS r0, #3
+    write_value(program, 0x24, static_cast<std::uint16_t>(0x3801)); // SUBS r0, #1
+    write_value(program, 0x26, static_cast<std::uint16_t>(0x2807)); // CMP r0, #7
+    write_value(program, 0x28, static_cast<std::uint16_t>(0xD000)); // BEQ +0
+    write_value(program, 0x2A, static_cast<std::uint16_t>(0x21EE)); // skipped
+    write_value(program, 0x2C, static_cast<std::uint16_t>(0x2101)); // MOVS r1, #1
+
+    write_value(program, 0x40, static_cast<std::uint16_t>(0x2003)); // MOVS r0, #3
+    write_value(program, 0x42, static_cast<std::uint16_t>(0x2104)); // MOVS r1, #4
+    write_value(program, 0x44, static_cast<std::uint16_t>(0x1842)); // ADDS r2, r0, r1
+    write_value(program, 0x46, static_cast<std::uint16_t>(0x0052)); // LSLS r2, r2, #1
+    write_value(program, 0x48, static_cast<std::uint16_t>(0x404A)); // EORS r2, r1
+
+    write_value(program, 0x60, static_cast<std::uint16_t>(0x6008)); // STR r0, [r1]
+    write_value(program, 0x62, static_cast<std::uint16_t>(0x680A)); // LDR r2, [r1]
+    write_value(program, 0x64, static_cast<std::uint16_t>(0x7108)); // STRB r0, [r1, #4]
+    write_value(program, 0x66, static_cast<std::uint16_t>(0x790B)); // LDRB r3, [r1, #4]
+    write_value(program, 0x68, static_cast<std::uint16_t>(0x80C8)); // STRH r0, [r1, #6]
+    write_value(program, 0x6A, static_cast<std::uint16_t>(0x88CC)); // LDRH r4, [r1, #6]
+
+    write_value(program, 0x80, static_cast<std::uint16_t>(0x5488)); // STRB r0, [r1, r2]
+    write_value(program, 0x82, static_cast<std::uint16_t>(0x568B)); // LDRSB r3, [r1, r2]
+
+    write_value(program, 0x90, static_cast<std::uint16_t>(0xC203)); // STMIA r2!, {r0,r1}
+    write_value(program, 0x92, static_cast<std::uint16_t>(0x3A08)); // SUBS r2, #8
+    write_value(program, 0x94, static_cast<std::uint16_t>(0xCA18)); // LDMIA r2!, {r3,r4}
+
+    write_value(program, 0xA0, static_cast<std::uint16_t>(0x2000)); // MOVS r0, #0
+    write_value(program, 0xA2, static_cast<std::uint16_t>(0xB100)); // CBZ r0, +0
+    write_value(program, 0xA4, static_cast<std::uint16_t>(0x21EE)); // skipped
+    write_value(program, 0xA6, static_cast<std::uint16_t>(0x2102)); // MOVS r1, #2
+
+    write_value(program, 0xB0, static_cast<std::uint16_t>(0xE000)); // B +0
+    write_value(program, 0xB2, static_cast<std::uint16_t>(0x21EE)); // skipped
+    write_value(program, 0xB4, static_cast<std::uint16_t>(0x2103)); // MOVS r1, #3
+
+    write_value(program, 0xC0, static_cast<std::uint16_t>(0xA801)); // ADD r0, sp, #4
+    write_value(program, 0xD0, static_cast<std::uint16_t>(0x4480)); // ADD r8, r0
+    write_value(program, 0xD2, static_cast<std::uint16_t>(0x4641)); // MOV r1, r8
+
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < 0x400 || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the Thumb compiler baseline diagnostic.";
+        return false;
+    }
+    const auto memory_size = static_cast<std::uint32_t>(memory_size_64);
+    if (!memory.map_segment(test_address, program, memory_size, 7, error)) {
+        return false;
+    }
+
+    HLEDispatcher dispatcher;
+    ArmInterpreter interpreter(memory, dispatcher);
+    const auto initial_sp = test_address + memory_size;
+    const auto data_address = test_address + 0x200u;
+    const auto run_at = [&](std::uint32_t offset, std::size_t count) {
+        interpreter.reset((test_address + offset) | 1u, initial_sp);
+        return interpreter.run(count);
+    };
+
+    const auto stack_adjust = run_at(0x00, 1);
+    const auto stack_adjust_state = interpreter.state();
+    const auto arithmetic = run_at(0x20, 6);
+    const auto arithmetic_state = interpreter.state();
+    const auto alu = run_at(0x40, 5);
+    const auto alu_state = interpreter.state();
+
+    interpreter.reset((test_address + 0x60u) | 1u, initial_sp);
+    interpreter.state().registers[0] = 0xA1B2C3D4u;
+    interpreter.state().registers[1] = data_address;
+    const auto memory_immediate = interpreter.run(6);
+    const auto memory_immediate_state = interpreter.state();
+
+    interpreter.reset((test_address + 0x80u) | 1u, initial_sp);
+    interpreter.state().registers[0] = 0xFFFFFF80u;
+    interpreter.state().registers[1] = data_address;
+    interpreter.state().registers[2] = 8;
+    const auto memory_register = interpreter.run(2);
+    const auto memory_register_state = interpreter.state();
+
+    interpreter.reset((test_address + 0x90u) | 1u, initial_sp);
+    interpreter.state().registers[0] = 0x11111111u;
+    interpreter.state().registers[1] = 0x22222222u;
+    interpreter.state().registers[2] = data_address + 0x20u;
+    const auto multiple = interpreter.run(3);
+    const auto multiple_state = interpreter.state();
+
+    const auto compare_branch = run_at(0xA0, 3);
+    const auto compare_branch_state = interpreter.state();
+    const auto branch = run_at(0xB0, 2);
+    const auto branch_state = interpreter.state();
+    const auto stack_address = run_at(0xC0, 1);
+    const auto stack_address_state = interpreter.state();
+
+    interpreter.reset((test_address + 0xD0u) | 1u, initial_sp);
+    interpreter.state().registers[0] = 7;
+    interpreter.state().registers[8] = 5;
+    const auto high_register = interpreter.run(2);
+    const auto high_register_state = interpreter.state();
+
+    const auto stopped_at_limit = [](const ArmExecutionResult &result) {
+        return result.reason == ArmStopReason::instruction_limit;
+    };
+    const bool valid = stopped_at_limit(stack_adjust) && stack_adjust_state.registers[13] == initial_sp - 8u && stopped_at_limit(arithmetic) && arithmetic_state.registers[0] == 7 && arithmetic_state.registers[1] == 1 && stopped_at_limit(alu) && alu_state.registers[2] == 10 && stopped_at_limit(memory_immediate) && memory_immediate_state.registers[2] == 0xA1B2C3D4u && memory_immediate_state.registers[3] == 0xD4u && memory_immediate_state.registers[4] == 0xC3D4u && stopped_at_limit(memory_register) && memory_register_state.registers[3] == 0xFFFFFF80u && stopped_at_limit(multiple) && multiple_state.registers[2] == data_address + 0x28u && multiple_state.registers[3] == 0x11111111u && multiple_state.registers[4] == 0x22222222u && stopped_at_limit(compare_branch) && compare_branch_state.registers[1] == 2 && stopped_at_limit(branch) && branch_state.registers[1] == 3 && stopped_at_limit(stack_address) && stack_address_state.registers[0] == initial_sp + 4u && stopped_at_limit(high_register) && high_register_state.registers[8] == 12 && high_register_state.registers[1] == 12;
+
+    std::string unmap_error;
+    const bool unmapped = memory.unmap_all_segments(unmap_error);
+    if (!valid) {
+        error = "The Thumb compiler baseline diagnostic produced unexpected CPU state.";
         return false;
     }
     if (!unmapped) {
@@ -514,14 +602,13 @@ void scan_installed_titles() {
     std::error_code error;
     const auto app_root = host_storage.root / "ux0/app";
     for (std::filesystem::directory_iterator iterator(app_root, error), end;
-         iterator != end && !error; iterator.increment(error)) {
+        iterator != end && !error; iterator.increment(error)) {
         if (!iterator->is_directory(error) || error)
             continue;
         const auto metadata = parse_vita_app_metadata(iterator->path() / "sce_sys/param.sfo");
         if (!metadata.parsed)
             continue;
-        core_status.installed_titles.push_back({
-            .title_id = metadata.title_id,
+        core_status.installed_titles.push_back({ .title_id = metadata.title_id,
             .title = metadata.title,
             .app_version = metadata.app_version,
             .patch_installed = std::filesystem::is_directory(
@@ -530,8 +617,7 @@ void scan_installed_titles() {
                 iterator->path() / "eboot.bin", error),
             .patch_eboot_present = std::filesystem::is_regular_file(
                 host_storage.root / "ux0/patch" / metadata.title_id / "eboot.bin", error),
-            .app_path = iterator->path().string()
-        });
+            .app_path = iterator->path().string() });
         error.clear();
     }
     if (error)
@@ -585,8 +671,7 @@ void update_status_from_storage() {
         }
         PlainElfLoadResult load;
         GuestThreadRunResult thread;
-        if (loaded_filename.empty() && guest_memory && core_status.loader_pipeline_ready &&
-            probe.structurally_valid && probe.kind == "Vita ELF") {
+        if (loaded_filename.empty() && guest_memory && core_status.loader_pipeline_ready && probe.structurally_valid && probe.kind == "Vita ELF") {
             load = load_plain_elf(entry.path(), probe, *guest_memory);
             if (load.loaded) {
                 loaded_filename = entry.path().filename().string();
@@ -609,8 +694,7 @@ void update_status_from_storage() {
         if (thread.attempted) {
             detail += " Thread: " + thread.detail;
         }
-        core_status.imported_artifacts.push_back({
-            .filename = entry.path().filename().string(),
+        core_status.imported_artifacts.push_back({ .filename = entry.path().filename().string(),
             .size = error ? 0 : size,
             .kind = probe.kind,
             .app_metadata_parsed = metadata.parsed,
@@ -625,7 +709,8 @@ void update_status_from_storage() {
             .archive_unsafe_path_count = archive.unsafe_path_count,
             .archive_uncompressed_size = archive.uncompressed_size,
             .archive_install_target = archive.applications.empty()
-                ? std::string{} : archive.applications.front().install_target,
+                ? std::string{}
+                : archive.applications.front().install_target,
             .structurally_valid = probe.structurally_valid,
             .load_segment_count = probe.load_segments.size(),
             .load_attempted = load.attempted,
@@ -654,47 +739,25 @@ void update_status_from_storage() {
             .hle_dispatch_count = thread.hle_dispatch_count,
             .thread_exit_status = thread.exit_status,
             .thread_return_value = thread.return_value,
-            .detail = std::move(detail)
-        });
+            .detail = std::move(detail) });
     }
 
     std::ostringstream summary;
     summary << "Core slice: ARM encoder + Vita NID database\n"
             << "Self-tests: " << (core_status.self_tests_passed ? "passed" : "FAILED") << "\n"
-            << "Upstream app metadata: " << (core_status.upstream_metadata_ready
-                ? "passed (Vita3K packages/SFO parser linked)"
-                : "FAILED") << "\n"
-            << "Upstream app archive: " << (core_status.upstream_archive_ready
-                ? "passed (miniz + Vita3K package inspector linked)"
-                : "FAILED") << "\n"
-            << "Package installer: " << (core_status.package_installer_ready
-                ? "ready (transactional app + patch commit)"
-                : "FAILED") << "\n"
+            << "Upstream app metadata: " << (core_status.upstream_metadata_ready ? "passed (Vita3K packages/SFO parser linked)" : "FAILED") << "\n"
+            << "Upstream app archive: " << (core_status.upstream_archive_ready ? "passed (miniz + Vita3K package inspector linked)" : "FAILED") << "\n"
+            << "Package installer: " << (core_status.package_installer_ready ? "ready (transactional app + patch commit)" : "FAILED") << "\n"
             << "Guest memory: " << (core_status.guest_memory_ready ? "ready" : "FAILED");
     if (core_status.guest_memory_ready) {
         summary << " (" << (core_status.guest_memory_size >> 30) << " GiB reserved, "
                 << core_status.host_page_size << "-byte pages)";
     }
-    summary << "\nBatch segment map: " << (core_status.segment_mapping_ready
-        ? "passed (shared-page permission merge)"
-        : "FAILED");
-    summary << "\nRelocation/tables: " << (core_status.loader_pipeline_ready
-        ? "passed (verified patch + 1 export/1 import library)"
-        : "FAILED");
-    summary << "\nCompiled import stubs: " << (core_status.import_binding_ready
-        ? "passed (" + std::to_string(core_status.thread_test_bound_stub_count) +
-            " SVC trampolines)"
-        : "FAILED");
-    summary << "\nARM execution/HLE: " << (core_status.arm_execution_ready
-        ? "passed (" + std::to_string(core_status.arm_test_instruction_count) +
-            " instructions + " + std::to_string(core_status.hle_test_dispatch_count) +
-            " bound NID call)"
-        : "FAILED");
-    summary << "\nThumb/ARM entry/thread: " << (core_status.guest_thread_ready
-        ? "passed (" + std::to_string(core_status.thread_test_instruction_count) +
-            " instructions + " + std::to_string(core_status.thread_test_hle_dispatch_count) +
-            " kernel HLE calls + exit " + std::to_string(core_status.thread_test_exit_status) + ")"
-        : "FAILED");
+    summary << "\nBatch segment map: " << (core_status.segment_mapping_ready ? "passed (shared-page permission merge)" : "FAILED");
+    summary << "\nRelocation/tables: " << (core_status.loader_pipeline_ready ? "passed (verified patch + 1 export/1 import library)" : "FAILED");
+    summary << "\nCompiled import stubs: " << (core_status.import_binding_ready ? "passed (" + std::to_string(core_status.thread_test_bound_stub_count) + " SVC trampolines)" : "FAILED");
+    summary << "\nARM/Thumb execution/HLE: " << (core_status.arm_execution_ready ? "passed (compiler baseline + " + std::to_string(core_status.arm_test_instruction_count) + " ARM instructions + " + std::to_string(core_status.hle_test_dispatch_count) + " bound NID call)" : "FAILED");
+    summary << "\nThumb/ARM entry/thread: " << (core_status.guest_thread_ready ? "passed (" + std::to_string(core_status.thread_test_instruction_count) + " instructions + " + std::to_string(core_status.thread_test_hle_dispatch_count) + " kernel HLE calls + exit " + std::to_string(core_status.thread_test_exit_status) + ")" : "FAILED");
     summary << "\nStorage: " << (core_status.storage_ready ? "ready" : "FAILED")
             << "\nInstalled titles: " << core_status.installed_titles.size();
     for (const auto &title : core_status.installed_titles) {
@@ -747,7 +810,8 @@ void update_title_preparation_summary(const TitlePreparationResult &result) {
     lines << "\nExecutable preparation: " << result.detail;
     const auto insertion = core_status.summary.find("\n\nNext:");
     core_status.summary.insert(insertion == std::string::npos
-            ? core_status.summary.size() : insertion,
+            ? core_status.summary.size()
+            : insertion,
         lines.str());
 }
 
@@ -763,7 +827,8 @@ void update_title_boot_summary(const TitleBootResult &result, std::size_t instru
          << "-instruction ceiling; " << result.detail;
     const auto insertion = core_status.summary.find("\n\nNext:");
     core_status.summary.insert(insertion == std::string::npos
-            ? core_status.summary.size() : insertion,
+            ? core_status.summary.size()
+            : insertion,
         line.str());
 }
 
@@ -782,22 +847,16 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     constexpr std::uint64_t vita_address_space_size = 1ULL << 32;
     const bool reserved = guest_memory->reserve(vita_address_space_size, memory_error);
     const bool protection_test_passed = reserved && guest_memory->run_commit_protection_test(memory_error);
-    const bool segment_mapping_passed = protection_test_passed &&
-        run_segment_mapping_test(*guest_memory, memory_error);
+    const bool segment_mapping_passed = protection_test_passed && run_segment_mapping_test(*guest_memory, memory_error);
     GuestThreadRunResult thread_test;
     ImportBindingResult binding_test;
-    const bool loader_pipeline_passed = segment_mapping_passed &&
-        run_loader_pipeline_test(*guest_memory, binding_test, thread_test, memory_error);
+    const bool loader_pipeline_passed = segment_mapping_passed && run_loader_pipeline_test(*guest_memory, binding_test, thread_test, memory_error);
     std::string execution_error;
-    const bool arm_execution_passed = loader_pipeline_passed &&
-        run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count,
-            core_status.hle_test_dispatch_count, execution_error) &&
-        run_thumb2_wide_push_test(*guest_memory, execution_error);
+    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;
-    core_status.import_binding_ready = loader_pipeline_passed && binding_test.success &&
-        binding_test.bound_function_count == 2;
+    core_status.import_binding_ready = loader_pipeline_passed && binding_test.success && binding_test.bound_function_count == 2;
     core_status.arm_execution_ready = arm_execution_passed;
     core_status.guest_thread_ready = loader_pipeline_passed && thread_test.exited;
     core_status.thread_test_instruction_count = thread_test.instruction_count;
@@ -874,8 +933,7 @@ TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer
     if (guest_memory && guest_memory->mapped_segment_count() != 0) {
         std::string unmap_error;
         if (!guest_memory->unmap_all_segments(unmap_error)) {
-            result.detail = "The previously prepared executable could not be unloaded: " +
-                unmap_error;
+            result.detail = "The previously prepared executable could not be unloaded: " + unmap_error;
             core_status.selected_title_id = result.title_id;
             core_status.selected_executable_loaded = false;
             core_status.title_preparation_status = result.detail;
@@ -936,8 +994,7 @@ TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer
             result.module_start_address = load.module_start_address;
             result.module_start_from_export = load.module_start_from_export;
             result.detail = load.detail;
-            if (load.loaded && load.module_start_valid &&
-                load.temporary_stack_pointer != 0) {
+            if (load.loaded && load.module_start_valid && load.temporary_stack_pointer != 0) {
                 prepared_executable = {
                     .ready = true,
                     .title_id = result.title_id,
@@ -964,8 +1021,7 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         .attempted = true,
         .title_id = prepared_executable.title_id
     };
-    if (instruction_limit == 0 ||
-        instruction_limit > maximum_controlled_boot_instructions) {
+    if (instruction_limit == 0 || instruction_limit > maximum_controlled_boot_instructions) {
         result.detail = "The controlled boot budget must be between 1 and 256 instructions.";
     } else if (!prepared_executable.ready || !guest_memory) {
         result.detail = "No prepared executable is available. Select the title again first.";

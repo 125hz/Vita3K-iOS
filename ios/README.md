@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It can transactionally install user-selected app/patch ZIPs, list installed titles, prefer a patch `eboot.bin`, safely prepare a selected Vita SELF, and make one explicitly confirmed interpreter attempt with a hard 256-instruction ceiling. It also loads and completes the `module_start` of a deliberately tiny legal fixture, executes compact and wide Thumb stack prologues, presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet execute general installed games, render Vita graphics, route input to guest services, or provide a production CPU/HLE implementation.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It can transactionally install user-selected app/patch ZIPs, list installed titles, prefer a patch `eboot.bin`, safely prepare a selected Vita SELF, and make one explicitly confirmed interpreter attempt with a hard 256-instruction ceiling. It also loads and completes the `module_start` of a deliberately tiny legal fixture, executes a tested baseline of compiler-generated Thumb arithmetic, memory, stack, and branch instructions, presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet execute general installed games, render Vita graphics, route input to guest services, or provide a production CPU/HLE implementation.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -191,3 +191,14 @@ The accepted Milestone 18 Amagami attempt entered the lifecycle export at `0x810
 4. Share the complete new diagnostic. It should advance past `0xE92D` at `0x81017580`; another CPU, memory, or HLE boundary is expected.
 
 The Actions artifact includes `milestone19-thumb2-wide-push.zip`. Installing and attempting its synthetic `M15TEST01` title must complete 12 instructions and two HLE calls, including `PUSH.W {r8, lr}`, then exit with status 42. This fixture contains no game or firmware data.
+
+## Milestone 20 batched Thumb compiler-baseline test
+
+The accepted Milestone 19 Amagami attempt executed the wide stack save and stopped on `0xB082` at `0x81017584`, which is `SUB sp, #8`. Milestone 20 implements that stack adjustment together with coherent Thumb compiler families instead of advancing one opcode per build: immediate/register arithmetic, shifts, CPSR `N/Z/C/V` updates, data-processing operations, high-register moves/adds/compares, byte/halfword/word memory access, signed loads, address generation, compare-and-branch, multiple-register transfers, and conditional/unconditional branches. Unknown instructions still stop safely; the diagnostic now includes six following halfwords so the next batch can be selected from one device run.
+
+1. Install the Milestone 20 IPA and open **Game Library**.
+2. Select `PCSG00291` with **Prefer Installed Patch** enabled and confirm `via lifecycle export`.
+3. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
+4. Share the complete new diagnostic, including its `Lookahead:` values. It should advance past `0xB082` at `0x81017584`; an unsupported CPU instruction, memory fault, unbound HLE NID, or the 256-instruction ceiling is expected.
+
+The Actions artifact includes `milestone20-thumb-compiler-baseline.zip`. Installing and attempting its synthetic `M15TEST01` title must complete 13 instructions and two HLE calls, including wide `PUSH.W` and `SUB sp, #8`, then exit with status 42. Portable self-tests additionally validate the other batched instruction families and exact CPU/memory state.

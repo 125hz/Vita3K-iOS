@@ -1,8 +1,8 @@
 #include <vita3k_ios/CoreBridge.h>
 #include <vita3k_ios/HostDisplay.h>
 #include <vita3k_ios/HostInput.h>
-#include <vita3k_ios/VitaAppMetadata.h>
 #include <vita3k_ios/VitaAppArchive.h>
+#include <vita3k_ios/VitaAppMetadata.h>
 
 #include <packages/archive.h>
 
@@ -75,9 +75,7 @@ int main(int argc, char **argv) {
         return 8;
     }
     const auto display_frame = display.acquire_frame(1920, 1080, display_error);
-    if (!display_frame || display_frame->identifier == 0 ||
-        display_frame->width != 1920 || display_frame->height != 1080 ||
-        display.acquire_frame(1920, 1080, display_error)) {
+    if (!display_frame || display_frame->identifier == 0 || display_frame->width != 1920 || display_frame->height != 1080 || display.acquire_frame(1920, 1080, display_error)) {
         std::cerr << "The display did not enforce a single diagnostic frame in flight.\n";
         return 9;
     }
@@ -86,11 +84,7 @@ int main(int argc, char **argv) {
         return 10;
     }
     const auto display_status = display.status();
-    if (!display_status.attached || display_status.frame_in_flight ||
-        !display_status.first_frame_presented ||
-        display_status.submitted_frame_count != 1 ||
-        display_status.presented_frame_count != 1 ||
-        display.acquire_frame(1920, 1080, display_error)) {
+    if (!display_status.attached || display_status.frame_in_flight || !display_status.first_frame_presented || display_status.submitted_frame_count != 1 || display_status.presented_frame_count != 1 || display.acquire_frame(1920, 1080, display_error)) {
         std::cerr << "The display did not retain its first-presented-frame state.\n";
         return 11;
     }
@@ -101,11 +95,7 @@ int main(int argc, char **argv) {
         std::cerr << "The input adapter accepted a zero-width touch surface.\n";
         return 15;
     }
-    if (!input.attach_touch_surface(1000.0, 500.0, input_error) ||
-        !input.submit_touch(7, 250.0, 125.0, vita3k::ios::HostTouchPhase::began,
-            input_error) ||
-        !input.submit_touch(7, 250.0, 125.0, vita3k::ios::HostTouchPhase::ended,
-            input_error)) {
+    if (!input.attach_touch_surface(1000.0, 500.0, input_error) || !input.submit_touch(7, 250.0, 125.0, vita3k::ios::HostTouchPhase::began, input_error) || !input.submit_touch(7, 250.0, 125.0, vita3k::ios::HostTouchPhase::ended, input_error)) {
         std::cerr << input_error << '\n';
         return 16;
     }
@@ -122,13 +112,7 @@ int main(int argc, char **argv) {
         return 17;
     }
     const auto input_status = input.status();
-    if (!input_status.touch_surface_attached || input_status.touch_active ||
-        !input_status.touch_sample_received || !input_status.controller_connected ||
-        !input_status.controller_sample_received || input_status.touch_sample_count != 2 ||
-        input_status.controller_sample_count != 1 || input_status.last_touch_x != 0.25 ||
-        input_status.last_touch_y != 0.25 || input_status.controller.right_x != 1.0f ||
-        input_status.controller.right_y != -1.0f ||
-        input_status.controller.buttons != controller_sample.buttons) {
+    if (!input_status.touch_surface_attached || input_status.touch_active || !input_status.touch_sample_received || !input_status.controller_connected || !input_status.controller_sample_received || input_status.touch_sample_count != 2 || input_status.controller_sample_count != 1 || input_status.last_touch_x != 0.25 || input_status.last_touch_y != 0.25 || input_status.controller.right_x != 1.0f || input_status.controller.right_y != -1.0f || input_status.controller.buttons != controller_sample.buttons) {
         std::cerr << "The portable input adapter produced unexpected state.\n";
         return 18;
     }
@@ -136,9 +120,7 @@ int main(int argc, char **argv) {
     const auto sfo_fixture = vita3k::ios::make_synthetic_param_sfo(
         "M13TEST01", "Vita3K iOS upstream metadata probe");
     const auto parsed_sfo = vita3k::ios::parse_vita_app_metadata(sfo_fixture);
-    if (!parsed_sfo.parsed || parsed_sfo.title_id != "M13TEST01" ||
-        parsed_sfo.title != "Vita3K iOS upstream metadata probe" ||
-        parsed_sfo.category != "gd" || parsed_sfo.app_version != "01.00") {
+    if (!parsed_sfo.parsed || parsed_sfo.title_id != "M13TEST01" || parsed_sfo.title != "Vita3K iOS upstream metadata probe" || parsed_sfo.category != "gd" || parsed_sfo.app_version != "01.00") {
         std::cerr << parsed_sfo.detail << '\n';
         return 22;
     }
@@ -154,21 +136,13 @@ int main(int argc, char **argv) {
     const auto vpk_fixture = vita3k::ios::make_synthetic_vpk();
     const auto parsed_vpk = packages::inspect_archive(vpk_fixture);
     const auto unsafe_vpk = packages::inspect_archive(vita3k::ios::make_synthetic_vpk(true));
-    if (!parsed_vpk.valid || parsed_vpk.file_count != 3 ||
-        parsed_vpk.applications.size() != 1 ||
-        parsed_vpk.applications.front().title_id != "M14TEST01" ||
-        parsed_vpk.applications.front().install_target != "ux0/app/M14TEST01" ||
-        unsafe_vpk.valid || unsafe_vpk.unsafe_path_count != 1) {
+    if (!parsed_vpk.valid || parsed_vpk.file_count != 3 || parsed_vpk.applications.size() != 1 || parsed_vpk.applications.front().title_id != "M14TEST01" || parsed_vpk.applications.front().install_target != "ux0/app/M14TEST01" || unsafe_vpk.valid || unsafe_vpk.unsafe_path_count != 1) {
         std::cerr << "The bounded Vita package inspection diagnostic failed.\n";
         return 27;
     }
     const auto install_zip_fixture = vita3k::ios::make_synthetic_install_zip();
     const auto parsed_install_zip = packages::inspect_archive(install_zip_fixture);
-    if (!parsed_install_zip.valid || parsed_install_zip.file_count != 6 ||
-        parsed_install_zip.applications.size() != 2 ||
-        parsed_install_zip.applications[0].title_id != "M15TEST01" ||
-        parsed_install_zip.applications[0].install_target != "ux0/app/M15TEST01" ||
-        parsed_install_zip.applications[1].install_target != "ux0/patch/M15TEST01") {
+    if (!parsed_install_zip.valid || parsed_install_zip.file_count != 6 || parsed_install_zip.applications.size() != 2 || parsed_install_zip.applications[0].title_id != "M15TEST01" || parsed_install_zip.applications[0].install_target != "ux0/app/M15TEST01" || parsed_install_zip.applications[1].install_target != "ux0/patch/M15TEST01") {
         std::cerr << parsed_install_zip.detail << '\n';
         return 30;
     }
@@ -181,6 +155,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m16_install_zip_fixture;
     std::filesystem::path emitted_m18_install_zip_fixture;
     std::filesystem::path emitted_m19_install_zip_fixture;
+    std::filesystem::path emitted_m20_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -200,6 +175,8 @@ int main(int argc, char **argv) {
             emitted_m18_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m19-install-zip-fixture" && index + 1 < argc) {
             emitted_m19_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m20-install-zip-fixture" && index + 1 < argc) {
+            emitted_m20_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -211,6 +188,7 @@ int main(int argc, char **argv) {
                          "[--emit-m16-install-zip-fixture <path>] "
                          "[--emit-m18-install-zip-fixture <path>] "
                          "[--emit-m19-install-zip-fixture <path>] "
+                         "[--emit-m20-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -220,24 +198,7 @@ int main(int argc, char **argv) {
     std::filesystem::remove_all(test_root, error);
 
     const auto status = vita3k::ios::initialize_core(test_root);
-    if (!status.linked || !status.self_tests_passed || !status.upstream_metadata_ready ||
-        !status.upstream_archive_ready ||
-        !status.package_installer_ready ||
-        !status.storage_ready ||
-        !status.guest_memory_ready || !status.segment_mapping_ready ||
-        !status.loader_pipeline_ready || !status.import_binding_ready ||
-        !status.arm_execution_ready ||
-        !status.guest_thread_ready ||
-        status.renderer_attached || status.renderer_frame_presented ||
-        status.summary.find("Renderer: waiting for MTKView host") == std::string::npos ||
-        status.input_surface_attached || status.input_touch_received ||
-        status.summary.find("Input: waiting for UIKit touch surface") == std::string::npos ||
-        status.summary.find("Upstream app metadata: passed") == std::string::npos ||
-        status.arm_test_instruction_count != 7 || status.hle_test_dispatch_count != 1 ||
-        status.thread_test_instruction_count != 12 ||
-        status.thread_test_hle_dispatch_count != 2 || status.thread_test_exit_status != 42 ||
-        status.thread_test_bound_stub_count != 2 ||
-        status.guest_memory_size != (1ULL << 32)) {
+    if (!status.linked || !status.self_tests_passed || !status.upstream_metadata_ready || !status.upstream_archive_ready || !status.package_installer_ready || !status.storage_ready || !status.guest_memory_ready || !status.segment_mapping_ready || !status.loader_pipeline_ready || !status.import_binding_ready || !status.arm_execution_ready || !status.guest_thread_ready || status.renderer_attached || status.renderer_frame_presented || status.summary.find("Renderer: waiting for MTKView host") == std::string::npos || status.input_surface_attached || status.input_touch_received || status.summary.find("Input: waiting for UIKit touch surface") == std::string::npos || status.summary.find("Upstream app metadata: passed") == std::string::npos || status.arm_test_instruction_count != 7 || status.hle_test_dispatch_count != 1 || status.thread_test_instruction_count != 12 || status.thread_test_hle_dispatch_count != 2 || status.thread_test_exit_status != 42 || status.thread_test_bound_stub_count != 2 || status.guest_memory_size != (1ULL << 32)) {
         std::cerr << status.summary << '\n';
         return 1;
     }
@@ -372,6 +333,28 @@ int main(int argc, char **argv) {
     const auto wide_push_self = make_plain_self(wide_push_elf);
     const auto m19_install_zip = vita3k::ios::make_synthetic_install_zip(
         wide_push_self, wide_push_self);
+    auto compiler_baseline_elf = wide_push_elf;
+    const std::array<std::uint16_t, 12> compiler_baseline_program{
+        0xE92Du,
+        0x4100u,
+        0xB082u,
+        0x4B04u,
+        0x4798u,
+        0x4604u,
+        0x9400u,
+        0x9A00u,
+        0x202Au,
+        0x4B02u,
+        0x4798u,
+        0xBF00u
+    };
+    std::memcpy(compiler_baseline_elf.data() + 244, compiler_baseline_program.data(),
+        sizeof(compiler_baseline_program));
+    write_value(compiler_baseline_elf, 268, static_cast<std::uint32_t>(0x81000040));
+    write_value(compiler_baseline_elf, 272, static_cast<std::uint32_t>(0x81000050));
+    const auto compiler_baseline_self = make_plain_self(compiler_baseline_elf);
+    const auto m20_install_zip = vita3k::ios::make_synthetic_install_zip(
+        compiler_baseline_self, compiler_baseline_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -383,6 +366,10 @@ int main(int argc, char **argv) {
     if (m19_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 19 Thumb-2 PUSH.W fixture.\n";
         return 47;
+    }
+    if (m20_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 20 Thumb compiler baseline fixture.\n";
+        return 52;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -435,6 +422,19 @@ int main(int argc, char **argv) {
             return 48;
         }
     }
+    if (!emitted_m20_install_zip_fixture.empty()) {
+        if (!emitted_m20_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m20_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m20_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m20_install_zip.data()),
+            static_cast<std::streamsize>(m20_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 20 Thumb compiler baseline fixture.\n";
+            return 53;
+        }
+    }
 
     const auto fixture = test_root / "Vita3K" / "imports" / "synthetic-homebrew.elf";
     std::ofstream fixture_stream(fixture, std::ios::binary);
@@ -444,8 +444,7 @@ int main(int argc, char **argv) {
         if (!emitted_fixture.parent_path().empty()) {
             std::filesystem::create_directories(emitted_fixture.parent_path(), error);
         }
-        if (error || !std::filesystem::copy_file(fixture, emitted_fixture,
-                std::filesystem::copy_options::overwrite_existing, error)) {
+        if (error || !std::filesystem::copy_file(fixture, emitted_fixture, std::filesystem::copy_options::overwrite_existing, error)) {
             std::cerr << "Could not emit the Milestone 9 fixture: " << error.message() << '\n';
             return 4;
         }
@@ -493,41 +492,14 @@ int main(int argc, char **argv) {
     }
 
     const auto rescanned = vita3k::ios::rescan_imports();
-    if (rescanned.imported_artifacts.size() != 1 ||
-        rescanned.imported_artifacts.front().kind != "Vita ELF" ||
-        !rescanned.imported_artifacts.front().structurally_valid ||
-        rescanned.imported_artifacts.front().load_segment_count != 2 ||
-        rescanned.imported_artifacts.front().relocation_segment_count != 1 ||
-        !rescanned.imported_artifacts.front().loaded ||
-        !rescanned.imported_artifacts.front().module_info_valid ||
-        !rescanned.imported_artifacts.front().relocations_applied ||
-        !rescanned.imported_artifacts.front().module_tables_parsed ||
-        !rescanned.imported_artifacts.front().import_stubs_bound ||
-        !rescanned.imported_artifacts.front().module_start_valid ||
-        !rescanned.imported_artifacts.front().module_start_from_export ||
-        !rescanned.imported_artifacts.front().execution_attempted ||
-        !rescanned.imported_artifacts.front().thread_exited ||
-        rescanned.imported_artifacts.front().relocation_entry_count != 1 ||
-        rescanned.imported_artifacts.front().relocation_patch_count != 1 ||
-        rescanned.imported_artifacts.front().export_library_count != 1 ||
-        rescanned.imported_artifacts.front().import_library_count != 1 ||
-        rescanned.imported_artifacts.front().exported_nid_count != 1 ||
-        rescanned.imported_artifacts.front().imported_nid_count != 2 ||
-        rescanned.imported_artifacts.front().bound_import_stub_count != 2 ||
-        rescanned.imported_artifacts.front().module_start_address != 0x81000061 ||
-        rescanned.imported_artifacts.front().executed_instruction_count != 12 ||
-        rescanned.imported_artifacts.front().hle_dispatch_count != 2 ||
-        rescanned.imported_artifacts.front().thread_exit_status != 42 ||
-        rescanned.imported_artifacts.front().module_name != "synthetic-homebrew" ||
-        rescanned.imported_artifacts.front().module_nid != 0x1234ABCD) {
+    if (rescanned.imported_artifacts.size() != 1 || rescanned.imported_artifacts.front().kind != "Vita ELF" || !rescanned.imported_artifacts.front().structurally_valid || rescanned.imported_artifacts.front().load_segment_count != 2 || rescanned.imported_artifacts.front().relocation_segment_count != 1 || !rescanned.imported_artifacts.front().loaded || !rescanned.imported_artifacts.front().module_info_valid || !rescanned.imported_artifacts.front().relocations_applied || !rescanned.imported_artifacts.front().module_tables_parsed || !rescanned.imported_artifacts.front().import_stubs_bound || !rescanned.imported_artifacts.front().module_start_valid || !rescanned.imported_artifacts.front().module_start_from_export || !rescanned.imported_artifacts.front().execution_attempted || !rescanned.imported_artifacts.front().thread_exited || rescanned.imported_artifacts.front().relocation_entry_count != 1 || rescanned.imported_artifacts.front().relocation_patch_count != 1 || rescanned.imported_artifacts.front().export_library_count != 1 || rescanned.imported_artifacts.front().import_library_count != 1 || rescanned.imported_artifacts.front().exported_nid_count != 1 || rescanned.imported_artifacts.front().imported_nid_count != 2 || rescanned.imported_artifacts.front().bound_import_stub_count != 2 || rescanned.imported_artifacts.front().module_start_address != 0x81000061 || rescanned.imported_artifacts.front().executed_instruction_count != 12 || rescanned.imported_artifacts.front().hle_dispatch_count != 2 || rescanned.imported_artifacts.front().thread_exit_status != 42 || rescanned.imported_artifacts.front().module_name != "synthetic-homebrew" || rescanned.imported_artifacts.front().module_nid != 0x1234ABCD) {
         std::cerr << rescanned.summary << '\n';
         return 3;
     }
 
     if (!vitasdk_fixture.empty()) {
         std::filesystem::remove(fixture, error);
-        const auto real_fixture = test_root / "Vita3K" / "imports" /
-            "milestone10-vitasdk-homebrew.velf";
+        const auto real_fixture = test_root / "Vita3K" / "imports" / "milestone10-vitasdk-homebrew.velf";
         std::filesystem::copy_file(vitasdk_fixture, real_fixture,
             std::filesystem::copy_options::overwrite_existing, error);
         if (error) {
@@ -535,28 +507,12 @@ int main(int argc, char **argv) {
             return 5;
         }
         const auto real_status = vita3k::ios::rescan_imports();
-        if (real_status.imported_artifacts.size() != 1 ||
-            real_status.imported_artifacts.front().kind != "Vita ELF" ||
-            !real_status.imported_artifacts.front().structurally_valid ||
-            !real_status.imported_artifacts.front().load_attempted ||
-            !real_status.imported_artifacts.front().loaded ||
-            !real_status.imported_artifacts.front().module_info_valid ||
-            !real_status.imported_artifacts.front().relocations_applied ||
-            !real_status.imported_artifacts.front().module_tables_parsed ||
-            !real_status.imported_artifacts.front().import_stubs_bound ||
-            !real_status.imported_artifacts.front().module_start_valid ||
-            !real_status.imported_artifacts.front().execution_attempted ||
-            real_status.imported_artifacts.front().thread_exited ||
-            !real_status.imported_artifacts.front().thread_returned ||
-            real_status.imported_artifacts.front().module_name != "m10_homebrew" ||
-            real_status.imported_artifacts.front().module_start_address != 0x81000001 ||
-            real_status.imported_artifacts.front().executed_instruction_count != 6 ||
-            real_status.imported_artifacts.front().hle_dispatch_count != 1 ||
-            real_status.imported_artifacts.front().thread_return_value != 1) {
+        if (real_status.imported_artifacts.size() != 1 || real_status.imported_artifacts.front().kind != "Vita ELF" || !real_status.imported_artifacts.front().structurally_valid || !real_status.imported_artifacts.front().load_attempted || !real_status.imported_artifacts.front().loaded || !real_status.imported_artifacts.front().module_info_valid || !real_status.imported_artifacts.front().relocations_applied || !real_status.imported_artifacts.front().module_tables_parsed || !real_status.imported_artifacts.front().import_stubs_bound || !real_status.imported_artifacts.front().module_start_valid || !real_status.imported_artifacts.front().execution_attempted || real_status.imported_artifacts.front().thread_exited || !real_status.imported_artifacts.front().thread_returned || real_status.imported_artifacts.front().module_name != "m10_homebrew" || real_status.imported_artifacts.front().module_start_address != 0x81000001 || real_status.imported_artifacts.front().executed_instruction_count != 6 || real_status.imported_artifacts.front().hle_dispatch_count != 1 || real_status.imported_artifacts.front().thread_return_value != 1) {
             std::cerr << real_status.summary << '\n';
             return 6;
         }
-        std::cout << "Verified real VitaSDK diagnostic:\n" << real_status.summary << '\n';
+        std::cout << "Verified real VitaSDK diagnostic:\n"
+                  << real_status.summary << '\n';
     }
 
     const auto imports = test_root / "Vita3K" / "imports";
@@ -573,15 +529,7 @@ int main(int argc, char **argv) {
         return 25;
     }
     const auto sfo_status = vita3k::ios::rescan_imports();
-    if (sfo_status.imported_artifacts.size() != 1 ||
-        sfo_status.imported_artifacts.front().kind != "PARAM.SFO" ||
-        !sfo_status.imported_artifacts.front().app_metadata_parsed ||
-        sfo_status.imported_artifacts.front().app_title_id != "M13TEST01" ||
-        sfo_status.imported_artifacts.front().app_title !=
-            "Vita3K iOS upstream metadata probe" ||
-        sfo_status.imported_artifacts.front().app_category != "gd" ||
-        sfo_status.imported_artifacts.front().app_version != "01.00" ||
-        sfo_status.summary.find("title ID M13TEST01") == std::string::npos) {
+    if (sfo_status.imported_artifacts.size() != 1 || sfo_status.imported_artifacts.front().kind != "PARAM.SFO" || !sfo_status.imported_artifacts.front().app_metadata_parsed || sfo_status.imported_artifacts.front().app_title_id != "M13TEST01" || sfo_status.imported_artifacts.front().app_title != "Vita3K iOS upstream metadata probe" || sfo_status.imported_artifacts.front().app_category != "gd" || sfo_status.imported_artifacts.front().app_version != "01.00" || sfo_status.summary.find("title ID M13TEST01") == std::string::npos) {
         std::cerr << sfo_status.summary << '\n';
         return 26;
     }
@@ -594,17 +542,7 @@ int main(int argc, char **argv) {
         static_cast<std::streamsize>(vpk_fixture.size()));
     imported_vpk_stream.close();
     const auto vpk_status = vita3k::ios::rescan_imports();
-    if (vpk_status.imported_artifacts.size() != 1 ||
-        vpk_status.imported_artifacts.front().kind != "VPK/ZIP" ||
-        !vpk_status.imported_artifacts.front().archive_inspected ||
-        !vpk_status.imported_artifacts.front().archive_valid ||
-        vpk_status.imported_artifacts.front().archive_file_count != 3 ||
-        vpk_status.imported_artifacts.front().archive_application_count != 1 ||
-        vpk_status.imported_artifacts.front().archive_unsafe_path_count != 0 ||
-        vpk_status.imported_artifacts.front().app_title_id != "M14TEST01" ||
-        vpk_status.imported_artifacts.front().archive_install_target !=
-            "ux0/app/M14TEST01" ||
-        vpk_status.summary.find("planned target ux0/app/M14TEST01") == std::string::npos) {
+    if (vpk_status.imported_artifacts.size() != 1 || vpk_status.imported_artifacts.front().kind != "VPK/ZIP" || !vpk_status.imported_artifacts.front().archive_inspected || !vpk_status.imported_artifacts.front().archive_valid || vpk_status.imported_artifacts.front().archive_file_count != 3 || vpk_status.imported_artifacts.front().archive_application_count != 1 || vpk_status.imported_artifacts.front().archive_unsafe_path_count != 0 || vpk_status.imported_artifacts.front().app_title_id != "M14TEST01" || vpk_status.imported_artifacts.front().archive_install_target != "ux0/app/M14TEST01" || vpk_status.summary.find("planned target ux0/app/M14TEST01") == std::string::npos) {
         std::cerr << vpk_status.summary << '\n';
         return 29;
     }
@@ -619,18 +557,7 @@ int main(int argc, char **argv) {
     std::ofstream(previous_app) << "previous installation";
     const auto install_result = vita3k::ios::install_game_archive(archive_path);
     const auto installed_status = vita3k::ios::query_core_status();
-    if (!install_result.success || install_result.application_count != 2 ||
-        install_result.file_count != 6 || install_result.installed_targets.size() != 2 ||
-        std::filesystem::exists(previous_app) ||
-        !std::filesystem::is_regular_file(
-            test_root / "Vita3K/ux0/app/M15TEST01/eboot.bin") ||
-        !std::filesystem::is_regular_file(
-            test_root / "Vita3K/ux0/patch/M15TEST01/assets/patch.dat") ||
-        installed_status.installed_titles.size() != 1 ||
-        installed_status.installed_titles.front().title_id != "M15TEST01" ||
-        !installed_status.installed_titles.front().patch_installed ||
-        installed_status.summary.find("Installed titles: 1") == std::string::npos ||
-        installed_status.summary.find("patch installed") == std::string::npos) {
+    if (!install_result.success || install_result.application_count != 2 || install_result.file_count != 6 || install_result.installed_targets.size() != 2 || std::filesystem::exists(previous_app) || !std::filesystem::is_regular_file(test_root / "Vita3K/ux0/app/M15TEST01/eboot.bin") || !std::filesystem::is_regular_file(test_root / "Vita3K/ux0/patch/M15TEST01/assets/patch.dat") || installed_status.installed_titles.size() != 1 || installed_status.installed_titles.front().title_id != "M15TEST01" || !installed_status.installed_titles.front().patch_installed || installed_status.summary.find("Installed titles: 1") == std::string::npos || installed_status.summary.find("patch installed") == std::string::npos) {
         std::cerr << installed_status.summary << '\n';
         return 32;
     }
@@ -641,9 +568,7 @@ int main(int argc, char **argv) {
         static_cast<std::streamsize>(unsafe_archive.size()));
     unsafe_stream.close();
     const auto unsafe_install = vita3k::ios::install_game_archive(unsafe_archive_path);
-    if (unsafe_install.success ||
-        !std::filesystem::is_regular_file(
-            test_root / "Vita3K/ux0/app/M15TEST01/eboot.bin")) {
+    if (unsafe_install.success || !std::filesystem::is_regular_file(test_root / "Vita3K/ux0/app/M15TEST01/eboot.bin")) {
         std::cerr << "An unsafe archive modified the installed title.\n";
         return 33;
     }
@@ -655,49 +580,27 @@ int main(int argc, char **argv) {
     m16_archive_stream.close();
     const auto m16_install = vita3k::ios::install_game_archive(m16_archive_path);
     const auto m16_installed_status = vita3k::ios::query_core_status();
-    if (!m16_install.success || m16_install.file_count != 6 ||
-        m16_installed_status.installed_titles.size() != 1 ||
-        !m16_installed_status.installed_titles.front().base_eboot_present ||
-        !m16_installed_status.installed_titles.front().patch_eboot_present) {
+    if (!m16_install.success || m16_install.file_count != 6 || m16_installed_status.installed_titles.size() != 1 || !m16_installed_status.installed_titles.front().base_eboot_present || !m16_installed_status.installed_titles.front().patch_eboot_present) {
         std::cerr << m16_installed_status.summary << '\n';
         return 37;
     }
     const auto prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
     const auto prepared_status = vita3k::ios::query_core_status();
-    if (!prepared.selected || !prepared.patch_selected || !prepared.probe_valid ||
-        !prepared.self_segments_plain || !prepared.loaded ||
-        prepared.kind != "Vita SELF" || prepared.load_segment_count != 2 ||
-        prepared.module_name != "synthetic-homebrew" ||
-        prepared.module_start_address != 0x81000061 ||
-        prepared.imported_nid_count != 2 || prepared.bound_import_stub_count != 2 ||
-        prepared_status.selected_title_id != "M15TEST01" ||
-        !prepared_status.selected_executable_loaded ||
-        !prepared_status.selected_boot_available ||
-        prepared_status.summary.find("Boot source: patch/eboot.bin") == std::string::npos ||
-        prepared_status.summary.find("Executable preparation: Mapped 2") ==
-            std::string::npos) {
-        std::cerr << prepared.detail << '\n' << prepared_status.summary << '\n';
+    if (!prepared.selected || !prepared.patch_selected || !prepared.probe_valid || !prepared.self_segments_plain || !prepared.loaded || prepared.kind != "Vita SELF" || prepared.load_segment_count != 2 || prepared.module_name != "synthetic-homebrew" || prepared.module_start_address != 0x81000061 || prepared.imported_nid_count != 2 || prepared.bound_import_stub_count != 2 || prepared_status.selected_title_id != "M15TEST01" || !prepared_status.selected_executable_loaded || !prepared_status.selected_boot_available || prepared_status.summary.find("Boot source: patch/eboot.bin") == std::string::npos || prepared_status.summary.find("Executable preparation: Mapped 2") == std::string::npos) {
+        std::cerr << prepared.detail << '\n'
+                  << prepared_status.summary << '\n';
         return 38;
     }
 
     const auto controlled_boot = vita3k::ios::attempt_prepared_title_boot(256);
     const auto controlled_boot_status = vita3k::ios::query_core_status();
-    if (!controlled_boot.attempted || !controlled_boot.started ||
-        !controlled_boot.exited || controlled_boot.returned ||
-        controlled_boot.instruction_count != 12 ||
-        controlled_boot.hle_dispatch_count != 2 ||
-        controlled_boot.exit_status != 42 ||
-        controlled_boot_status.selected_boot_available ||
-        !controlled_boot_status.selected_boot_attempted ||
-        controlled_boot_status.summary.find(
-            "Controlled boot attempt: interpreter-only, 256-instruction ceiling") ==
-            std::string::npos) {
-        std::cerr << controlled_boot.detail << '\n' << controlled_boot_status.summary << '\n';
+    if (!controlled_boot.attempted || !controlled_boot.started || !controlled_boot.exited || controlled_boot.returned || controlled_boot.instruction_count != 12 || controlled_boot.hle_dispatch_count != 2 || controlled_boot.exit_status != 42 || controlled_boot_status.selected_boot_available || !controlled_boot_status.selected_boot_attempted || controlled_boot_status.summary.find("Controlled boot attempt: interpreter-only, 256-instruction ceiling") == std::string::npos) {
+        std::cerr << controlled_boot.detail << '\n'
+                  << controlled_boot_status.summary << '\n';
         return 40;
     }
     const auto repeated_boot = vita3k::ios::attempt_prepared_title_boot(256);
-    if (repeated_boot.started || repeated_boot.detail.find("Select the title again") ==
-            std::string::npos) {
+    if (repeated_boot.started || repeated_boot.detail.find("Select the title again") == std::string::npos) {
         std::cerr << "A prepared title was allowed to execute more than once.\n";
         return 41;
     }
@@ -712,22 +615,15 @@ int main(int argc, char **argv) {
         std::cerr << m18_install.detail << '\n';
         return 44;
     }
-    const auto lifecycle_prepared =
-        vita3k::ios::prepare_installed_title("M15TEST01", true);
+    const auto lifecycle_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
     const auto lifecycle_prepared_status = vita3k::ios::query_core_status();
-    if (!lifecycle_prepared.selected || !lifecycle_prepared.loaded ||
-        !lifecycle_prepared.module_start_from_export ||
-        lifecycle_prepared.module_start_address != 0x81000061 ||
-        lifecycle_prepared.detail.find("via lifecycle export") == std::string::npos ||
-        !lifecycle_prepared_status.selected_boot_available) {
+    if (!lifecycle_prepared.selected || !lifecycle_prepared.loaded || !lifecycle_prepared.module_start_from_export || lifecycle_prepared.module_start_address != 0x81000061 || lifecycle_prepared.detail.find("via lifecycle export") == std::string::npos || !lifecycle_prepared_status.selected_boot_available) {
         std::cerr << lifecycle_prepared.detail << '\n'
                   << lifecycle_prepared_status.summary << '\n';
         return 45;
     }
     const auto lifecycle_boot = vita3k::ios::attempt_prepared_title_boot(256);
-    if (!lifecycle_boot.started || !lifecycle_boot.exited || lifecycle_boot.returned ||
-        lifecycle_boot.instruction_count != 12 ||
-        lifecycle_boot.hle_dispatch_count != 2 || lifecycle_boot.exit_status != 42) {
+    if (!lifecycle_boot.started || !lifecycle_boot.exited || lifecycle_boot.returned || lifecycle_boot.instruction_count != 12 || lifecycle_boot.hle_dispatch_count != 2 || lifecycle_boot.exit_status != 42) {
         std::cerr << lifecycle_boot.detail << '\n';
         return 46;
     }
@@ -742,38 +638,48 @@ int main(int argc, char **argv) {
         std::cerr << m19_install.detail << '\n';
         return 49;
     }
-    const auto wide_push_prepared =
-        vita3k::ios::prepare_installed_title("M15TEST01", true);
-    if (!wide_push_prepared.selected || !wide_push_prepared.loaded ||
-        !wide_push_prepared.module_start_from_export ||
-        wide_push_prepared.module_start_address != 0x81000061) {
+    const auto wide_push_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!wide_push_prepared.selected || !wide_push_prepared.loaded || !wide_push_prepared.module_start_from_export || wide_push_prepared.module_start_address != 0x81000061) {
         std::cerr << wide_push_prepared.detail << '\n';
         return 50;
     }
     const auto wide_push_boot = vita3k::ios::attempt_prepared_title_boot(256);
-    if (!wide_push_boot.started || !wide_push_boot.exited || wide_push_boot.returned ||
-        wide_push_boot.instruction_count != 12 ||
-        wide_push_boot.hle_dispatch_count != 2 || wide_push_boot.exit_status != 42) {
+    if (!wide_push_boot.started || !wide_push_boot.exited || wide_push_boot.returned || wide_push_boot.instruction_count != 12 || wide_push_boot.hle_dispatch_count != 2 || wide_push_boot.exit_status != 42) {
         std::cerr << wide_push_boot.detail << '\n';
         return 51;
     }
 
-    auto encrypted_self = wide_push_self;
+    const auto m20_archive_path = test_root / "milestone20-thumb-compiler-baseline.zip";
+    std::ofstream m20_archive_stream(m20_archive_path, std::ios::binary);
+    m20_archive_stream.write(reinterpret_cast<const char *>(m20_install_zip.data()),
+        static_cast<std::streamsize>(m20_install_zip.size()));
+    m20_archive_stream.close();
+    const auto m20_install = vita3k::ios::install_game_archive(m20_archive_path);
+    if (!m20_install.success || m20_install.file_count != 6) {
+        std::cerr << m20_install.detail << '\n';
+        return 54;
+    }
+    const auto compiler_baseline_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!compiler_baseline_prepared.selected || !compiler_baseline_prepared.loaded || !compiler_baseline_prepared.module_start_from_export || compiler_baseline_prepared.module_start_address != 0x81000061) {
+        std::cerr << compiler_baseline_prepared.detail << '\n';
+        return 55;
+    }
+    const auto compiler_baseline_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!compiler_baseline_boot.started || !compiler_baseline_boot.exited || compiler_baseline_boot.returned || compiler_baseline_boot.instruction_count != 13 || compiler_baseline_boot.hle_dispatch_count != 2 || compiler_baseline_boot.exit_status != 42) {
+        std::cerr << compiler_baseline_boot.detail << '\n';
+        return 56;
+    }
+
+    auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
-    const auto installed_patch_eboot =
-        test_root / "Vita3K/ux0/patch/M15TEST01/eboot.bin";
+    const auto installed_patch_eboot = test_root / "Vita3K/ux0/patch/M15TEST01/eboot.bin";
     std::ofstream encrypted_stream(installed_patch_eboot, std::ios::binary | std::ios::trunc);
     encrypted_stream.write(reinterpret_cast<const char *>(encrypted_self.data()),
         static_cast<std::streamsize>(encrypted_self.size()));
     encrypted_stream.close();
-    const auto encrypted_preparation =
-        vita3k::ios::prepare_installed_title("M15TEST01", true);
-    if (!encrypted_preparation.selected || !encrypted_preparation.patch_selected ||
-        !encrypted_preparation.probe_valid || encrypted_preparation.self_segments_plain ||
-        encrypted_preparation.loaded || encrypted_preparation.encrypted_segment_count != 1 ||
-        encrypted_preparation.detail.find("Decryption must be integrated") ==
-            std::string::npos) {
+    const auto encrypted_preparation = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!encrypted_preparation.selected || !encrypted_preparation.patch_selected || !encrypted_preparation.probe_valid || encrypted_preparation.self_segments_plain || encrypted_preparation.loaded || encrypted_preparation.encrypted_segment_count != 1 || encrypted_preparation.detail.find("Decryption must be integrated") == std::string::npos) {
         std::cerr << encrypted_preparation.detail << '\n';
         return 39;
     }
@@ -784,24 +690,19 @@ int main(int argc, char **argv) {
     }
     const auto bridge_frame = vita3k::ios::acquire_host_display_frame(
         1280, 720, display_error);
-    if (!bridge_frame || !vita3k::ios::complete_host_display_frame(
-            bridge_frame->identifier, true, {}, display_error)) {
+    if (!bridge_frame || !vita3k::ios::complete_host_display_frame(bridge_frame->identifier, true, {}, display_error)) {
         std::cerr << (display_error.empty() ? "The core display bridge did not complete a frame."
-                                           : display_error) << '\n';
+                                            : display_error)
+                  << '\n';
         return 13;
     }
     const auto rendered_status = vita3k::ios::query_core_status();
-    if (!rendered_status.renderer_attached || !rendered_status.renderer_frame_presented ||
-        rendered_status.renderer_submitted_frame_count != 1 ||
-        rendered_status.renderer_presented_frame_count != 1 ||
-        rendered_status.summary.find("Renderer: passed") == std::string::npos) {
+    if (!rendered_status.renderer_attached || !rendered_status.renderer_frame_presented || rendered_status.renderer_submitted_frame_count != 1 || rendered_status.renderer_presented_frame_count != 1 || rendered_status.summary.find("Renderer: passed") == std::string::npos) {
         std::cerr << rendered_status.summary << '\n';
         return 14;
     }
 
-    if (!vita3k::ios::attach_host_input_surface(1000.0, 500.0, input_error) ||
-        !vita3k::ios::submit_host_touch(9, 750.0, 250.0,
-            vita3k::ios::HostTouchPhase::began, input_error)) {
+    if (!vita3k::ios::attach_host_input_surface(1000.0, 500.0, input_error) || !vita3k::ios::submit_host_touch(9, 750.0, 250.0, vita3k::ios::HostTouchPhase::began, input_error)) {
         std::cerr << input_error << '\n';
         return 19;
     }
@@ -811,15 +712,7 @@ int main(int argc, char **argv) {
         return 20;
     }
     const auto bridged_input_status = vita3k::ios::query_core_status();
-    if (!bridged_input_status.input_surface_attached ||
-        !bridged_input_status.input_touch_received ||
-        !bridged_input_status.input_controller_connected ||
-        !bridged_input_status.input_controller_received ||
-        bridged_input_status.input_touch_sample_count != 1 ||
-        bridged_input_status.input_controller_sample_count != 1 ||
-        bridged_input_status.input_last_touch_x != 0.75 ||
-        bridged_input_status.input_last_touch_y != 0.5 ||
-        bridged_input_status.summary.find("Input: passed") == std::string::npos) {
+    if (!bridged_input_status.input_surface_attached || !bridged_input_status.input_touch_received || !bridged_input_status.input_controller_connected || !bridged_input_status.input_controller_received || bridged_input_status.input_touch_sample_count != 1 || bridged_input_status.input_controller_sample_count != 1 || bridged_input_status.input_last_touch_x != 0.75 || bridged_input_status.input_last_touch_y != 0.5 || bridged_input_status.summary.find("Input: passed") == std::string::npos) {
         std::cerr << bridged_input_status.summary << '\n';
         return 21;
     }
@@ -855,6 +748,10 @@ int main(int argc, char **argv) {
     if (!emitted_m19_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 19 Thumb-2 PUSH.W fixture: "
                   << emitted_m19_install_zip_fixture << '\n';
+    }
+    if (!emitted_m20_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 20 Thumb compiler baseline fixture: "
+                  << emitted_m20_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;
