@@ -7,6 +7,7 @@ endif()
 add_library(vita3k_ios_core STATIC
     ../src/CoreBridge.cpp
     ../src/ExecutableProbe.cpp
+    ../src/GuestMemory.cpp
     ../src/HostFilesystem.cpp
     ../../vita3k/nids/src/nids.cpp
     ../../vita3k/util/src/arm.cpp

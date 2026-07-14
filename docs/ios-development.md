@@ -4,7 +4,7 @@ This guide sets up a Vita3K fork so Windows is the primary editing and testing e
 
 ## 1. What this branch can and cannot do
 
-Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application host, a Metal view, lifecycle handling, persistent logs, sandbox storage, and the first dependency-free upstream core slice. It does not yet contain a working Vita emulator because the loader, guest memory, CPU backend, renderer, and wider dependency graph have not been ported to iOS. `VITA3K_IOS_LINK_CORE=ON` is required.
+Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application host, a Metal view, lifecycle handling, persistent logs, sandbox storage, the first dependency-free upstream core slice, a 4 GiB guest-address-space diagnostic, and safe ELF load-segment planning. It does not yet contain a working Vita emulator because segment mapping, relocations, module metadata, the CPU backend, renderer, and the wider dependency graph have not been ported to iOS. `VITA3K_IOS_LINK_CORE=ON` is required.
 
 Use the pipeline as a stable first milestone: every future porting change should keep the bootstrap IPA green while moving one subsystem across the `CoreBridge` boundary.
 

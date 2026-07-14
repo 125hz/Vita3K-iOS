@@ -12,6 +12,7 @@ struct ImportedArtifact {
     std::uintmax_t size;
     std::string kind;
     bool structurally_valid;
+    std::size_t load_segment_count;
     std::string detail;
 };
 
@@ -19,6 +20,9 @@ struct CoreStatus {
     bool linked;
     bool self_tests_passed;
     bool storage_ready;
+    bool guest_memory_ready;
+    std::uint64_t guest_memory_size;
+    std::size_t host_page_size;
     std::string storage_root;
     std::vector<ImportedArtifact> imported_artifacts;
     std::string summary;
