@@ -251,3 +251,16 @@ Unpredictable register combinations, invalid replicated-zero encodings, writebac
 4. Share the complete next boundary. It must advance beyond both `0x810175BE` and `0x810175C2`, retain one successful libc HLE call and the DSO handle, then stop honestly at the next unsupported CPU, memory, HLE, return, or budget boundary.
 
 The Actions artifact includes `milestone24-thumb2-runtime-families.zip`. Its legal synthetic title dispatches the Milestone 23 libc HLE, executes the exact captured `MOVS.W` and `LDR.W`, and returns after nine instructions. Portable tests cover the wider ALU, flags, signed/unsigned memory, indexed writeback, invalid-encoding, and overflow behavior.
+
+## Milestone 25 broad register-operated runtime batch
+
+The accepted Milestone 24 Amagami attempt advanced from 16 to 28 instructions with the libc HLE and DSO handle intact, then stopped at `EBAA 0202` (`SUB.W r2, r10, r2`) at `0x810175EA`. Milestone 25 implements the compiler-facing Thumb-2 shifted-register logical/arithmetic/test family plus its `MOV/MVN`, immediate-shift, rotate, and `RRX` aliases. The same decoder applies architectural shift carry and arithmetic `N/Z/C/V` rules. The unrelated `PKH` encoding and hazardous SP/PC combinations remain explicit stops.
+
+This milestone also adds scaled register-offset byte, halfword, signed-byte, signed-halfword, and word loads/stores. Reserved suffixes, PC offset registers, address overflow, and guest-memory faults remain hard boundaries. Unsupported-instruction look-ahead expands from six to sixteen halfwords so each physical-device result can guide a larger subsequent batch.
+
+1. Install the Milestone 25 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (256 Instructions)** once.
+4. Share the complete next boundary and all sixteen look-ahead halfwords. Execution must advance through `SUB.W` at `0x810175EA`, preserve the libc HLE/DSO state, and then stop honestly at the next CPU, memory, HLE, return, or instruction-ceiling boundary.
+
+The Actions artifact includes `milestone25-thumb2-register-families.zip`. Its legal synthetic title crosses the libc call and Milestone 24 sequence, executes the exact captured `SUB.W`, and returns after ten instructions. Portable tests additionally cover shifted flags, rotate/`RRX`, arithmetic carry/overflow behavior, scaled register memory, sign extension, invalid encodings, and overflow.

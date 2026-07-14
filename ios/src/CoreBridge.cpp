@@ -54,6 +54,10 @@ struct PreparedExecutableState {
 
 PreparedExecutableState prepared_executable;
 constexpr std::size_t maximum_controlled_boot_instructions = 256;
+constexpr std::uint32_t flag_negative = 1u << 31;
+constexpr std::uint32_t flag_zero = 1u << 30;
+constexpr std::uint32_t flag_carry = 1u << 29;
+constexpr std::uint32_t flag_overflow = 1u << 28;
 
 bool run_upstream_self_tests() {
     const bool arm_encoder_ok = encode_arm_inst(INSTRUCTION_MOVW, 0x1234, 0) == 0xE3010234u;
@@ -842,6 +846,186 @@ bool run_thumb2_runtime_family_test(GuestMemory &memory, std::string &error) {
     return true;
 }
 
+bool run_thumb2_register_family_test(GuestMemory &memory, std::string &error) {
+    constexpr std::uint32_t test_address = 0x80000;
+    std::array<std::uint8_t, 0x100> program{};
+
+    write_value(program, 0x00, static_cast<std::uint16_t>(0xEBAA)); // SUB.W r2, r10, r2
+    write_value(program, 0x02, static_cast<std::uint16_t>(0x0202));
+    write_value(program, 0x04, static_cast<std::uint16_t>(0xEA10)); // ANDS.W r3, r0, r1, LSL #2
+    write_value(program, 0x06, static_cast<std::uint16_t>(0x0381));
+    write_value(program, 0x08, static_cast<std::uint16_t>(0xEA5F)); // RORS.W r4, r1, #8
+    write_value(program, 0x0A, static_cast<std::uint16_t>(0x2431));
+    write_value(program, 0x0C, static_cast<std::uint16_t>(0xEA7F)); // MVNS.W r5, r0
+    write_value(program, 0x0E, static_cast<std::uint16_t>(0x0500));
+    write_value(program, 0x10, static_cast<std::uint16_t>(0xEA10)); // TST.W r0, r1, LSL #1
+    write_value(program, 0x12, static_cast<std::uint16_t>(0x0F41));
+    write_value(program, 0x14, static_cast<std::uint16_t>(0xEB50)); // ADCS.W r6, r0, r1
+    write_value(program, 0x16, static_cast<std::uint16_t>(0x0601));
+    write_value(program, 0x18, static_cast<std::uint16_t>(0xEB70)); // SBCS.W r7, r0, r1
+    write_value(program, 0x1A, static_cast<std::uint16_t>(0x0701));
+    write_value(program, 0x1C, static_cast<std::uint16_t>(0xEBD0)); // RSBS.W r8, r0, r1
+    write_value(program, 0x1E, static_cast<std::uint16_t>(0x0801));
+    write_value(program, 0x20, static_cast<std::uint16_t>(0xEA5F)); // RRXS.W r4, r1
+    write_value(program, 0x22, static_cast<std::uint16_t>(0x0431));
+    write_value(program, 0x24, static_cast<std::uint16_t>(0xEAC0)); // unsupported PKH family
+    write_value(program, 0x26, static_cast<std::uint16_t>(0x0201));
+    write_value(program, 0x28, static_cast<std::uint16_t>(0xEBAA)); // invalid PC shift source
+    write_value(program, 0x2A, static_cast<std::uint16_t>(0x020F));
+
+    write_value(program, 0x40, static_cast<std::uint16_t>(0xF841)); // STR.W r0, [r1, r2, LSL #2]
+    write_value(program, 0x42, static_cast<std::uint16_t>(0x0022));
+    write_value(program, 0x44, static_cast<std::uint16_t>(0xF851)); // LDR.W r3, [r1, r2, LSL #2]
+    write_value(program, 0x46, static_cast<std::uint16_t>(0x3022));
+    write_value(program, 0x48, static_cast<std::uint16_t>(0xF801)); // STRB.W r4, [r1, r2]
+    write_value(program, 0x4A, static_cast<std::uint16_t>(0x4002));
+    write_value(program, 0x4C, static_cast<std::uint16_t>(0xF911)); // LDRSB.W r5, [r1, r2]
+    write_value(program, 0x4E, static_cast<std::uint16_t>(0x5002));
+    write_value(program, 0x50, static_cast<std::uint16_t>(0xF821)); // STRH.W r6, [r1, r2]
+    write_value(program, 0x52, static_cast<std::uint16_t>(0x6002));
+    write_value(program, 0x54, static_cast<std::uint16_t>(0xF931)); // LDRSH.W r7, [r1, r2]
+    write_value(program, 0x56, static_cast<std::uint16_t>(0x7002));
+    write_value(program, 0x58, static_cast<std::uint16_t>(0xF851)); // invalid PC offset register
+    write_value(program, 0x5A, static_cast<std::uint16_t>(0x300F));
+    write_value(program, 0x5C, static_cast<std::uint16_t>(0xF851)); // overflowing scaled offset
+    write_value(program, 0x5E, static_cast<std::uint16_t>(0x3022));
+    write_value(program, 0x60, static_cast<std::uint16_t>(0xF851)); // reserved register suffix
+    write_value(program, 0x62, static_cast<std::uint16_t>(0x3042));
+    write_value(program, 0x64, static_cast<std::uint16_t>(0xF851)); // unmapped register-offset load
+    write_value(program, 0x66, static_cast<std::uint16_t>(0x3000));
+
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < 0x400 || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the Thumb-2 register-family diagnostic.";
+        return false;
+    }
+    const auto memory_size = static_cast<std::uint32_t>(memory_size_64);
+    if (!memory.map_segment(test_address, program, memory_size, 7, error)) {
+        return false;
+    }
+
+    HLEDispatcher dispatcher;
+    ArmInterpreter interpreter(memory, dispatcher);
+    const auto data_address = test_address + 0x300u;
+    const auto run_at = [&](std::uint32_t offset) {
+        interpreter.reset((test_address + offset) | 1u, data_address);
+    };
+
+    run_at(0x00);
+    interpreter.state().registers[10] = 100;
+    interpreter.state().registers[2] = 40;
+    interpreter.state().cpsr = 0xF0000000u;
+    const auto captured = interpreter.run(1);
+    const auto captured_state = interpreter.state();
+
+    run_at(0x04);
+    interpreter.state().registers[0] = 0xFFFFFFFFu;
+    interpreter.state().registers[1] = 0x40000001u;
+    interpreter.state().cpsr = 1u << 28;
+    const auto logical = interpreter.run(1);
+    const auto logical_state = interpreter.state();
+
+    run_at(0x08);
+    interpreter.state().registers[1] = 0x80000001u;
+    interpreter.state().cpsr = flag_carry;
+    const auto rotate = interpreter.run(1);
+    const auto rotate_state = interpreter.state();
+
+    run_at(0x0C);
+    interpreter.state().registers[0] = 0;
+    interpreter.state().cpsr = flag_carry | flag_overflow;
+    const auto invert = interpreter.run(1);
+    const auto invert_state = interpreter.state();
+
+    run_at(0x10);
+    interpreter.state().registers[0] = 8;
+    interpreter.state().registers[1] = 4;
+    const auto test = interpreter.run(1);
+    const auto test_state = interpreter.state();
+
+    run_at(0x14);
+    interpreter.state().registers[0] = std::numeric_limits<std::uint32_t>::max();
+    interpreter.state().registers[1] = 0;
+    interpreter.state().cpsr = flag_carry;
+    const auto add = interpreter.run(1);
+    const auto add_state = interpreter.state();
+
+    run_at(0x18);
+    interpreter.state().registers[0] = 0;
+    interpreter.state().registers[1] = 0;
+    const auto subtract_carry = interpreter.run(1);
+    const auto subtract_carry_state = interpreter.state();
+
+    run_at(0x1C);
+    interpreter.state().registers[0] = 5;
+    interpreter.state().registers[1] = 9;
+    const auto reverse_subtract = interpreter.run(1);
+    const auto reverse_subtract_state = interpreter.state();
+
+    run_at(0x20);
+    interpreter.state().registers[1] = 2;
+    interpreter.state().cpsr = flag_carry;
+    const auto rotate_extend = interpreter.run(1);
+    const auto rotate_extend_state = interpreter.state();
+
+    run_at(0x24);
+    const auto unsupported_pack = interpreter.run(1);
+    run_at(0x28);
+    const auto invalid_shift_register = interpreter.run(1);
+
+    run_at(0x40);
+    interpreter.state().registers[0] = 0xAABBCCDDu;
+    interpreter.state().registers[1] = data_address;
+    interpreter.state().registers[2] = 0x40000001u;
+    const auto word_memory = interpreter.run(2);
+    const auto word_memory_state = interpreter.state();
+
+    run_at(0x48);
+    interpreter.state().registers[1] = data_address + 0x20u;
+    interpreter.state().registers[2] = 3;
+    interpreter.state().registers[4] = 0xFFFFFF80u;
+    const auto byte_memory = interpreter.run(2);
+    const auto byte_memory_state = interpreter.state();
+
+    run_at(0x50);
+    interpreter.state().registers[1] = data_address + 0x40u;
+    interpreter.state().registers[2] = 2;
+    interpreter.state().registers[6] = 0xFFFF8001u;
+    const auto halfword_memory = interpreter.run(2);
+    const auto halfword_memory_state = interpreter.state();
+
+    run_at(0x58);
+    interpreter.state().registers[1] = data_address;
+    const auto invalid_offset_register = interpreter.run(1);
+    run_at(0x5C);
+    interpreter.state().registers[1] = 0xFFFFFFFCu;
+    interpreter.state().registers[2] = 1;
+    const auto offset_overflow = interpreter.run(1);
+    run_at(0x60);
+    const auto reserved_memory_suffix = interpreter.run(1);
+    run_at(0x64);
+    interpreter.state().registers[1] = test_address + memory_size;
+    const auto unmapped_memory = interpreter.run(1);
+
+    const auto stopped_at_limit = [](const ArmExecutionResult &result) {
+        return result.reason == ArmStopReason::instruction_limit;
+    };
+    const bool alu_valid = stopped_at_limit(captured) && captured_state.registers[2] == 60 && captured_state.cpsr == 0xF0000000u && stopped_at_limit(logical) && logical_state.registers[3] == 4 && (logical_state.cpsr & flag_carry) != 0 && (logical_state.cpsr & flag_overflow) != 0 && stopped_at_limit(rotate) && rotate_state.registers[4] == 0x01800000u && (rotate_state.cpsr & flag_carry) == 0 && stopped_at_limit(invert) && invert_state.registers[5] == 0xFFFFFFFFu && (invert_state.cpsr & flag_negative) != 0 && (invert_state.cpsr & flag_carry) != 0 && (invert_state.cpsr & flag_overflow) != 0 && stopped_at_limit(test) && (test_state.cpsr & flag_zero) == 0 && stopped_at_limit(add) && add_state.registers[6] == 0 && (add_state.cpsr & flag_zero) != 0 && (add_state.cpsr & flag_carry) != 0 && stopped_at_limit(subtract_carry) && subtract_carry_state.registers[7] == 0xFFFFFFFFu && (subtract_carry_state.cpsr & flag_negative) != 0 && (subtract_carry_state.cpsr & flag_carry) == 0 && stopped_at_limit(reverse_subtract) && reverse_subtract_state.registers[8] == 4 && (reverse_subtract_state.cpsr & flag_carry) != 0 && stopped_at_limit(rotate_extend) && rotate_extend_state.registers[4] == 0x80000001u && (rotate_extend_state.cpsr & flag_carry) == 0 && unsupported_pack.reason == ArmStopReason::unsupported_instruction && invalid_shift_register.reason == ArmStopReason::unsupported_instruction;
+    const bool memory_valid = stopped_at_limit(word_memory) && word_memory_state.registers[3] == 0xAABBCCDDu && stopped_at_limit(byte_memory) && byte_memory_state.registers[5] == 0xFFFFFF80u && stopped_at_limit(halfword_memory) && halfword_memory_state.registers[7] == 0xFFFF8001u && invalid_offset_register.reason == ArmStopReason::unsupported_instruction && offset_overflow.reason == ArmStopReason::memory_fault && reserved_memory_suffix.reason == ArmStopReason::unsupported_instruction && unmapped_memory.reason == ArmStopReason::memory_fault;
+
+    std::string unmap_error;
+    const bool unmapped = memory.unmap_all_segments(unmap_error);
+    if (!alu_valid || !memory_valid) {
+        error = "The Thumb-2 register-family diagnostic produced unexpected CPU, flags, memory, or fault state: reserved=" + std::to_string(static_cast<int>(reserved_memory_suffix.reason)) + ", unmapped=" + std::to_string(static_cast<int>(unmapped_memory.reason)) + " (" + unmapped_memory.detail + ").";
+        return false;
+    }
+    if (!unmapped) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
 void append_storage_error(std::string message) {
     if (!host_storage.error.empty()) {
         host_storage.error += " | ";
@@ -1106,7 +1290,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     ImportBindingResult binding_test;
     const bool loader_pipeline_passed = segment_mapping_passed && run_loader_pipeline_test(*guest_memory, binding_test, thread_test, memory_error);
     std::string execution_error;
-    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_inline_hle_nid_diagnostic_test(*guest_memory, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error) && run_thumb2_runtime_family_test(*guest_memory, execution_error);
+    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_inline_hle_nid_diagnostic_test(*guest_memory, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error) && run_thumb2_runtime_family_test(*guest_memory, execution_error) && run_thumb2_register_family_test(*guest_memory, execution_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;

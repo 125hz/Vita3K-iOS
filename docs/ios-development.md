@@ -190,6 +190,10 @@ Run the one-shot Amagami attempt after preparing the installed patch. NID `0xBFE
 
 Milestone 24 intentionally batches full instruction families. The interpreter implements Thumb-2 modified-immediate logical/arithmetic/test operations with architectural immediate expansion and flags, plus wide signed/unsigned byte, halfword, and word immediate loads/stores with checked offset and writeback modes. This advances the accepted Amagami boundary past `F05F 0B00` and the following `F8DD A000` in one build. The CI artifact `milestone24-thumb2-runtime-families.zip` executes both after the stateful libc call and returns after nine instructions.
 
+## Milestone 25 broad register-operated runtime families
+
+Milestone 25 implements Thumb-2 shifted-register scalar ALU/test operations and the move/immediate-shift aliases, including `RRX`, together with scaled register-offset signed/unsigned single-memory operations. The accepted Milestone 24 boundary was `EBAA 0202` (`SUB.W r2, r10, r2`) after 28 instructions and one HLE call. The CI artifact `milestone25-thumb2-register-families.zip` executes that exact subtraction after the prior runtime sequence and returns after ten instructions. Device diagnostics now include sixteen look-ahead halfwords.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

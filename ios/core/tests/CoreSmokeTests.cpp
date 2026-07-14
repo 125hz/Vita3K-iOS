@@ -160,6 +160,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m22_install_zip_fixture;
     std::filesystem::path emitted_m23_install_zip_fixture;
     std::filesystem::path emitted_m24_install_zip_fixture;
+    std::filesystem::path emitted_m25_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -189,6 +190,8 @@ int main(int argc, char **argv) {
             emitted_m23_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m24-install-zip-fixture" && index + 1 < argc) {
             emitted_m24_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m25-install-zip-fixture" && index + 1 < argc) {
+            emitted_m25_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -205,6 +208,7 @@ int main(int argc, char **argv) {
                          "[--emit-m22-install-zip-fixture <path>] "
                          "[--emit-m23-install-zip-fixture <path>] "
                          "[--emit-m24-install-zip-fixture <path>] "
+                         "[--emit-m25-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -433,6 +437,27 @@ int main(int argc, char **argv) {
     const auto runtime_family_self = make_plain_self(runtime_family_elf);
     const auto m24_install_zip = vita3k::ios::make_synthetic_install_zip(
         runtime_family_self, runtime_family_self);
+    auto register_family_elf = libc_dso_runtime_elf;
+    const std::array<std::uint16_t, 11> register_family_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4805u, // LDR r0, [pc, #20] -> relocated synthetic DSO handle
+        0x4B05u, // LDR r3, [pc, #20] -> relocated libc import stub
+        0x4798u, // BLX r3
+        0xF05Fu, // MOVS.W r11, #0
+        0x0B00u,
+        0xF8DDu, // LDR.W r10, [sp]
+        0xA000u,
+        0xEBAAu, // SUB.W r2, r10, r2 (captured Amagami instruction)
+        0x0202u,
+        0xBD10u // POP {r4, pc} -> zero-link return sentinel
+    };
+    std::memcpy(register_family_elf.data() + 244, register_family_program.data(),
+        sizeof(register_family_program));
+    write_value(register_family_elf, 268, synthetic_dso_handle);
+    write_value(register_family_elf, 272, static_cast<std::uint32_t>(0x81000050));
+    const auto register_family_self = make_plain_self(register_family_elf);
+    const auto m25_install_zip = vita3k::ios::make_synthetic_install_zip(
+        register_family_self, register_family_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -464,6 +489,10 @@ int main(int argc, char **argv) {
     if (m24_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 24 Thumb-2 runtime-family fixture.\n";
         return 73;
+    }
+    if (m25_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 25 Thumb-2 register-family fixture.\n";
+        return 78;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -579,6 +608,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 24 Thumb-2 runtime-family fixture.\n";
             return 74;
+        }
+    }
+    if (!emitted_m25_install_zip_fixture.empty()) {
+        if (!emitted_m25_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m25_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m25_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m25_install_zip.data()),
+            static_cast<std::streamsize>(m25_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 25 Thumb-2 register-family fixture.\n";
+            return 79;
         }
     }
 
@@ -900,6 +942,27 @@ int main(int argc, char **argv) {
         return 77;
     }
 
+    const auto m25_archive_path = test_root / "milestone25-thumb2-register-families.zip";
+    std::ofstream m25_archive_stream(m25_archive_path, std::ios::binary);
+    m25_archive_stream.write(reinterpret_cast<const char *>(m25_install_zip.data()),
+        static_cast<std::streamsize>(m25_install_zip.size()));
+    m25_archive_stream.close();
+    const auto m25_install = vita3k::ios::install_game_archive(m25_archive_path);
+    if (!m25_install.success || m25_install.file_count != 6) {
+        std::cerr << m25_install.detail << '\n';
+        return 80;
+    }
+    const auto register_family_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!register_family_prepared.selected || !register_family_prepared.loaded || !register_family_prepared.module_start_from_export || register_family_prepared.module_start_address != 0x81000061) {
+        std::cerr << register_family_prepared.detail << '\n';
+        return 81;
+    }
+    const auto register_family_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!register_family_boot.started || register_family_boot.exited || !register_family_boot.returned || register_family_boot.instruction_count != 10 || register_family_boot.hle_dispatch_count != 1 || register_family_boot.last_hle_nid != cxa_set_dso_handle_main_nid || register_family_boot.libc_dso_handle_main != synthetic_dso_handle || register_family_boot.return_value != 0) {
+        std::cerr << register_family_boot.detail << '\n';
+        return 82;
+    }
+
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
@@ -998,6 +1061,10 @@ int main(int argc, char **argv) {
     if (!emitted_m24_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 24 Thumb-2 runtime-family fixture: "
                   << emitted_m24_install_zip_fixture << '\n';
+    }
+    if (!emitted_m25_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 25 Thumb-2 register-family fixture: "
+                  << emitted_m25_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;
