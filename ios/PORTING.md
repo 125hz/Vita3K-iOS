@@ -48,6 +48,10 @@ Current loader limits are intentional: `ET_SCE_RELEXEC` segments are tried only 
 
 The relocation parser implements upstream formats 0–9 and the common ARM/Thumb codes, but the current deterministic acceptance fixture exercises format 0 (`ABS32`). Other compact formats still require representative legal fixtures before they should be considered device-validated.
 
+## Milestone 23 libc startup boundary
+
+The bounded runtime now implements only Amagami's captured `__cxa_set_dso_handle_main` boundary. It matches upstream Vita3K by saving `r0` as the process-wide libc DSO handle, returns through the normal import trampoline, and continues until the next honest boundary. The CI artifact's `milestone23-libc-dso-runtime.zip` verifies the state mutation, successful NID retention, one HLE dispatch, and clean module return. This is not a general libc implementation or a full game boot loop; the Vion comparison in `ios/VION-ANALYSIS.md` identifies the full scheduler, module, VFS, Unicorn, GXM, and renderer integration still required.
+
 ## Firmware packages
 
 Do not commit firmware PUP files to this public repository or upload them as Actions artifacts. The future iOS installer should select user-owned files locally and write only extracted virtual-filesystem content inside the app sandbox. Upstream `install_pup` currently depends on the packages/crypto layers, OpenSSL, vita-toolchain key handling, FAT/exFAT extraction, miniz, and psvpfsparser; those dependencies are not part of the current iOS core slice. `fontpkg.pup`, `preinstall.pup`, and the system update PUP should therefore remain local until that bounded installer milestone is implemented.

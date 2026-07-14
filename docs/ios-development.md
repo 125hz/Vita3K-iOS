@@ -182,6 +182,10 @@ Ask for one verifiable subsystem at a time and require the Windows build plus th
 
 Good early assignments are dependency inventory, extracting a headless core target, sandbox path mapping, a renderer surface interface, or a deterministic CPU/memory unit-test harness. “Build the whole emulator” is too broad to diagnose when CI fails.
 
+## Milestone 23 runtime boundary
+
+Run the one-shot Amagami attempt after preparing the installed patch. NID `0xBFE02B3A` now invokes the upstream-compatible `__cxa_set_dso_handle_main` handler, stores `r0` in per-run libc state, returns zero through the import ABI, and continues within the same 256-instruction budget. Return the next complete boundary. The CI artifact's `milestone23-libc-dso-runtime.zip` proves one successful HLE dispatch, handle `0x81000200`, and a clean seven-instruction module return.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

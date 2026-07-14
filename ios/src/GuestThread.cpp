@@ -15,6 +15,7 @@ namespace {
 
 constexpr std::uint32_t nid_sce_kernel_get_thread_id = 0x0FB972F9;
 constexpr std::uint32_t nid_sce_kernel_exit_thread = 0x0C8A38E1;
+constexpr std::uint32_t nid_cxa_set_dso_handle_main = 0xBFE02B3A;
 constexpr std::int32_t first_diagnostic_thread_id = 0x10001;
 
 bool contains_nid(std::span<const std::uint32_t> nids, std::uint32_t expected) {
@@ -54,8 +55,13 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         return result;
     }
     const bool imports_exit_thread = contains_nid(imported_nids, nid_sce_kernel_exit_thread);
+    const bool imports_cxa_set_dso_handle_main = contains_nid(imported_nids, nid_cxa_set_dso_handle_main);
     if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" || (imports_exit_thread && std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
+        return result;
+    }
+    if (imports_cxa_set_dso_handle_main && std::string_view(import_name(nid_cxa_set_dso_handle_main)) != "__cxa_set_dso_handle_main") {
+        result.detail = "The upstream Vita NID database did not match the libc runtime binding.";
         return result;
     }
 
@@ -79,9 +85,18 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                 return 0;
             });
     }
-    const auto expected_binding_count = imports_exit_thread ? 2u : 1u;
-    if (!get_id_bound || !exit_bound || dispatcher.binding_count() != expected_binding_count) {
-        result.detail = "The minimal kernel HLE bindings could not be registered.";
+    bool dso_handle_bound = true;
+    if (imports_cxa_set_dso_handle_main) {
+        dso_handle_bound = dispatcher.bind(nid_cxa_set_dso_handle_main,
+            "__cxa_set_dso_handle_main", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                result.libc_dso_handle_main = state.registers[0];
+                return 0;
+            });
+    }
+    const auto expected_binding_count = 1u + static_cast<std::size_t>(imports_exit_thread) + static_cast<std::size_t>(imports_cxa_set_dso_handle_main);
+    if (!get_id_bound || !exit_bound || !dso_handle_bound || dispatcher.binding_count() != expected_binding_count) {
+        result.detail = "The minimal kernel/runtime HLE bindings could not be registered.";
         return result;
     }
 
@@ -119,6 +134,9 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                    << (contains_nid(imported_nids, execution.last_hle_nid) ? "present" : "missing")
                    << ".";
         }
+    }
+    if (result.libc_dso_handle_main != 0) {
+        detail << " Runtime DSO handle=" << nid_hex(result.libc_dso_handle_main) << ".";
     }
     result.detail = detail.str();
     return result;

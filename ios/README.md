@@ -224,3 +224,14 @@ The accepted Milestone 21 Amagami attempt executed ten instructions and reached 
 4. The result should no longer say only NID `0x00000000`; return the real NID, function name, SVC/LR addresses, and all four argument values so the next milestone can implement the correct HLE family.
 
 The Actions artifact includes `milestone22-inline-hle-diagnostic.zip`. Its legal synthetic title deliberately enters an unimplemented import trampoline with `r12=0`; acceptance requires NID `0x210C0046`, name `__sceAppMgrGetAppState`, a matching module-import inventory entry, and the exact captured argument registers after nine instructions and zero dispatched HLE calls.
+
+## Milestone 23 first stateful libc runtime HLE
+
+The accepted Milestone 22 Amagami attempt identified the first real call as `__cxa_set_dso_handle_main` (NID `0xBFE02B3A`) with `r0=0x812C7690`. Upstream Vita3K implements this function by storing the guest DSO handle in kernel state and returning `void`. Milestone 23 adds that exact stateful behavior to the bounded iOS runtime, returns zero through the import ABI, preserves the last successfully dispatched NID, and resumes guest execution instead of stopping at the known call. No other libc behavior is inferred.
+
+1. Install the Milestone 23 IPA and open **Game Library**.
+2. Select `PCSG00291`, keep **Prefer Installed Patch** enabled, and confirm `via lifecycle export`.
+3. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
+4. Share the entire next alert or background diagnostic. A later CPU instruction, memory fault, unbound HLE, module return, or instruction ceiling is expected; the previous `0xBFE02B3A` boundary should now count as one dispatched HLE call and execution should continue past it.
+
+The Actions artifact includes `milestone23-libc-dso-runtime.zip`. Its legal synthetic title imports `__cxa_set_dso_handle_main`, passes handle `0x81000200`, dispatches exactly one HLE call, records the handle, and returns through the module's zero-link sentinel after seven instructions. See `ios/VION-ANALYSIS.md` for the verified Vion architecture comparison and the larger full-core migration path.

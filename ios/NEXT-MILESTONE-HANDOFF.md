@@ -1,11 +1,11 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 22.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 23.
 
 ## Copy-paste prompt
 
 ```text
-Continue the Vita3K iOS port in https://github.com/125hz/Vita3K-iOS on branch ios-port. First read ios/README.md, ios/PORTING.md, docs/ios-development.md, ios/NEXT-MILESTONE-HANDOFF.md, .github/workflows/ios.yml, and the latest git log/diff. Inspect the exact physical-device screenshot or diagnostic I provide from the previous milestone.
+Continue the Vita3K iOS port in https://github.com/125hz/Vita3K-iOS on branch ios-port. First read ios/README.md, ios/PORTING.md, ios/VION-ANALYSIS.md, docs/ios-development.md, ios/NEXT-MILESTONE-HANDOFF.md, .github/workflows/ios.yml, and the latest git log/diff. Inspect the exact physical-device screenshot or diagnostic I provide from the previous milestone.
 
 Implement exactly one bounded next instruction-family or subsystem milestone anchored by the real unsupported CPU instruction, memory fault, or unimplemented HLE NID. Batch coherent compiler instruction families when deterministic CPU-state tests can validate them; never skip an unknown instruction or fabricate execution state. Do not claim the game is playable. Preserve desktop and Android behavior. Keep platform code behind narrow interfaces. Add or update deterministic legal synthetic regression coverage runnable on Windows. Run the portable core build and tests locally.
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 22 boundary
+## Known Milestone 23 boundary
 
-Milestone 21 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. Preparation still reported `module_start 0x810176B9 via lifecycle export`; the bounded attempt executed ten instructions and made zero HLE calls before reporting `No diagnostic HLE binding exists for NID 0x00000000.`
+Milestone 22 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. Preparation still reported `module_start 0x810176B9 via lifecycle export`; the bounded attempt executed ten instructions and made zero HLE calls before reaching `__cxa_set_dso_handle_main` (NID `0xBFE02B3A`) at SVC `0x8109BD58`. The captured argument was `r0=0x812C7690`, LR was `0x8101759B`, and the NID was present in the module import inventory.
 
-The rebound ARM import trampoline is `SVC; MOV pc,lr; inline NID`. The interpreter previously used the inline NID only if a diagnostic handler already existed and otherwise fell back to `r12`, which remained zero in this real call. Milestone 22 validates the canonical trampoline regardless of handler availability, reports its real inline NID and upstream name, captures SVC/LR addresses plus `r0`–`r3` and `r12`, checks the module import inventory, and still stops without inventing unimplemented HLE behavior. Install the Milestone 22 artifact, prepare `PCSG00291`, run the one-shot attempt, and use the complete HLE context to implement the correct coherent HLE subsystem next.
+Milestone 23 matches upstream Vita3K's exact implementation: store the guest DSO pointer in per-run libc state and return normally. Successful HLE identity is retained across later instructions. Install the Milestone 23 artifact, prepare `PCSG00291`, and run the one-shot attempt once. It should dispatch NID `0xBFE02B3A` and continue within the same 256-instruction budget. Use the complete next CPU, memory, HLE, return, or budget boundary to choose the next coherent subsystem; never invent adjacent libc results. The source-level Vion comparison and full-core migration order are in `ios/VION-ANALYSIS.md`.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m22-install-zip-fixture artifacts/milestone22-inline-hle-diagnostic.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m23-install-zip-fixture artifacts/milestone23-libc-dso-runtime.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 

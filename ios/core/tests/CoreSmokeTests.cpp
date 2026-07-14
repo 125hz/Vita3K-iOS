@@ -158,6 +158,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m20_install_zip_fixture;
     std::filesystem::path emitted_m21_install_zip_fixture;
     std::filesystem::path emitted_m22_install_zip_fixture;
+    std::filesystem::path emitted_m23_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -183,6 +184,8 @@ int main(int argc, char **argv) {
             emitted_m21_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m22-install-zip-fixture" && index + 1 < argc) {
             emitted_m22_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m23-install-zip-fixture" && index + 1 < argc) {
+            emitted_m23_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -197,6 +200,7 @@ int main(int argc, char **argv) {
                          "[--emit-m20-install-zip-fixture <path>] "
                          "[--emit-m21-install-zip-fixture <path>] "
                          "[--emit-m22-install-zip-fixture <path>] "
+                         "[--emit-m23-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -390,6 +394,24 @@ int main(int argc, char **argv) {
     const auto inline_hle_self = make_plain_self(inline_hle_elf);
     const auto m22_install_zip = vita3k::ios::make_synthetic_install_zip(
         inline_hle_self, inline_hle_self);
+    auto libc_dso_runtime_elf = lifecycle_elf;
+    constexpr std::uint32_t cxa_set_dso_handle_main_nid = 0xBFE02B3Au;
+    constexpr std::uint32_t synthetic_dso_handle = 0x81000200u;
+    const std::array<std::uint16_t, 5> libc_dso_runtime_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4804u, // LDR r0, [pc, #16] -> synthetic DSO handle
+        0x4B04u, // LDR r3, [pc, #16] -> libc import stub
+        0x4798u, // BLX r3
+        0xBD10u // POP {r4, pc} -> zero-link return sentinel
+    };
+    std::memcpy(libc_dso_runtime_elf.data() + 244, libc_dso_runtime_program.data(),
+        sizeof(libc_dso_runtime_program));
+    write_value(libc_dso_runtime_elf, 264, synthetic_dso_handle);
+    write_value(libc_dso_runtime_elf, 268, static_cast<std::uint32_t>(0x81000050));
+    write_value(libc_dso_runtime_elf, 372, cxa_set_dso_handle_main_nid);
+    const auto libc_dso_runtime_self = make_plain_self(libc_dso_runtime_elf);
+    const auto m23_install_zip = vita3k::ios::make_synthetic_install_zip(
+        libc_dso_runtime_self, libc_dso_runtime_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -413,6 +435,10 @@ int main(int argc, char **argv) {
     if (m22_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 22 inline HLE diagnostic fixture.\n";
         return 62;
+    }
+    if (m23_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 23 libc runtime fixture.\n";
+        return 68;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -502,6 +528,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 22 inline HLE diagnostic fixture.\n";
             return 63;
+        }
+    }
+    if (!emitted_m23_install_zip_fixture.empty()) {
+        if (!emitted_m23_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m23_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m23_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m23_install_zip.data()),
+            static_cast<std::streamsize>(m23_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 23 libc runtime fixture.\n";
+            return 69;
         }
     }
 
@@ -781,6 +820,27 @@ int main(int argc, char **argv) {
         return 67;
     }
 
+    const auto m23_archive_path = test_root / "milestone23-libc-dso-runtime.zip";
+    std::ofstream m23_archive_stream(m23_archive_path, std::ios::binary);
+    m23_archive_stream.write(reinterpret_cast<const char *>(m23_install_zip.data()),
+        static_cast<std::streamsize>(m23_install_zip.size()));
+    m23_archive_stream.close();
+    const auto m23_install = vita3k::ios::install_game_archive(m23_archive_path);
+    if (!m23_install.success || m23_install.file_count != 6) {
+        std::cerr << m23_install.detail << '\n';
+        return 70;
+    }
+    const auto libc_dso_runtime_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!libc_dso_runtime_prepared.selected || !libc_dso_runtime_prepared.loaded || !libc_dso_runtime_prepared.module_start_from_export || libc_dso_runtime_prepared.module_start_address != 0x81000061) {
+        std::cerr << libc_dso_runtime_prepared.detail << '\n';
+        return 71;
+    }
+    const auto libc_dso_runtime_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!libc_dso_runtime_boot.started || libc_dso_runtime_boot.exited || !libc_dso_runtime_boot.returned || libc_dso_runtime_boot.instruction_count != 7 || libc_dso_runtime_boot.hle_dispatch_count != 1 || libc_dso_runtime_boot.last_hle_nid != cxa_set_dso_handle_main_nid || libc_dso_runtime_boot.libc_dso_handle_main != synthetic_dso_handle || libc_dso_runtime_boot.return_value != 0 || libc_dso_runtime_boot.detail.find("Runtime DSO handle=0x81000200") == std::string::npos) {
+        std::cerr << libc_dso_runtime_boot.detail << '\n';
+        return 72;
+    }
+
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
@@ -871,6 +931,10 @@ int main(int argc, char **argv) {
     if (!emitted_m22_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 22 inline HLE diagnostic fixture: "
                   << emitted_m22_install_zip_fixture << '\n';
+    }
+    if (!emitted_m23_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 23 libc runtime fixture: "
+                  << emitted_m23_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

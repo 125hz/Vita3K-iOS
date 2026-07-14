@@ -21,6 +21,7 @@ struct GuestThreadRunResult {
     std::size_t hle_dispatch_count = 0;
     std::uint32_t last_hle_nid = 0;
     std::uint32_t last_guest_pc = 0;
+    std::uint32_t libc_dso_handle_main = 0;
     std::uint32_t return_value = 0;
     std::string detail;
 };

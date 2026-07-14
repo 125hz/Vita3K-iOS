@@ -263,8 +263,14 @@ ArmExecutionResult ArmInterpreter::run(std::size_t instruction_limit) {
         };
     }
 
+    std::uint32_t last_hle_nid = 0;
     for (std::size_t index = 0; index < instruction_limit; ++index) {
         auto result = step();
+        if (result.last_hle_nid != 0) {
+            last_hle_nid = result.last_hle_nid;
+        } else {
+            result.last_hle_nid = last_hle_nid;
+        }
         if (result.reason != ArmStopReason::instruction_limit) {
             return result;
         }
@@ -273,6 +279,7 @@ ArmExecutionResult ArmInterpreter::run(std::size_t instruction_limit) {
         .reason = ArmStopReason::instruction_limit,
         .instructions_executed = state_.instruction_count,
         .final_pc = state_.registers[register_pc],
+        .last_hle_nid = last_hle_nid,
         .detail = "The ARM instruction budget was exhausted."
     };
 }
