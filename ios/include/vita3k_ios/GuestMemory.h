@@ -34,6 +34,9 @@ public:
     bool read(std::uint32_t guest_address,
         std::span<std::uint8_t> output,
         std::string &error) const;
+    bool write(std::uint32_t guest_address,
+        std::span<const std::uint8_t> input,
+        std::string &error);
     bool unmap_segment(std::uint32_t guest_address,
         std::uint32_t memory_size,
         std::string &error);

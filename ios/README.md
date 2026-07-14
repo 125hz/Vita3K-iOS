@@ -20,6 +20,8 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - batch mapping that merges permissions when adjacent Vita segments share a 16 KiB iPhone host page
 - loading and full byte readback of the first valid fixed-address plain Vita ELF in `Documents/Vita3K/imports`
 - extraction of the Vita module name/NID and inventory of `PT_SCE_RELA` relocation payloads
+- bounded application of Vita relocation formats 0–9 and common ARM/Thumb relocation codes, with verified writes to protected guest pages
+- bounded parsing of long/short import records, export records, and their function/variable/TLS NID tables
 - a narrow C++ `CoreBridge` seam for additional core integration
 - no signing credentials or provisioning profiles in CI
 
@@ -43,6 +45,6 @@ cmake --build build-ios --config Release --target Vita3KiOS -- \
 
 This command requires macOS and Xcode; the GitHub Actions workflow runs it remotely for Windows contributors.
 
-`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space and map a fixed-address plain `ET_SCE_EXEC` file, including shared host pages, then validate its module-info header. SELF decoding, relocatable ELF rebasing, applying relocations, import/export tables, the CPU execution backend, renderer, audio, and input remain tracked in `PORTING.md`.
+`VITA3K_IOS_LINK_CORE=ON` is now required. The port can reserve guest address space, map a fixed-address plain `ET_SCE_EXEC` file, apply checked relocations, validate its module-info header, and inventory import/export NIDs. SELF decoding, relocatable ELF rebasing, HLE import binding, the CPU execution backend, renderer, audio, and input remain tracked in `PORTING.md`.
 
-Milestone 4 inventories `PT_SCE_RELA` payloads but deliberately does not apply them. A mapped result therefore proves safe loading and metadata extraction, not that the executable can run. Only the first valid fixed-address plain ELF is retained in guest memory; relocatable ELF and SELF containers remain probe-only.
+Milestone 5 applies recognized `PT_SCE_RELA` entries and rejects malformed, out-of-range, or unsupported records. A mapped result proves safe loading, relocation, and metadata parsing, but imported NIDs are not bound to HLE functions and guest code is not executed yet. Only the first valid fixed-address plain ELF is retained in guest memory; relocatable ELF and SELF containers remain probe-only.

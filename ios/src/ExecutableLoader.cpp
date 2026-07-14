@@ -2,6 +2,8 @@
 
 #include <vita3k_ios/ExecutableProbe.h>
 #include <vita3k_ios/GuestMemory.h>
+#include <vita3k_ios/ModuleTableParser.h>
+#include <vita3k_ios/RelocationEngine.h>
 
 #include <algorithm>
 #include <array>
@@ -138,6 +140,26 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
         }
     }
 
+    for (const auto &relocation_segment : probe.relocation_segments) {
+        std::vector<std::uint8_t> relocation_bytes(relocation_segment.file_size);
+        if (!read_file_range(stream, relocation_segment.file_offset, relocation_bytes)) {
+            std::string unmap_error;
+            (void)memory.unmap_all_segments(unmap_error);
+            result.detail = "A validated relocation segment could not be read from disk.";
+            return result;
+        }
+        const auto relocation = apply_relocations(relocation_bytes, probe.load_segments, memory);
+        if (!relocation.success) {
+            std::string unmap_error;
+            (void)memory.unmap_all_segments(unmap_error);
+            result.detail = "Relocation application failed: " + relocation.detail;
+            return result;
+        }
+        result.relocation_entry_count += relocation.entry_count;
+        result.relocation_patch_count += relocation.patched_value_count;
+    }
+    result.relocations_applied = true;
+
     const auto module_segment = std::find_if(probe.load_segments.begin(), probe.load_segments.end(),
         [&probe](const LoadSegmentPlan &segment) {
             return segment.program_index == probe.module_info_segment_index;
@@ -173,6 +195,20 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
     std::memcpy(&result.module_nid, module_info.data() + module_nid_offset,
         sizeof(result.module_nid));
     result.module_info_valid = true;
+
+    const auto module_tables = parse_module_tables(memory,
+        module_segment->virtual_address, module_segment->memory_size, module_info);
+    if (!module_tables.success) {
+        std::string unmap_error;
+        (void)memory.unmap_all_segments(unmap_error);
+        result.detail = "Module-table parsing failed: " + module_tables.detail;
+        return result;
+    }
+    result.module_tables_parsed = true;
+    result.export_library_count = module_tables.export_library_count;
+    result.import_library_count = module_tables.import_library_count;
+    result.exported_nid_count = module_tables.exported_nids.size();
+    result.imported_nid_count = module_tables.imported_nids.size();
     result.loaded = true;
 
     std::ostringstream detail;
@@ -181,11 +217,12 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
            << " guest bytes); readback passed; module " << result.module_name
            << " NID 0x" << std::hex << std::uppercase << std::setw(8)
            << std::setfill('0') << result.module_nid << std::dec << "; "
-           << result.relocation_segment_count << " relocation segments inventoried";
-    if (result.relocation_segment_count != 0) {
-        detail << " but not applied";
-    }
-    detail << ".";
+           << result.relocation_entry_count << " relocation entries/"
+           << result.relocation_patch_count << " verified patches applied; "
+           << result.export_library_count << " export libraries/"
+           << result.exported_nid_count << " NIDs; "
+           << result.import_library_count << " import libraries/"
+           << result.imported_nid_count << " NIDs.";
     result.detail = detail.str();
     return result;
 }

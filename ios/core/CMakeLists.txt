@@ -10,6 +10,8 @@ add_library(vita3k_ios_core STATIC
     ../src/ExecutableProbe.cpp
     ../src/GuestMemory.cpp
     ../src/HostFilesystem.cpp
+    ../src/ModuleTableParser.cpp
+    ../src/RelocationEngine.cpp
     ../../vita3k/nids/src/nids.cpp
     ../../vita3k/util/src/arm.cpp
 )

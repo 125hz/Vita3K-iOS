@@ -10,9 +10,9 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 | Frontend/lifecycle | Desktop `main.cpp`, Qt windows, SDL desktop events | Drive initialization, pause, resume, and shutdown from UIKit scenes/controllers | App backgrounds and resumes without losing emulator state |
 | Renderer | Apple desktop path uses Vulkan through MoltenVK and a Cocoa-backed `CAMetalLayer` | Choose and package an iOS-compatible MoltenVK build or create a native Metal backend; accept an `MTKView`/`CAMetalLayer` supplied by UIKit | Clear and present one emulator-owned frame on device |
 | CPU/JIT | Dynarmic and memory helpers are built for current desktop/Android hosts | Cross-compile Dynarmic for `arm64-apple-ios`; isolate executable-memory allocation, protection transitions, cache invalidation, and exception handling | Execute a deterministic guest-code unit test on device |
-| Guest memory | Core reserves a contiguous 4 GiB region and uses POSIX signals/mach context details on Apple | **Started:** portable 4 GiB reservation plus batch segment mapping, shared-page permission merging, BSS zero-fill, readback, and unmapping; add iOS fault handling | Native tests pass; physical-device Milestone 4 diagnostic pending |
+| Guest memory | Core reserves a contiguous 4 GiB region and uses POSIX signals/mach context details on Apple | **Started:** portable 4 GiB reservation, batch mapping, shared-page permission merging, and temporary write/restore transitions for verified relocations; add iOS fault handling | Native tests pass; physical-device Milestone 5 diagnostic pending |
 | Dependencies | Boost, FFmpeg, SDL, Qt, Vulkan/MoltenVK and other submodules follow desktop/Android recipes | Inventory each dependency, disable unused ones, and build required libraries for `iphoneos arm64` | Reproducible dependency build with no simulator/macOS slices |
-| Filesystem | Desktop paths, dialogs, and writable locations | **Started:** sandbox layout, import enumeration, bounded probing, and fixed-address plain ELF loading exist; add document picker, SELF extraction, and Vita VFS mapping | Synthetic on-disk Vita ELF maps, verifies module info, and passes native smoke tests; physical-device import pending |
+| Filesystem | Desktop paths, dialogs, and writable locations | **Started:** sandbox layout, import enumeration, bounded probing, fixed-address plain ELF loading, relocations, and module NID-table parsing exist; add document picker, SELF extraction, and Vita VFS mapping | Synthetic on-disk Vita ELF maps, relocates, parses one import/export table, and passes native tests; physical-device import pending |
 | Audio/input | Desktop SDL/Qt device and event assumptions | Add AVAudioEngine/SDL-iOS audio path, GameController, and touch input adapters | Controller and audio loopback diagnostics pass |
 | Diagnostics | Desktop console/log files and attached debugger | Keep unified log plus rotating/exportable file diagnostics and crash breadcrumbs | A device run produces a useful diagnostic bundle |
 
@@ -22,12 +22,18 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 2. **Done for plain ELF planning:** bounded SELF/ELF validation now emits checked `PT_LOAD` plans; SELF segment payload decoding remains pending.
 3. **Done for shared host pages:** batch guest-memory mapping copies file data, zero-fills BSS, merges permissions for segments sharing a 16 KiB host page, reads back, and unmaps test ranges.
 4. **Done for fixed-address plain ELF loading:** load the first valid `ET_SCE_EXEC` import, verify every copied byte, parse its 92-byte module-info header, and inventory relocation payloads.
-5. Apply `PT_SCE_RELA` relocations, parse module import/export tables, and add legal homebrew loader fixtures before CPU execution.
+5. **Done for the dependency-free loader:** apply bounded `PT_SCE_RELA` formats 0–9, verify each protected-memory patch, and parse long/short import plus export NID tables.
 6. Connect the renderer to the existing `MTKView` host.
 7. Add sandboxed storage, controller, touch, and audio adapters.
 8. Only after interpreter-mode boot is stable, integrate and validate the ARM64 JIT platform layer.
 
-Current loader limits are intentional: `ET_SCE_RELEXEC` requires rebasing, SELF segments may require container-specific offset/decompression handling, and relocation payloads are inventoried but not applied. A file shown as `MAPPED` is structurally loaded for diagnostics; it is not yet executable.
+Current loader limits are intentional: `ET_SCE_RELEXEC` requires rebasing and SELF segments may require container-specific offset/decompression handling. Imported NIDs are inventoried but not yet bound to Vita3K HLE handlers. A file shown as `MAPPED` is structurally loaded and relocated for diagnostics; it is not yet executable.
+
+The relocation parser implements upstream formats 0–9 and the common ARM/Thumb codes, but the current deterministic acceptance fixture exercises format 0 (`ABS32`). Other compact formats still require representative legal fixtures before they should be considered device-validated.
+
+## Firmware packages
+
+Do not commit firmware PUP files to this public repository or upload them as Actions artifacts. The future iOS installer should select user-owned files locally and write only extracted virtual-filesystem content inside the app sandbox. Upstream `install_pup` currently depends on the packages/crypto layers, OpenSSL, vita-toolchain key handling, FAT/exFAT extraction, miniz, and psvpfsparser; those dependencies are not part of the current iOS core slice. `fontpkg.pup`, `preinstall.pup`, and the system update PUP should therefore remain local until that bounded installer milestone is implemented.
 
 Keep platform checks narrow. Prefer interfaces such as `HostFilesystem`, `HostDisplay`, `HostAudio`, and `JitMemory` over broad `#ifdef __APPLE__` blocks: on current upstream, `__APPLE__` often means macOS and is not sufficient to identify UIKit/iOS behavior.
 

@@ -3,12 +3,15 @@
 #include <vita3k_ios/ExecutableProbe.h>
 #include <vita3k_ios/GuestMemory.h>
 #include <vita3k_ios/HostFilesystem.h>
+#include <vita3k_ios/ModuleTableParser.h>
+#include <vita3k_ios/RelocationEngine.h>
 
 #include <nids/functions.h>
 #include <util/arm.h>
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -35,6 +38,11 @@ bool run_upstream_self_tests() {
     const bool nid_database_ok = std::string_view(import_name(0x210C0046u)) == "__sceAppMgrGetAppState";
     const bool unknown_nid_ok = std::string_view(import_name(0xFFFFFFFFu)) == "UNRECOGNISED";
     return arm_encoder_ok && thumb_encoder_ok && nid_database_ok && unknown_nid_ok;
+}
+
+template <typename T, std::size_t Size>
+void write_value(std::array<std::uint8_t, Size> &bytes, std::size_t offset, T value) {
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
 }
 
 bool run_segment_mapping_test(GuestMemory &memory, std::string &error) {
@@ -101,6 +109,97 @@ bool run_segment_mapping_test(GuestMemory &memory, std::string &error) {
     return true;
 }
 
+bool run_loader_pipeline_test(GuestMemory &memory, std::string &error) {
+    constexpr std::uint32_t test_address = 0x20000;
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < 0x200 || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the loader pipeline diagnostic.";
+        return false;
+    }
+    const auto memory_size = static_cast<std::uint32_t>(memory_size_64);
+
+    std::array<std::uint8_t, 0x100> payload{};
+    write_value(payload, 2, static_cast<std::uint16_t>(0x0101));
+    constexpr char module_name[] = "ios-loader-selftest";
+    std::memcpy(payload.data() + 4, module_name, sizeof(module_name) - 1);
+    write_value(payload, 0x24, static_cast<std::uint32_t>(0x80));
+    write_value(payload, 0x28, static_cast<std::uint32_t>(0xA0));
+    write_value(payload, 0x2C, static_cast<std::uint32_t>(0xA0));
+    write_value(payload, 0x30, static_cast<std::uint32_t>(0xD4));
+    write_value(payload, 0x34, static_cast<std::uint32_t>(0x51F7A4D2));
+
+    write_value(payload, 0x80, static_cast<std::uint16_t>(0x20));
+    write_value(payload, 0x82, static_cast<std::uint16_t>(1));
+    write_value(payload, 0x86, static_cast<std::uint16_t>(1));
+    write_value(payload, 0x90, static_cast<std::uint32_t>(0xAABBCCDD));
+    write_value(payload, 0x98, test_address + static_cast<std::uint32_t>(0xD4));
+    write_value(payload, 0x9C, test_address + static_cast<std::uint32_t>(0xD8));
+
+    write_value(payload, 0xA0, static_cast<std::uint16_t>(0x34));
+    write_value(payload, 0xA2, static_cast<std::uint16_t>(1));
+    write_value(payload, 0xA6, static_cast<std::uint16_t>(1));
+    write_value(payload, 0xB0, static_cast<std::uint32_t>(0x11223344));
+    write_value(payload, 0xBC, test_address + static_cast<std::uint32_t>(0xDC));
+    write_value(payload, 0xC0, test_address + static_cast<std::uint32_t>(0xE0));
+    write_value(payload, 0xD4, static_cast<std::uint32_t>(0x935CD196));
+    write_value(payload, 0xD8, test_address + static_cast<std::uint32_t>(0x40));
+    write_value(payload, 0xDC, static_cast<std::uint32_t>(0x210C0046));
+    write_value(payload, 0xE0, test_address + static_cast<std::uint32_t>(0x44));
+
+    constexpr std::uint32_t read_execute_flags = 5;
+    if (!memory.map_segment(test_address, payload, memory_size, read_execute_flags, error)) {
+        return false;
+    }
+
+    const std::array segment_plans{
+        LoadSegmentPlan{
+            .program_index = 0,
+            .file_offset = 0,
+            .virtual_address = test_address,
+            .file_size = static_cast<std::uint32_t>(payload.size()),
+            .memory_size = memory_size,
+            .flags = read_execute_flags
+        }
+    };
+    std::array<std::uint8_t, 12> relocation{};
+    write_value(relocation, 0, static_cast<std::uint32_t>(0x00000200));
+    write_value(relocation, 4, static_cast<std::uint32_t>(0x1234));
+    write_value(relocation, 8, static_cast<std::uint32_t>(0xF0));
+    const auto applied = apply_relocations(relocation, segment_plans, memory);
+    const auto tables = parse_module_tables(memory, test_address, memory_size,
+        std::span(payload).first(0x5C));
+
+    std::array<std::uint8_t, 4> patched_bytes{};
+    std::uint32_t patched_value = 0;
+    const bool patch_read = memory.read(test_address + 0xF0, patched_bytes, error);
+    if (patch_read) {
+        std::memcpy(&patched_value, patched_bytes.data(), sizeof(patched_value));
+    }
+
+    std::string unmap_error;
+    const bool unmapped = memory.unmap_all_segments(unmap_error);
+    if (!applied.success) {
+        error = applied.detail;
+        return false;
+    }
+    if (!tables.success) {
+        error = tables.detail;
+        return false;
+    }
+    if (!patch_read || patched_value != test_address + 0x1234 ||
+        applied.entry_count != 1 || applied.patched_value_count != 1 ||
+        tables.export_library_count != 1 || tables.import_library_count != 1 ||
+        tables.exported_nids.size() != 1 || tables.imported_nids.size() != 1) {
+        error = "The relocation/module-table diagnostic produced unexpected results.";
+        return false;
+    }
+    if (!unmapped) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
 void append_storage_error(std::string message) {
     if (!host_storage.error.empty()) {
         host_storage.error += " | ";
@@ -127,7 +226,7 @@ void update_status_from_storage() {
         const auto size = entry.file_size(error);
         const auto probe = probe_artifact(entry.path());
         PlainElfLoadResult load;
-        if (loaded_filename.empty() && guest_memory && core_status.segment_mapping_ready &&
+        if (loaded_filename.empty() && guest_memory && core_status.loader_pipeline_ready &&
             probe.structurally_valid && probe.kind == "Vita ELF") {
             load = load_plain_elf(entry.path(), probe, *guest_memory);
             if (load.loaded) {
@@ -148,9 +247,17 @@ void update_status_from_storage() {
             .load_attempted = load.attempted,
             .loaded = load.loaded,
             .module_info_valid = load.module_info_valid,
+            .relocations_applied = load.relocations_applied,
+            .module_tables_parsed = load.module_tables_parsed,
             .module_name = load.module_name,
             .module_nid = load.module_nid,
             .relocation_segment_count = probe.relocation_segments.size(),
+            .relocation_entry_count = load.relocation_entry_count,
+            .relocation_patch_count = load.relocation_patch_count,
+            .export_library_count = load.export_library_count,
+            .import_library_count = load.import_library_count,
+            .exported_nid_count = load.exported_nid_count,
+            .imported_nid_count = load.imported_nid_count,
             .detail = std::move(detail)
         });
     }
@@ -165,6 +272,9 @@ void update_status_from_storage() {
     }
     summary << "\nBatch segment map: " << (core_status.segment_mapping_ready
         ? "passed (shared-page permission merge)"
+        : "FAILED");
+    summary << "\nRelocation/tables: " << (core_status.loader_pipeline_ready
+        ? "passed (verified patch + 1 export/1 import)"
         : "FAILED");
     summary << "\nStorage: " << (core_status.storage_ready ? "ready" : "FAILED") << "\n"
             << "Import candidates: " << core_status.imported_artifacts.size() << "\n"
@@ -182,7 +292,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: apply relocations and parse import/export tables, then connect a CPU interpreter. Rendering and execution are not active yet.";
+    summary << "\n\nNext: connect the ARM interpreter and bind imported NIDs to HLE stubs. Rendering and execution are not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
@@ -201,8 +311,11 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     const bool protection_test_passed = reserved && guest_memory->run_commit_protection_test(memory_error);
     const bool segment_mapping_passed = protection_test_passed &&
         run_segment_mapping_test(*guest_memory, memory_error);
+    const bool loader_pipeline_passed = segment_mapping_passed &&
+        run_loader_pipeline_test(*guest_memory, memory_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
+    core_status.loader_pipeline_ready = loader_pipeline_passed;
     core_status.guest_memory_size = reserved ? guest_memory->size() : 0;
     core_status.host_page_size = reserved ? guest_memory->host_page_size() : 0;
     host_storage = initialize_host_storage(documents_root);

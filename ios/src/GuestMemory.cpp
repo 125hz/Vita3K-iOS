@@ -347,6 +347,95 @@ bool GuestMemory::read(std::uint32_t guest_address,
     return true;
 }
 
+bool GuestMemory::write(std::uint32_t guest_address,
+    std::span<const std::uint8_t> input,
+    std::string &error) {
+    if (input.empty()) {
+        return true;
+    }
+    const auto write_start = static_cast<std::uint64_t>(guest_address);
+    const auto write_end = write_start + input.size();
+    const auto segment = std::find_if(mapped_segment_ranges_.begin(), mapped_segment_ranges_.end(),
+        [write_start, write_end](const MappedSegmentRange &range) {
+            const auto range_start = static_cast<std::uint64_t>(range.guest_start);
+            const auto range_end = range_start + range.memory_size;
+            return write_start >= range_start && write_end <= range_end &&
+                (range.guest_flags & supported_guest_flags) != 0;
+        });
+    if (segment == mapped_segment_ranges_.end()) {
+        error = "The requested guest write is not inside a mapped segment.";
+        return false;
+    }
+
+    const auto set_protection = [this](const MappedPageRange &range, bool writable,
+                                    std::string &protection_error) {
+        auto *pointer = static_cast<std::uint8_t *>(base_) + range.page_start;
+#ifdef _WIN32
+        DWORD protection = PAGE_READWRITE;
+        if (!writable) {
+            protection = (range.guest_flags & guest_flag_write) != 0
+                ? PAGE_READWRITE
+                : ((range.guest_flags & (guest_flag_read | guest_flag_execute)) != 0
+                        ? PAGE_READONLY
+                        : PAGE_NOACCESS);
+        }
+        DWORD previous = 0;
+        if (!VirtualProtect(pointer, static_cast<std::size_t>(range.page_size), protection, &previous)) {
+            protection_error = "Could not change guest page protection: " + host_error_message();
+            return false;
+        }
+#else
+        int protection = PROT_READ | PROT_WRITE;
+        if (!writable) {
+            protection = PROT_NONE;
+            if ((range.guest_flags & guest_flag_write) != 0) {
+                protection = PROT_READ | PROT_WRITE;
+            } else if ((range.guest_flags & (guest_flag_read | guest_flag_execute)) != 0) {
+                protection = PROT_READ;
+            }
+        }
+        if (mprotect(pointer, static_cast<std::size_t>(range.page_size), protection) != 0) {
+            protection_error = "Could not change guest page protection: " + host_error_message();
+            return false;
+        }
+#endif
+        return true;
+    };
+
+    std::vector<const MappedPageRange *> writable_ranges;
+    for (const auto &range : mapped_page_ranges_) {
+        const auto range_end = range.page_start + range.page_size;
+        if (write_start >= range_end || range.page_start >= write_end) {
+            continue;
+        }
+        if (!set_protection(range, true, error)) {
+            for (const auto *changed : writable_ranges) {
+                std::string ignored;
+                (void)set_protection(*changed, false, ignored);
+            }
+            return false;
+        }
+        writable_ranges.push_back(&range);
+    }
+    if (writable_ranges.empty()) {
+        error = "No committed host pages cover the requested guest write.";
+        return false;
+    }
+
+    std::memcpy(static_cast<std::uint8_t *>(base_) + write_start, input.data(), input.size());
+    bool restored = true;
+    for (const auto *range : writable_ranges) {
+        std::string restore_error;
+        if (!set_protection(*range, false, restore_error)) {
+            if (restored) {
+                error = restore_error;
+            }
+            restored = false;
+        }
+    }
+    return restored;
+}
+
 bool GuestMemory::unmap_segment(std::uint32_t guest_address,
     std::uint32_t memory_size,
     std::string &error) {
