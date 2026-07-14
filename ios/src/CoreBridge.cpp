@@ -11,8 +11,10 @@
 #include <vita3k_ios/ModuleTableParser.h>
 #include <vita3k_ios/RelocationEngine.h>
 #include <vita3k_ios/VitaAppMetadata.h>
+#include <vita3k_ios/VitaAppArchive.h>
 
 #include <nids/functions.h>
+#include <packages/archive.h>
 #include <util/arm.h>
 
 #include <algorithm>
@@ -56,6 +58,18 @@ bool run_upstream_metadata_test() {
     return metadata.parsed && metadata.title_id == "M13TEST01" &&
         metadata.title == "Vita3K iOS upstream metadata probe" &&
         metadata.category == "gd" && metadata.app_version == "01.00";
+}
+
+bool run_upstream_archive_test() {
+    const auto fixture = make_synthetic_vpk();
+    const auto archive = packages::inspect_archive(fixture);
+    const auto unsafe = packages::inspect_archive(make_synthetic_vpk(true));
+    return archive.inspected && archive.valid && archive.file_count == 3 &&
+        archive.applications.size() == 1 &&
+        archive.applications.front().title_id == "M14TEST01" &&
+        archive.applications.front().title == "Vita3K iOS archive inspection probe" &&
+        archive.applications.front().install_target == "ux0/app/M14TEST01" &&
+        unsafe.inspected && !unsafe.valid && unsafe.unsafe_path_count == 1;
 }
 
 void update_renderer_status() {
@@ -433,8 +447,22 @@ void update_status_from_storage() {
         const auto size = entry.file_size(error);
         const auto probe = probe_artifact(entry.path());
         VitaAppMetadata metadata;
+        packages::ArchiveInspection archive;
         if (probe.kind == "PARAM.SFO" && probe.recognized) {
             metadata = parse_vita_app_metadata(entry.path());
+        } else if (probe.kind == "VPK/ZIP" && probe.recognized) {
+            archive = packages::inspect_archive(entry.path());
+            if (archive.valid && !archive.applications.empty()) {
+                const auto &app = archive.applications.front();
+                metadata = {
+                    .parsed = true,
+                    .title_id = app.title_id,
+                    .title = app.title,
+                    .category = app.category,
+                    .app_version = app.app_version,
+                    .detail = archive.detail
+                };
+            }
         }
         PlainElfLoadResult load;
         GuestThreadRunResult thread;
@@ -453,6 +481,8 @@ void update_status_from_storage() {
         std::string detail = probe.detail;
         if (probe.kind == "PARAM.SFO" && probe.recognized) {
             detail += " " + metadata.detail;
+        } else if (archive.inspected) {
+            detail += " " + archive.detail;
         }
         if (load.attempted) {
             detail += " Loader: " + load.detail;
@@ -469,6 +499,14 @@ void update_status_from_storage() {
             .app_title = std::move(metadata.title),
             .app_category = std::move(metadata.category),
             .app_version = std::move(metadata.app_version),
+            .archive_inspected = archive.inspected,
+            .archive_valid = archive.valid,
+            .archive_file_count = archive.file_count,
+            .archive_application_count = archive.applications.size(),
+            .archive_unsafe_path_count = archive.unsafe_path_count,
+            .archive_uncompressed_size = archive.uncompressed_size,
+            .archive_install_target = archive.applications.empty()
+                ? std::string{} : archive.applications.front().install_target,
             .structurally_valid = probe.structurally_valid,
             .load_segment_count = probe.load_segments.size(),
             .load_attempted = load.attempted,
@@ -505,6 +543,9 @@ void update_status_from_storage() {
             << "Self-tests: " << (core_status.self_tests_passed ? "passed" : "FAILED") << "\n"
             << "Upstream app metadata: " << (core_status.upstream_metadata_ready
                 ? "passed (Vita3K packages/SFO parser linked)"
+                : "FAILED") << "\n"
+            << "Upstream app archive: " << (core_status.upstream_archive_ready
+                ? "passed (miniz + Vita3K package inspector linked)"
                 : "FAILED") << "\n"
             << "Guest memory: " << (core_status.guest_memory_ready ? "ready" : "FAILED");
     if (core_status.guest_memory_ready) {
@@ -548,7 +589,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: extract upstream Vita VFS and package installation dependencies, then connect SELF loading. General Vita homebrew and games are not active yet.";
+    summary << "\n\nNext: add an explicit sandbox installation transaction, then connect encrypted SELF loading. General Vita homebrew and games are not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
@@ -565,6 +606,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     host_input = HostInput{};
     core_status.self_tests_passed = run_upstream_self_tests();
     core_status.upstream_metadata_ready = run_upstream_metadata_test();
+    core_status.upstream_archive_ready = run_upstream_archive_test();
     guest_memory = std::make_unique<GuestMemory>();
     std::string memory_error;
     constexpr std::uint64_t vita_address_space_size = 1ULL << 32;

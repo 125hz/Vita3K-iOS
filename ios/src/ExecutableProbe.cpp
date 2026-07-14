@@ -194,7 +194,7 @@ ExecutableProbeResult probe_artifact(const std::filesystem::path &path) {
             .kind = "VPK/ZIP",
             .recognized = true,
             .structurally_valid = file_size >= 30,
-            .detail = file_size >= 30 ? "ZIP container recognized; VPK extraction is not connected yet."
+            .detail = file_size >= 30 ? "ZIP container recognized; safe Vita package inspection runs during import."
                                       : "ZIP header is truncated."
         };
     }

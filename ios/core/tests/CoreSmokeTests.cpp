@@ -2,6 +2,9 @@
 #include <vita3k_ios/HostDisplay.h>
 #include <vita3k_ios/HostInput.h>
 #include <vita3k_ios/VitaAppMetadata.h>
+#include <vita3k_ios/VitaAppArchive.h>
+
+#include <packages/archive.h>
 
 #include <array>
 #include <cstdint>
@@ -108,9 +111,21 @@ int main(int argc, char **argv) {
         std::cerr << "The upstream SFO parser accepted malformed table offsets.\n";
         return 23;
     }
+    const auto vpk_fixture = vita3k::ios::make_synthetic_vpk();
+    const auto parsed_vpk = packages::inspect_archive(vpk_fixture);
+    const auto unsafe_vpk = packages::inspect_archive(vita3k::ios::make_synthetic_vpk(true));
+    if (!parsed_vpk.valid || parsed_vpk.file_count != 3 ||
+        parsed_vpk.applications.size() != 1 ||
+        parsed_vpk.applications.front().title_id != "M14TEST01" ||
+        parsed_vpk.applications.front().install_target != "ux0/app/M14TEST01" ||
+        unsafe_vpk.valid || unsafe_vpk.unsafe_path_count != 1) {
+        std::cerr << "The bounded Vita package inspection diagnostic failed.\n";
+        return 27;
+    }
 
     std::filesystem::path emitted_fixture;
     std::filesystem::path emitted_sfo_fixture;
+    std::filesystem::path emitted_vpk_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -118,11 +133,14 @@ int main(int argc, char **argv) {
             emitted_fixture = argv[++index];
         } else if (argument == "--emit-sfo-fixture" && index + 1 < argc) {
             emitted_sfo_fixture = argv[++index];
+        } else if (argument == "--emit-vpk-fixture" && index + 1 < argc) {
+            emitted_vpk_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
             std::cerr << "Usage: vita3k_ios_core_smoke_tests "
                          "[--emit-fixture <path>] [--emit-sfo-fixture <path>] "
+                         "[--emit-vpk-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -133,6 +151,7 @@ int main(int argc, char **argv) {
 
     const auto status = vita3k::ios::initialize_core(test_root);
     if (!status.linked || !status.self_tests_passed || !status.upstream_metadata_ready ||
+        !status.upstream_archive_ready ||
         !status.storage_ready ||
         !status.guest_memory_ready || !status.segment_mapping_ready ||
         !status.loader_pipeline_ready || !status.import_binding_ready ||
@@ -283,6 +302,19 @@ int main(int argc, char **argv) {
             return 24;
         }
     }
+    if (!emitted_vpk_fixture.empty()) {
+        if (!emitted_vpk_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(emitted_vpk_fixture.parent_path(), error);
+        }
+        std::ofstream emitted_vpk_stream(emitted_vpk_fixture, std::ios::binary);
+        emitted_vpk_stream.write(reinterpret_cast<const char *>(vpk_fixture.data()),
+            static_cast<std::streamsize>(vpk_fixture.size()));
+        if (error || !emitted_vpk_stream) {
+            std::cerr << "Could not emit the Milestone 14 VPK fixture: "
+                      << error.message() << '\n';
+            return 28;
+        }
+    }
 
     const auto rescanned = vita3k::ios::rescan_imports();
     if (rescanned.imported_artifacts.size() != 1 ||
@@ -377,6 +409,29 @@ int main(int argc, char **argv) {
         return 26;
     }
 
+    std::filesystem::remove_all(imports, error);
+    std::filesystem::create_directories(imports, error);
+    const auto imported_vpk = imports / "milestone14-synthetic-app.vpk";
+    std::ofstream imported_vpk_stream(imported_vpk, std::ios::binary);
+    imported_vpk_stream.write(reinterpret_cast<const char *>(vpk_fixture.data()),
+        static_cast<std::streamsize>(vpk_fixture.size()));
+    imported_vpk_stream.close();
+    const auto vpk_status = vita3k::ios::rescan_imports();
+    if (vpk_status.imported_artifacts.size() != 1 ||
+        vpk_status.imported_artifacts.front().kind != "VPK/ZIP" ||
+        !vpk_status.imported_artifacts.front().archive_inspected ||
+        !vpk_status.imported_artifacts.front().archive_valid ||
+        vpk_status.imported_artifacts.front().archive_file_count != 3 ||
+        vpk_status.imported_artifacts.front().archive_application_count != 1 ||
+        vpk_status.imported_artifacts.front().archive_unsafe_path_count != 0 ||
+        vpk_status.imported_artifacts.front().app_title_id != "M14TEST01" ||
+        vpk_status.imported_artifacts.front().archive_install_target !=
+            "ux0/app/M14TEST01" ||
+        vpk_status.summary.find("planned target ux0/app/M14TEST01") == std::string::npos) {
+        std::cerr << vpk_status.summary << '\n';
+        return 29;
+    }
+
     if (!vita3k::ios::attach_host_display(1280, 720, display_error)) {
         std::cerr << display_error << '\n';
         return 12;
@@ -430,6 +485,10 @@ int main(int argc, char **argv) {
     if (!emitted_sfo_fixture.empty()) {
         std::cout << "Emitted legal Milestone 13 SFO fixture: "
                   << emitted_sfo_fixture << '\n';
+    }
+    if (!emitted_vpk_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 14 VPK fixture: "
+                  << emitted_vpk_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

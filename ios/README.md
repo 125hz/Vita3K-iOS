@@ -81,6 +81,15 @@ The adapter does not yet implement Vita `SceCtrl` or touch HLE. It proves that r
 2. Confirm `Upstream app metadata: passed (Vita3K packages/SFO parser linked)`.
 3. Copy `milestone13-synthetic-param.sfo` from the Actions artifact into the app's `Vita3K/imports` folder.
 4. Tap **Rescan Imports** and confirm `PARAM.SFO`, `title ID M13TEST01`, and `title Vita3K iOS upstream metadata probe` appear.
+
+## Milestone 14 safe VPK inspection test
+
+1. Install and open the Milestone 14 IPA once so its Files container is visible.
+2. From the Actions artifact, copy `milestone14-synthetic-app.vpk` into **On My iPhone → Vita3K iOS → Vita3K → imports**.
+3. Tap **Rescan Imports**.
+4. Confirm the screen reports `Upstream app archive: passed`, `title ID M14TEST01`, and `planned target ux0/app/M14TEST01`.
+
+This fixture is a tiny legal ZIP/VPK made by the smoke tests. The inspector reads only bounded metadata, inventories entries, and rejects absolute, traversal, backslash, or malformed archive paths. Milestone 14 does not extract the VPK, install it, decrypt `eboot.bin`, or execute it. You may inspect a backup you own, but keep large games out of Git and GitHub Actions.
 5. Optionally copy only `sce_sys/param.sfo` from a user-owned Amagami dump. It should report title ID `PCSG00291`.
 
 This is application recognition, not installation or execution. Do not upload game dumps, firmware, keys, or extracted copyrighted assets to the public repository or Actions.
@@ -111,4 +120,6 @@ Milestone 11 adds only the host-display boundary and the first Metal clear/prese
 
 Milestone 12 adds only the host-input boundary. UIKit touch and GameController samples are retained for diagnostics, but no Vita guest API can read them yet.
 
-Milestone 13 is the first package-layer extraction from upstream: it compiles the real SFO parser into the iOS core and exposes application metadata, while deliberately leaving package installation and executable loading for later milestones.
+Milestone 13 is the first package-layer extraction from upstream: it compiles the real SFO parser into the iOS core and exposes application metadata.
+
+Milestone 14 adds a reusable package archive inspector backed by upstream miniz and the SFO parser. It streams an archive from disk, rejects unsafe paths, inventories its entries, extracts only bounded `sce_sys/param.sfo` metadata in memory, and computes a planned sandbox target. It deliberately leaves transactional extraction, Vita VFS installation, content decryption, and executable loading for later milestones.

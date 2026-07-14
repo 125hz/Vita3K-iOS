@@ -8,12 +8,16 @@ on:
     paths:
       - "CMakeLists.txt"
       - "ios/**"
+      - "vita3k/packages/**"
+      - "external/miniz/**"
       - ".ci/package-ios.sh"
       - ".github/workflows/ios.yml"
   pull_request:
     paths:
       - "CMakeLists.txt"
       - "ios/**"
+      - "vita3k/packages/**"
+      - "external/miniz/**"
       - ".ci/package-ios.sh"
       - ".github/workflows/ios.yml"
 
@@ -97,6 +101,7 @@ jobs:
           ./build-core-tests/vita3k_ios_core_smoke_tests \
             --emit-fixture artifacts/milestone9-thumb-homebrew.elf \
             --emit-sfo-fixture artifacts/milestone13-synthetic-param.sfo \
+            --emit-vpk-fixture artifacts/milestone14-synthetic-app.vpk \
             --verify-vitasdk artifacts/milestone10-vitasdk-homebrew.velf
 
       - name: Configure iOS application and core target
@@ -137,5 +142,6 @@ jobs:
             artifacts/milestone10-vitasdk-homebrew.velf
             artifacts/milestone10-vitasdk-homebrew.self
             artifacts/milestone13-synthetic-param.sfo
+            artifacts/milestone14-synthetic-app.vpk
           if-no-files-found: error
           retention-days: 14

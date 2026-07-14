@@ -20,6 +20,13 @@ struct ImportedArtifact {
     std::string app_title;
     std::string app_category;
     std::string app_version;
+    bool archive_inspected;
+    bool archive_valid;
+    std::size_t archive_file_count;
+    std::size_t archive_application_count;
+    std::size_t archive_unsafe_path_count;
+    std::uint64_t archive_uncompressed_size;
+    std::string archive_install_target;
     bool structurally_valid;
     std::size_t load_segment_count;
     bool load_attempted;
@@ -54,6 +61,7 @@ struct CoreStatus {
     bool linked;
     bool self_tests_passed;
     bool upstream_metadata_ready;
+    bool upstream_archive_ready;
     bool storage_ready;
     bool guest_memory_ready;
     bool segment_mapping_ready;
