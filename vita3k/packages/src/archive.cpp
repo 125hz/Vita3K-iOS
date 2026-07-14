@@ -31,8 +31,7 @@ bool add_without_overflow(std::uint64_t &total, std::uint64_t value) {
 }
 
 bool safe_archive_path(std::string_view path) {
-    if (path.empty() || path.front() == '/' || path.front() == '\\' ||
-        path.find('\\') != std::string_view::npos || path.find(':') != std::string_view::npos)
+    if (path.empty() || path.front() == '/' || path.front() == '\\' || path.find('\\') != std::string_view::npos || path.find(':') != std::string_view::npos)
         return false;
 
     std::size_t offset = 0;
@@ -116,8 +115,7 @@ ArchiveInspection inspect_open_archive(mz_zip_archive &zip) {
             ++result.unsafe_path_count;
             continue;
         }
-        if (!add_without_overflow(result.compressed_size, stat.m_comp_size) ||
-            !add_without_overflow(result.uncompressed_size, stat.m_uncomp_size)) {
+        if (!add_without_overflow(result.compressed_size, stat.m_comp_size) || !add_without_overflow(result.uncompressed_size, stat.m_uncomp_size)) {
             result.detail = "Archive size totals overflowed the supported range.";
             return result;
         }
@@ -142,8 +140,7 @@ ArchiveInspection inspect_open_archive(mz_zip_archive &zip) {
 
     for (const auto &entry : sfo_entries) {
         SfoBuffer buffer;
-        if (!mz_zip_reader_extract_to_callback(&zip, entry.index, append_sfo, &buffer, 0) ||
-            buffer.overflow) {
+        if (!mz_zip_reader_extract_to_callback(&zip, entry.index, append_sfo, &buffer, 0) || buffer.overflow) {
             result.detail = "Could not extract bounded PARAM.SFO metadata from the archive.";
             return result;
         }
@@ -153,15 +150,13 @@ ArchiveInspection inspect_open_archive(mz_zip_archive &zip) {
             result.detail = "Archive PARAM.SFO is malformed or missing title identity.";
             return result;
         }
-        result.applications.push_back({
-            .content_root = entry.root,
+        result.applications.push_back({ .content_root = entry.root,
             .title_id = app.app_title_id,
             .title = app.app_title,
             .category = app.app_category,
             .app_version = app.app_version,
             .content_id = app.app_content_id,
-            .install_target = install_target(app)
-        });
+            .install_target = install_target(app) });
     }
 
     result.valid = true;
