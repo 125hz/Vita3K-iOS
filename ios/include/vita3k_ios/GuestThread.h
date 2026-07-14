@@ -19,6 +19,8 @@ struct GuestThreadRunResult {
     std::uint32_t observed_thread_id = 0;
     std::uint64_t instruction_count = 0;
     std::size_t hle_dispatch_count = 0;
+    std::uint32_t last_hle_nid = 0;
+    std::uint32_t last_guest_pc = 0;
     std::uint32_t return_value = 0;
     std::string detail;
 };

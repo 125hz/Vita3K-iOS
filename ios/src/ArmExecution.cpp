@@ -541,27 +541,40 @@ ArmExecutionResult ArmInterpreter::step() {
         };
     }
 
-    // SVC #imm. Vita3K's ARM trampolines place the imported NID in r12.
+    // SVC #imm. Direct diagnostic calls place the imported NID in r12. Bound
+    // Vita import stubs instead use SVC; MOV pc,lr; inline NID. Resolve that
+    // canonical trampoline even when the NID has no HLE handler so the first
+    // real unimplemented import is reported instead of a misleading zero r12.
     if ((instruction & 0x0F000000u) == 0x0F000000u) {
         auto nid = state_.registers[register_hle_nid];
-        std::array<std::uint8_t, sizeof(std::uint32_t)> inline_nid_bytes{};
+        bool inline_trampoline = false;
+        std::uint32_t return_instruction = 0;
+        std::uint32_t inline_nid = 0;
         std::string inline_error;
-        if (state_.registers[register_pc] <= std::numeric_limits<std::uint32_t>::max() - sizeof(std::uint32_t) && memory_.read(state_.registers[register_pc] + sizeof(std::uint32_t), inline_nid_bytes, inline_error)) {
-            std::uint32_t inline_nid = 0;
-            std::memcpy(&inline_nid, inline_nid_bytes.data(), sizeof(inline_nid));
-            if (hle_dispatcher_.has_binding(inline_nid)) {
-                nid = inline_nid;
-            }
+        const auto next_pc = state_.registers[register_pc];
+        if (next_pc <= std::numeric_limits<std::uint32_t>::max() - 2u * sizeof(std::uint32_t) && read_guest_value(memory_, next_pc, return_instruction, inline_error) && read_guest_value(memory_, next_pc + sizeof(std::uint32_t), inline_nid, inline_error) && return_instruction == 0xE1A0F00Eu && inline_nid != 0) {
+            nid = inline_nid;
+            inline_trampoline = true;
         }
         const auto dispatched = hle_dispatcher_.dispatch(nid, state_);
         if (!dispatched.handled) {
+            std::ostringstream detail;
+            detail << "No diagnostic HLE binding exists for NID " << hexadecimal(nid)
+                   << "; SVC at " << hexadecimal(pc)
+                   << (inline_trampoline ? " resolved from inline import trampoline" : " resolved from r12")
+                   << "; LR=" << hexadecimal(state_.registers[register_lr])
+                   << "; args r0=" << hexadecimal(state_.registers[0])
+                   << " r1=" << hexadecimal(state_.registers[1])
+                   << " r2=" << hexadecimal(state_.registers[2])
+                   << " r3=" << hexadecimal(state_.registers[3])
+                   << "; r12=" << hexadecimal(state_.registers[register_hle_nid]) << ".";
             return {
                 .reason = ArmStopReason::unbound_hle,
                 .instructions_executed = state_.instruction_count,
                 .final_pc = state_.registers[register_pc],
                 .last_instruction = instruction,
                 .last_hle_nid = nid,
-                .detail = "No diagnostic HLE binding exists for NID " + hexadecimal(nid) + "."
+                .detail = detail.str()
             };
         }
         state_.registers[0] = static_cast<std::uint32_t>(dispatched.return_value);

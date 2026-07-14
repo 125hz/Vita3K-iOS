@@ -406,6 +406,52 @@ bool run_arm_execution_test(GuestMemory &memory, std::uint64_t &instruction_coun
     return true;
 }
 
+bool run_inline_hle_nid_diagnostic_test(GuestMemory &memory, std::string &error) {
+    constexpr std::uint32_t test_address = 0x38000;
+    constexpr std::uint32_t test_nid = 0x210C0046;
+    constexpr std::uint32_t link_address = 0x12345679;
+    const std::array<std::uint32_t, 3> trampoline{
+        0xEF000000u, // SVC #0
+        0xE1A0F00Eu, // MOV pc, lr
+        test_nid
+    };
+    std::array<std::uint8_t, sizeof(trampoline)> program{};
+    std::memcpy(program.data(), trampoline.data(), program.size());
+
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < program.size() || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the inline HLE NID diagnostic.";
+        return false;
+    }
+    if (!memory.map_segment(test_address, program,
+            static_cast<std::uint32_t>(memory_size_64), 5, error)) {
+        return false;
+    }
+
+    HLEDispatcher dispatcher;
+    ArmInterpreter interpreter(memory, dispatcher);
+    interpreter.reset(test_address, test_address + static_cast<std::uint32_t>(memory_size_64), link_address);
+    interpreter.state().registers[0] = 0x11111111u;
+    interpreter.state().registers[1] = 0x22222222u;
+    interpreter.state().registers[2] = 0x33333333u;
+    interpreter.state().registers[3] = 0x44444444u;
+    interpreter.state().registers[12] = 0;
+    const auto execution = interpreter.run(1);
+
+    std::string unmap_error;
+    const bool unmapped = memory.unmap_all_segments(unmap_error);
+    const bool valid = execution.reason == ArmStopReason::unbound_hle && execution.instructions_executed == 1 && execution.last_hle_nid == test_nid && execution.final_pc == test_address + 4u && execution.detail.find("resolved from inline import trampoline") != std::string::npos && execution.detail.find("LR=0x12345679") != std::string::npos && execution.detail.find("r0=0x11111111") != std::string::npos && execution.detail.find("r3=0x44444444") != std::string::npos && execution.detail.find("r12=0x00000000") != std::string::npos;
+    if (!valid) {
+        error = "The inline HLE NID diagnostic did not preserve the trampoline identity and call context.";
+        return false;
+    }
+    if (!unmapped) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
 bool run_thumb2_wide_push_test(GuestMemory &memory, std::string &error) {
     constexpr std::uint32_t test_address = 0x40000;
     constexpr std::uint32_t r0_value = 0x11111111;
@@ -929,7 +975,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     ImportBindingResult binding_test;
     const bool loader_pipeline_passed = segment_mapping_passed && run_loader_pipeline_test(*guest_memory, binding_test, thread_test, memory_error);
     std::string execution_error;
-    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error);
+    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_inline_hle_nid_diagnostic_test(*guest_memory, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;
@@ -1114,6 +1160,8 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.returned = thread.returned;
         result.instruction_count = thread.instruction_count;
         result.hle_dispatch_count = thread.hle_dispatch_count;
+        result.last_hle_nid = thread.last_hle_nid;
+        result.last_guest_pc = thread.last_guest_pc;
         result.exit_status = thread.exit_status;
         result.return_value = thread.return_value;
         result.detail = thread.detail;

@@ -213,3 +213,14 @@ The accepted Milestone 20 Amagami attempt advanced through the stack allocation 
 4. Share the complete new diagnostic, including `Lookahead:` if present. It should advance past the three captured 32-bit instructions at `0x81017586` through `0x81017592`; the next honest CPU, memory, HLE, return, or instruction-limit boundary is expected.
 
 The Actions artifact includes `milestone21-thumb2-compiler-batch.zip`. Its synthetic `M15TEST01` runs the exact captured `MOVW`/`STRD`/`MOVT` opcodes after the existing wide prologue, reaches the exit-thread import, and completes nine instructions with one HLE call and exit status 42. Portable CPU-state tests additionally cover `LDRD`, pre-indexed store writeback, and post-indexed load writeback.
+
+## Milestone 22 inline HLE identity and call-context test
+
+The accepted Milestone 21 Amagami attempt executed ten instructions and reached the first imported HLE trampoline, but reported NID `0x00000000`. The import binder stores each real NID after the canonical ARM `SVC; MOV pc,lr` pair; the interpreter previously trusted that inline word only when an HLE handler was already registered, so an unimplemented import incorrectly fell back to zero in `r12`. Milestone 22 validates the canonical trampoline independently of handler availability and reports the real inline NID, upstream NID name, SVC address, LR return address, arguments `r0`–`r3`, original `r12`, and whether the NID appears in the module import inventory. It still stops before executing unknown HLE behavior.
+
+1. Install the Milestone 22 IPA and open **Game Library**.
+2. Select `PCSG00291`, confirm `via lifecycle export`, and run **Attempt Boot (256 Instructions)** once.
+3. Share the entire **Boot Boundary Captured** message or background diagnostic.
+4. The result should no longer say only NID `0x00000000`; return the real NID, function name, SVC/LR addresses, and all four argument values so the next milestone can implement the correct HLE family.
+
+The Actions artifact includes `milestone22-inline-hle-diagnostic.zip`. Its legal synthetic title deliberately enters an unimplemented import trampoline with `r12=0`; acceptance requires NID `0x210C0046`, name `__sceAppMgrGetAppState`, a matching module-import inventory entry, and the exact captured argument registers after nine instructions and zero dispatched HLE calls.

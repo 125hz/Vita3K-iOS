@@ -157,6 +157,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m19_install_zip_fixture;
     std::filesystem::path emitted_m20_install_zip_fixture;
     std::filesystem::path emitted_m21_install_zip_fixture;
+    std::filesystem::path emitted_m22_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -180,6 +181,8 @@ int main(int argc, char **argv) {
             emitted_m20_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m21-install-zip-fixture" && index + 1 < argc) {
             emitted_m21_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m22-install-zip-fixture" && index + 1 < argc) {
+            emitted_m22_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -193,6 +196,7 @@ int main(int argc, char **argv) {
                          "[--emit-m19-install-zip-fixture <path>] "
                          "[--emit-m20-install-zip-fixture <path>] "
                          "[--emit-m21-install-zip-fixture <path>] "
+                         "[--emit-m22-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -380,6 +384,12 @@ int main(int argc, char **argv) {
     const auto thumb2_compiler_self = make_plain_self(thumb2_compiler_elf);
     const auto m21_install_zip = vita3k::ios::make_synthetic_install_zip(
         thumb2_compiler_self, thumb2_compiler_self);
+    auto inline_hle_elf = thumb2_compiler_elf;
+    constexpr std::uint32_t diagnostic_unbound_nid = 0x210C0046u;
+    write_value(inline_hle_elf, 372, diagnostic_unbound_nid);
+    const auto inline_hle_self = make_plain_self(inline_hle_elf);
+    const auto m22_install_zip = vita3k::ios::make_synthetic_install_zip(
+        inline_hle_self, inline_hle_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -399,6 +409,10 @@ int main(int argc, char **argv) {
     if (m21_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 21 Thumb-2 compiler batch fixture.\n";
         return 57;
+    }
+    if (m22_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 22 inline HLE diagnostic fixture.\n";
+        return 62;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -475,6 +489,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 21 Thumb-2 compiler batch fixture.\n";
             return 58;
+        }
+    }
+    if (!emitted_m22_install_zip_fixture.empty()) {
+        if (!emitted_m22_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m22_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m22_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m22_install_zip.data()),
+            static_cast<std::streamsize>(m22_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 22 inline HLE diagnostic fixture.\n";
+            return 63;
         }
     }
 
@@ -733,6 +760,27 @@ int main(int argc, char **argv) {
         return 61;
     }
 
+    const auto m22_archive_path = test_root / "milestone22-inline-hle-diagnostic.zip";
+    std::ofstream m22_archive_stream(m22_archive_path, std::ios::binary);
+    m22_archive_stream.write(reinterpret_cast<const char *>(m22_install_zip.data()),
+        static_cast<std::streamsize>(m22_install_zip.size()));
+    m22_archive_stream.close();
+    const auto m22_install = vita3k::ios::install_game_archive(m22_archive_path);
+    if (!m22_install.success || m22_install.file_count != 6) {
+        std::cerr << m22_install.detail << '\n';
+        return 65;
+    }
+    const auto inline_hle_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!inline_hle_prepared.selected || !inline_hle_prepared.loaded || !inline_hle_prepared.module_start_from_export || inline_hle_prepared.module_start_address != 0x81000061) {
+        std::cerr << inline_hle_prepared.detail << '\n';
+        return 66;
+    }
+    const auto inline_hle_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!inline_hle_boot.started || inline_hle_boot.exited || inline_hle_boot.returned || inline_hle_boot.instruction_count != 9 || inline_hle_boot.hle_dispatch_count != 0 || inline_hle_boot.last_hle_nid != diagnostic_unbound_nid || inline_hle_boot.last_guest_pc != 0x81000054u || inline_hle_boot.detail.find("__sceAppMgrGetAppState") == std::string::npos || inline_hle_boot.detail.find("module import inventory: present") == std::string::npos || inline_hle_boot.detail.find("r0=0x0000002A") == std::string::npos || inline_hle_boot.detail.find("r2=0x812C7690") == std::string::npos) {
+        std::cerr << inline_hle_boot.detail << '\n';
+        return 67;
+    }
+
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
@@ -819,6 +867,10 @@ int main(int argc, char **argv) {
     if (!emitted_m21_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 21 Thumb-2 compiler batch fixture: "
                   << emitted_m21_install_zip_fixture << '\n';
+    }
+    if (!emitted_m22_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 22 inline HLE diagnostic fixture: "
+                  << emitted_m22_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

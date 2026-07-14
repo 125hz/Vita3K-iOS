@@ -50,14 +50,11 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         return result;
     }
     if (!contains_nid(imported_nids, nid_sce_kernel_get_thread_id)) {
-        result.detail = "The module does not import sceKernelGetThreadId (" +
-            nid_hex(nid_sce_kernel_get_thread_id) + ").";
+        result.detail = "The module does not import sceKernelGetThreadId (" + nid_hex(nid_sce_kernel_get_thread_id) + ").";
         return result;
     }
     const bool imports_exit_thread = contains_nid(imported_nids, nid_sce_kernel_exit_thread);
-    if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" ||
-        (imports_exit_thread &&
-            std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
+    if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" || (imports_exit_thread && std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
         return result;
     }
@@ -97,6 +94,8 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     const auto execution = interpreter.run(instruction_limit);
     const auto &state = interpreter.state();
     result.instruction_count = execution.instructions_executed;
+    result.last_hle_nid = execution.last_hle_nid;
+    result.last_guest_pc = execution.final_pc;
     result.observed_thread_id = state.registers[2];
     result.exited = execution.halted() && exit_requested && state.stop_requested;
     result.returned = execution.halted() && !exit_requested && !state.stop_requested;
@@ -111,10 +110,15 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     if (result.exited) {
         detail << "sceKernelExitThread(" << result.exit_status << ") completed.";
     } else if (result.returned) {
-        detail << "module_start returned " << result.return_value <<
-            " through the zero-link sentinel.";
+        detail << "module_start returned " << result.return_value << " through the zero-link sentinel.";
     } else {
         detail << execution.detail;
+        if (execution.reason == ArmStopReason::unbound_hle) {
+            detail << " Upstream NID name: " << import_name(execution.last_hle_nid)
+                   << "; module import inventory: "
+                   << (contains_nid(imported_nids, execution.last_hle_nid) ? "present" : "missing")
+                   << ".";
+        }
     }
     result.detail = detail.str();
     return result;

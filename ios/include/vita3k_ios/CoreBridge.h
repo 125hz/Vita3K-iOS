@@ -51,6 +51,8 @@ struct TitleBootResult {
     bool returned{};
     std::uint64_t instruction_count{};
     std::size_t hle_dispatch_count{};
+    std::uint32_t last_hle_nid{};
+    std::uint32_t last_guest_pc{};
     std::int32_t exit_status{};
     std::uint32_t return_value{};
     std::string title_id;

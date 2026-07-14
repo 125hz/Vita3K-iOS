@@ -156,6 +156,8 @@ For Milestone 20, run the same Amagami attempt and capture the full boundary plu
 
 For Milestone 21, run the one-shot Amagami attempt again and capture the next complete boundary. The interpreter now accepts the exact `F247 6290` / `E9CD 1000` / `F2C8 122C` sequence as part of complete Thumb-2 immediate `MOVW`/`MOVT` and immediate `LDRD`/`STRD` families, including checked pre/post-index writeback. The CI artifact's `milestone21-thumb2-compiler-batch.zip` executes those exact opcodes in a legal synthetic title, completes nine instructions and one HLE call, and exits with status 42.
 
+For Milestone 22, repeat the one-shot attempt and return the entire unbound-HLE diagnostic. A canonical rebound import trampoline is now recognized from its `SVC; MOV pc,lr; inline NID` layout even when no handler exists, so the boundary reports the real NID instead of falling back to zero in `r12`. It also reports the upstream name, SVC and LR addresses, `r0`–`r3`, and module-import inventory status. The CI artifact's `milestone22-inline-hle-diagnostic.zip` verifies this path with an unimplemented `__sceAppMgrGetAppState` import and deliberately zero `r12`; no unknown HLE result is fabricated.
+
 Keep firmware files such as `fontpkg.pup`, `preinstall.pup`, and the system update PUP on the local device/PC. Do not add them to Git, CI caches, or Actions artifacts. Firmware selection and extraction will be added after the iOS build includes the upstream crypto, package, FAT/exFAT, and psvpfs dependencies needed by `install_pup`.
 
 ## 8. Keeping the fork current
