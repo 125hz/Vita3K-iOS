@@ -14,12 +14,16 @@ struct LoadSegmentPlan {
     std::uint32_t file_size;
     std::uint32_t memory_size;
     std::uint32_t flags;
+    std::uint32_t stored_size{};
+    bool compressed{};
 };
 
 struct RelocationSegmentPlan {
     std::uint16_t program_index;
     std::uint32_t file_offset;
     std::uint32_t file_size;
+    std::uint32_t stored_size{};
+    bool compressed{};
 };
 
 struct ExecutableProbeResult {
@@ -32,6 +36,9 @@ struct ExecutableProbeResult {
     std::uint16_t module_info_segment_index = 0;
     std::vector<LoadSegmentPlan> load_segments;
     std::vector<RelocationSegmentPlan> relocation_segments;
+    bool self_segments_plain = false;
+    std::size_t encrypted_segment_count = 0;
+    std::size_t compressed_segment_count = 0;
     std::string detail;
 };
 

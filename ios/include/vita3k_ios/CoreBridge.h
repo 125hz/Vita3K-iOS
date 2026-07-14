@@ -16,7 +16,31 @@ struct InstalledTitle {
     std::string title;
     std::string app_version;
     bool patch_installed{};
+    bool base_eboot_present{};
+    bool patch_eboot_present{};
     std::string app_path;
+};
+
+struct TitlePreparationResult {
+    bool attempted{};
+    bool selected{};
+    bool patch_selected{};
+    bool probe_valid{};
+    bool self_segments_plain{};
+    bool loaded{};
+    std::string title_id;
+    std::string title;
+    std::string source;
+    std::string executable_path;
+    std::string kind;
+    std::string module_name;
+    std::size_t load_segment_count{};
+    std::size_t encrypted_segment_count{};
+    std::size_t compressed_segment_count{};
+    std::size_t imported_nid_count{};
+    std::size_t bound_import_stub_count{};
+    std::uint32_t module_start_address{};
+    std::string detail;
 };
 
 struct GameInstallResult {
@@ -111,6 +135,9 @@ struct CoreStatus {
     std::string storage_root;
     std::vector<InstalledTitle> installed_titles;
     std::string package_install_status;
+    std::string selected_title_id;
+    bool selected_executable_loaded{};
+    std::string title_preparation_status;
     std::vector<ImportedArtifact> imported_artifacts;
     std::string summary;
 };
@@ -119,6 +146,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root);
 CoreStatus query_core_status();
 CoreStatus rescan_imports();
 GameInstallResult install_game_archive(const std::filesystem::path &archive_path);
+TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer_patch);
 bool attach_host_display(std::uint32_t width, std::uint32_t height, std::string &error);
 std::optional<HostDisplayFrame> acquire_host_display_frame(std::uint32_t width,
     std::uint32_t height, std::string &error);

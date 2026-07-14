@@ -144,6 +144,8 @@ For the Milestone 12 input diagnostic, tap or drag on an empty area of the blue 
 
 For the Milestone 13 metadata diagnostic, copy `milestone13-synthetic-param.sfo` from the Actions artifact into `Documents/Vita3K/imports`, then tap **Rescan Imports**. The app must report `PARAM.SFO`, `title ID M13TEST01`, and `title Vita3K iOS upstream metadata probe`. To inspect a user-owned Amagami dump without attempting to run it, copy only its `sce_sys/param.sfo`; the expected title ID is `PCSG00291`. Keep the game itself local and do not commit or upload it. This milestone parses metadata only—VPK installation, SELF loading, and game execution remain disconnected.
 
+For Milestone 16, open **Game Library** and select an installed title. **Prefer Installed Patch** is enabled by default in **Settings**, so a patch `eboot.bin` is prepared before the base app executable. The operation is deliberately non-executing: it validates the SELF and ELF headers, inventories load/compression/encryption state, and maps only structurally valid plain segments. Protected retail SELF files should report that decryption must be integrated. Preserve that exact diagnostic for the next milestone; do not upload the executable or game archive.
+
 Keep firmware files such as `fontpkg.pup`, `preinstall.pup`, and the system update PUP on the local device/PC. Do not add them to Git, CI caches, or Actions artifacts. Firmware selection and extraction will be added after the iOS build includes the upstream crypto, package, FAT/exFAT, and psvpfs dependencies needed by `install_pup`.
 
 ## 8. Keeping the fork current

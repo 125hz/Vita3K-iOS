@@ -12,13 +12,53 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <span>
 #include <string_view>
+#include <vector>
 
 namespace {
 
 template <typename T, std::size_t Size>
 void write_value(std::array<std::uint8_t, Size> &image, std::size_t offset, T value) {
     std::memcpy(image.data() + offset, &value, sizeof(value));
+}
+
+template <typename T>
+void write_value(std::vector<std::uint8_t> &image, std::size_t offset, T value) {
+    std::memcpy(image.data() + offset, &value, sizeof(value));
+}
+
+std::vector<std::uint8_t> make_plain_self(std::span<const std::uint8_t> elf) {
+    constexpr std::size_t self_header_size = 128;
+    constexpr std::size_t embedded_elf_offset = self_header_size;
+    constexpr std::size_t program_header_offset = embedded_elf_offset + 52;
+    constexpr std::size_t section_info_offset = program_header_offset + 3 * 32;
+    constexpr std::size_t payload_offset = 4096;
+    std::vector<std::uint8_t> self(payload_offset + elf.size());
+    write_value(self, 0, static_cast<std::uint32_t>(0x00454353));
+    write_value(self, 4, static_cast<std::uint32_t>(3));
+    write_value(self, 10, static_cast<std::uint16_t>(1));
+    write_value(self, 16, static_cast<std::uint64_t>(payload_offset));
+    write_value(self, 24, static_cast<std::uint64_t>(elf.size()));
+    write_value(self, 32, static_cast<std::uint64_t>(self.size()));
+    write_value(self, 64, static_cast<std::uint64_t>(embedded_elf_offset));
+    write_value(self, 72, static_cast<std::uint64_t>(program_header_offset));
+    write_value(self, 88, static_cast<std::uint64_t>(section_info_offset));
+    std::memcpy(self.data() + embedded_elf_offset, elf.data(), 52);
+    std::memcpy(self.data() + program_header_offset, elf.data() + 52, 3 * 32);
+    for (std::size_t index = 0; index < 3; ++index) {
+        std::uint32_t file_offset = 0;
+        std::uint32_t file_size = 0;
+        std::memcpy(&file_offset, elf.data() + 52 + index * 32 + 4, sizeof(file_offset));
+        std::memcpy(&file_size, elf.data() + 52 + index * 32 + 16, sizeof(file_size));
+        const auto info = section_info_offset + index * 32;
+        write_value(self, info, static_cast<std::uint64_t>(payload_offset + file_offset));
+        write_value(self, info + 8, static_cast<std::uint64_t>(file_size));
+        write_value(self, info + 16, static_cast<std::uint64_t>(1));
+        write_value(self, info + 24, static_cast<std::uint64_t>(2));
+    }
+    std::memcpy(self.data() + payload_offset, elf.data(), elf.size());
+    return self;
 }
 
 } // namespace
@@ -137,6 +177,8 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_sfo_fixture;
     std::filesystem::path emitted_vpk_fixture;
     std::filesystem::path emitted_install_zip_fixture;
+    std::filesystem::path emitted_self_fixture;
+    std::filesystem::path emitted_m16_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -148,6 +190,10 @@ int main(int argc, char **argv) {
             emitted_vpk_fixture = argv[++index];
         } else if (argument == "--emit-install-zip-fixture" && index + 1 < argc) {
             emitted_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-self-fixture" && index + 1 < argc) {
+            emitted_self_fixture = argv[++index];
+        } else if (argument == "--emit-m16-install-zip-fixture" && index + 1 < argc) {
+            emitted_m16_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -155,6 +201,8 @@ int main(int argc, char **argv) {
                          "[--emit-fixture <path>] [--emit-sfo-fixture <path>] "
                          "[--emit-vpk-fixture <path>] "
                          "[--emit-install-zip-fixture <path>] "
+                         "[--emit-self-fixture <path>] "
+                         "[--emit-m16-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -289,6 +337,39 @@ int main(int argc, char **argv) {
     write_value(elf, 420, static_cast<std::uint32_t>(0x00000200));
     write_value(elf, 424, static_cast<std::uint32_t>(0x1234));
     write_value(elf, 428, static_cast<std::uint32_t>(0xF0));
+
+    const auto plain_self = make_plain_self(elf);
+    const auto m16_install_zip = vita3k::ios::make_synthetic_install_zip(
+        plain_self, plain_self);
+    if (m16_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
+        return 34;
+    }
+    if (!emitted_self_fixture.empty()) {
+        if (!emitted_self_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(emitted_self_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_self_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(plain_self.data()),
+            static_cast<std::streamsize>(plain_self.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 16 plain SELF fixture.\n";
+            return 35;
+        }
+    }
+    if (!emitted_m16_install_zip_fixture.empty()) {
+        if (!emitted_m16_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m16_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m16_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m16_install_zip.data()),
+            static_cast<std::streamsize>(m16_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 16 installation fixture.\n";
+            return 36;
+        }
+    }
 
     const auto fixture = test_root / "Vita3K" / "imports" / "synthetic-homebrew.elf";
     std::ofstream fixture_stream(fixture, std::ios::binary);
@@ -501,6 +582,57 @@ int main(int argc, char **argv) {
         return 33;
     }
 
+    const auto m16_archive_path = test_root / "milestone16-app-and-patch.zip";
+    std::ofstream m16_archive_stream(m16_archive_path, std::ios::binary);
+    m16_archive_stream.write(reinterpret_cast<const char *>(m16_install_zip.data()),
+        static_cast<std::streamsize>(m16_install_zip.size()));
+    m16_archive_stream.close();
+    const auto m16_install = vita3k::ios::install_game_archive(m16_archive_path);
+    const auto m16_installed_status = vita3k::ios::query_core_status();
+    if (!m16_install.success || m16_install.file_count != 6 ||
+        m16_installed_status.installed_titles.size() != 1 ||
+        !m16_installed_status.installed_titles.front().base_eboot_present ||
+        !m16_installed_status.installed_titles.front().patch_eboot_present) {
+        std::cerr << m16_installed_status.summary << '\n';
+        return 37;
+    }
+    const auto prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    const auto prepared_status = vita3k::ios::query_core_status();
+    if (!prepared.selected || !prepared.patch_selected || !prepared.probe_valid ||
+        !prepared.self_segments_plain || !prepared.loaded ||
+        prepared.kind != "Vita SELF" || prepared.load_segment_count != 2 ||
+        prepared.module_name != "synthetic-homebrew" ||
+        prepared.module_start_address != 0x81000061 ||
+        prepared.imported_nid_count != 2 || prepared.bound_import_stub_count != 2 ||
+        prepared_status.selected_title_id != "M15TEST01" ||
+        !prepared_status.selected_executable_loaded ||
+        prepared_status.summary.find("Boot source: patch/eboot.bin") == std::string::npos ||
+        prepared_status.summary.find("Executable preparation: Mapped 2") ==
+            std::string::npos) {
+        std::cerr << prepared.detail << '\n' << prepared_status.summary << '\n';
+        return 38;
+    }
+
+    auto encrypted_self = plain_self;
+    write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
+        static_cast<std::uint64_t>(1));
+    const auto installed_patch_eboot =
+        test_root / "Vita3K/ux0/patch/M15TEST01/eboot.bin";
+    std::ofstream encrypted_stream(installed_patch_eboot, std::ios::binary | std::ios::trunc);
+    encrypted_stream.write(reinterpret_cast<const char *>(encrypted_self.data()),
+        static_cast<std::streamsize>(encrypted_self.size()));
+    encrypted_stream.close();
+    const auto encrypted_preparation =
+        vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!encrypted_preparation.selected || !encrypted_preparation.patch_selected ||
+        !encrypted_preparation.probe_valid || encrypted_preparation.self_segments_plain ||
+        encrypted_preparation.loaded || encrypted_preparation.encrypted_segment_count != 1 ||
+        encrypted_preparation.detail.find("Decryption must be integrated") ==
+            std::string::npos) {
+        std::cerr << encrypted_preparation.detail << '\n';
+        return 39;
+    }
+
     if (!vita3k::ios::attach_host_display(1280, 720, display_error)) {
         std::cerr << display_error << '\n';
         return 12;
@@ -562,6 +694,14 @@ int main(int argc, char **argv) {
     if (!emitted_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 15 installation fixture: "
                   << emitted_install_zip_fixture << '\n';
+    }
+    if (!emitted_self_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 16 plain SELF fixture: "
+                  << emitted_self_fixture << '\n';
+    }
+    if (!emitted_m16_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 16 installation fixture: "
+                  << emitted_m16_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

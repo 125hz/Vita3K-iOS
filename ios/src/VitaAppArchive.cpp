@@ -48,13 +48,15 @@ std::vector<std::uint8_t> make_synthetic_vpk(bool unsafe_path) {
     return result;
 }
 
-std::vector<std::uint8_t> make_synthetic_install_zip() {
+std::vector<std::uint8_t> make_synthetic_install_zip(
+    std::span<const std::uint8_t> app_eboot,
+    std::span<const std::uint8_t> patch_eboot) {
     const auto app_sfo = make_synthetic_param_sfo(
         "M15TEST01", "Vita3K iOS transactional base app", "gd");
     const auto patch_sfo = make_synthetic_param_sfo(
         "M15TEST01", "Vita3K iOS transactional patch", "gp");
-    constexpr std::string_view app_eboot = "M15 synthetic base eboot";
-    constexpr std::string_view patch_eboot = "M15 synthetic patch eboot";
+    constexpr std::string_view default_app_eboot = "M15 synthetic base eboot";
+    constexpr std::string_view default_patch_eboot = "M15 synthetic patch eboot";
     constexpr std::string_view base_asset = "base asset";
     constexpr std::string_view patch_asset = "patch asset";
 
@@ -65,10 +67,16 @@ std::vector<std::uint8_t> make_synthetic_install_zip() {
         return mz_zip_writer_add_mem(&zip, name, data, size, MZ_BEST_SPEED) == MZ_TRUE;
     };
     if (!add("app/M15TEST01/sce_sys/param.sfo", app_sfo.data(), app_sfo.size()) ||
-        !add("app/M15TEST01/eboot.bin", app_eboot.data(), app_eboot.size()) ||
+        !add("app/M15TEST01/eboot.bin",
+            app_eboot.empty() ? static_cast<const void *>(default_app_eboot.data())
+                              : static_cast<const void *>(app_eboot.data()),
+            app_eboot.empty() ? default_app_eboot.size() : app_eboot.size()) ||
         !add("app/M15TEST01/assets/base.dat", base_asset.data(), base_asset.size()) ||
         !add("patch/M15TEST01/sce_sys/param.sfo", patch_sfo.data(), patch_sfo.size()) ||
-        !add("patch/M15TEST01/eboot.bin", patch_eboot.data(), patch_eboot.size()) ||
+        !add("patch/M15TEST01/eboot.bin",
+            patch_eboot.empty() ? static_cast<const void *>(default_patch_eboot.data())
+                                : static_cast<const void *>(patch_eboot.data()),
+            patch_eboot.empty() ? default_patch_eboot.size() : patch_eboot.size()) ||
         !add("patch/M15TEST01/assets/patch.dat", patch_asset.data(), patch_asset.size())) {
         mz_zip_writer_end(&zip);
         return {};

@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It now loads and completes the `module_start` of a deliberately tiny program built by the real VitaSDK toolchain, clears and presents one core-owned Metal diagnostic frame, captures normalized UIKit/GameController input, and uses Vita3K's real package/SFO parser to identify application metadata. It does **not** yet install VPKs, extract commercial SELF payloads, execute general Vita homebrew, render Vita graphics, route input to guest services, or run games.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It can transactionally install user-selected app/patch ZIPs, list installed titles, prefer a patch `eboot.bin`, and safely probe a selected Vita SELF before execution. It also loads and completes the `module_start` of a deliberately tiny legal fixture, presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet decrypt protected SELF segments, execute installed games, render Vita graphics, route input to guest services, or run general Vita software.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -40,6 +40,8 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - Vita3K's upstream `packages/sfo.cpp`, refactored to build without Boost/fmt and hardened against malformed table offsets
 - imported `param.sfo` reporting for title ID, title, category, and application version
 - a narrow C++ `CoreBridge` seam for additional core integration
+- an installed-game library, patch preference, diagnostics setting, and bounded Prepare Boot action
+- SELF v3 segment-table probing with plain/compressed payload loading and an explicit encrypted-segment stop
 - no signing credentials or provisioning profiles in CI
 
 See [PORTING.md](PORTING.md) for the integration backlog and known blockers. See [docs/ios-development.md](../docs/ios-development.md) for the complete Windows-first workflow.
@@ -132,7 +134,7 @@ cmake --build build-ios --config Release --target Vita3KiOS -- \
 
 This command requires macOS and Xcode; the GitHub Actions workflow runs it remotely for Windows contributors.
 
-`VITA3K_IOS_LINK_CORE=ON` is now required. The port can parse Vita application SFO metadata using upstream code, reserve guest address space, map fixed-address `ET_SCE_EXEC` files and preferred-address `ET_SCE_RELEXEC` VELFs, apply checked relocations, validate module metadata, inventory import/export NIDs, rewrite ARM function stubs, execute the narrow compiler path used by the Milestone 10 program, present one diagnostic Metal frame, and capture bounded host input. VPK installation, Vita VFS mounting, general relocatable placement, SELF payload extraction, broader Thumb-2, thread scheduling, production HLE coverage, the Vita renderer, audio, and guest input services remain tracked in `PORTING.md`.
+`VITA3K_IOS_LINK_CORE=ON` is now required. The port can parse Vita application SFO metadata, transactionally install app/patch archives, reserve guest address space, map fixed-address `ET_SCE_EXEC` files and preferred-address `ET_SCE_RELEXEC` VELFs, inspect and load legal plain SELF segments, apply checked relocations, validate module metadata, inventory import/export NIDs, rewrite ARM function stubs, execute the narrow compiler path used by the Milestone 10 program, present one diagnostic Metal frame, and capture bounded host input. Protected SELF decryption, complete Vita VFS mounting, general relocatable placement, broader Thumb-2, thread scheduling, production HLE coverage, the Vita renderer, audio, and guest input services remain tracked in `PORTING.md`.
 
 Milestone 10 preserves the synthetic tests and adds an independently compiled VitaSDK VELF. The loader maps that VELF at its preferred addresses, applies its real compact relocation stream, parses its genuine module/import tables, rebinds `sceKernelGetThreadId`, and completes `module_start` through six guest instructions. This is intentionally not advertised as a general ARMv7 interpreter: conditional execution, most 32-bit Thumb-2, most addressing modes, floating point/NEON, exceptions, atomics, and most data-processing instructions remain unsupported. Relocatable segments are not yet placed at alternative addresses if their preferred ranges are unavailable, and SELF containers remain probe-only.
 
@@ -145,3 +147,15 @@ Milestone 13 is the first package-layer extraction from upstream: it compiles th
 Milestone 14 adds a reusable package archive inspector backed by upstream miniz and the SFO parser. It streams an archive from disk, rejects unsafe paths, inventories its entries, extracts only bounded `sce_sys/param.sfo` metadata in memory, and computes a planned sandbox target. It deliberately leaves transactional extraction, Vita VFS installation, content decryption, and executable loading for later milestones.
 
 Milestone 15 adds the first end-user import UI and a transactional installer for base-app and patch roots. It creates an installed-title inventory under the private emulated Vita filesystem. It does not decrypt or execute the installed `eboot.bin`; title selection and SELF loader integration are the next milestone.
+
+## Milestone 16 game-library and SELF preparation test
+
+1. Install and open the Milestone 16 IPA. Existing Milestone 15 installations remain in the app container.
+2. Open **Settings** and leave **Prefer Installed Patch** enabled.
+3. Open **Game Library** and select an installed title such as `PCSG00291`.
+4. The app resolves `ux0/patch/<TITLE_ID>/eboot.bin` first and falls back to the base app only when needed.
+5. Capture the **Preparation Stopped** or **Executable Prepared** message and the `Executable preparation:` diagnostic line.
+
+The Actions artifact includes `milestone16-app-and-patch.zip`, whose base and patch executables are legal synthetic plain SELF containers. Selecting its `M15TEST01` row must report `Executable Prepared`, two load segments, and module `synthetic-homebrew`. A normal protected retail `eboot.bin` is expected to stop at encrypted SELF segments. That is a successful Milestone 16 diagnostic: no encrypted bytes are mapped or executed. Milestone 17 will use the exact device result to integrate the required decryption/loader dependency path and make the first tightly bounded boot attempt.
+
+Keep Amagami, firmware PUPs, keys, and other proprietary content on your device. Do not add them to Git or upload them to GitHub Actions.

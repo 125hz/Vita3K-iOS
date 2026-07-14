@@ -6,6 +6,8 @@
 #include <vita3k_ios/ModuleTableParser.h>
 #include <vita3k_ios/RelocationEngine.h>
 
+#include <miniz.h>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -32,7 +34,7 @@ constexpr std::uint32_t guest_flag_execute = 1;
 constexpr std::uint32_t guest_flag_write = 2;
 constexpr std::uint32_t guest_flag_read = 4;
 
-bool read_file_range(std::ifstream &stream, std::uint32_t offset,
+bool read_file_range(std::ifstream &stream, std::uint64_t offset,
     std::span<std::uint8_t> output) {
     if (output.empty()) {
         return true;
@@ -41,6 +43,26 @@ bool read_file_range(std::ifstream &stream, std::uint32_t offset,
     stream.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
     stream.read(reinterpret_cast<char *>(output.data()), static_cast<std::streamsize>(output.size()));
     return stream.gcount() == static_cast<std::streamsize>(output.size());
+}
+
+bool read_executable_payload(std::ifstream &stream, std::uint32_t offset,
+    std::uint32_t stored_size, std::uint32_t output_size, bool compressed,
+    std::vector<std::uint8_t> &output) {
+    const auto actual_stored_size = stored_size == 0 ? output_size : stored_size;
+    std::vector<std::uint8_t> stored(actual_stored_size);
+    if (!read_file_range(stream, offset, stored))
+        return false;
+    output.resize(output_size);
+    if (!compressed) {
+        if (actual_stored_size != output_size)
+            return false;
+        output = std::move(stored);
+        return true;
+    }
+    mz_ulong decompressed_size = output_size;
+    const auto decompressed = mz_uncompress(output.data(), &decompressed_size,
+        stored.data(), static_cast<mz_ulong>(stored.size()));
+    return decompressed == MZ_OK && decompressed_size == output_size;
 }
 
 std::string sanitize_module_name(std::span<const std::uint8_t> bytes) {
@@ -69,8 +91,13 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
             return total + segment.file_size;
         });
 
-    if (!probe.structurally_valid || probe.kind != "Vita ELF") {
-        result.detail = "Only a structurally valid plain Vita ELF can be mapped.";
+    if (!probe.structurally_valid ||
+        (probe.kind != "Vita ELF" && probe.kind != "Vita SELF")) {
+        result.detail = "Only a structurally valid Vita ELF/SELF can be mapped.";
+        return result;
+    }
+    if (probe.kind == "Vita SELF" && !probe.self_segments_plain) {
+        result.detail = "The SELF contains encrypted segments and must be decrypted before mapping.";
         return result;
     }
     if (probe.executable_type != et_sce_exec &&
@@ -95,9 +122,9 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
     bool has_writable_stack = false;
     for (std::size_t index = 0; index < probe.load_segments.size(); ++index) {
         const auto &segment = probe.load_segments[index];
-        payloads[index].resize(segment.file_size);
-        if (!read_file_range(stream, segment.file_offset, payloads[index])) {
-            result.detail = "A validated ELF segment could not be read from disk.";
+        if (!read_executable_payload(stream, segment.file_offset, segment.stored_size,
+                segment.file_size, segment.compressed, payloads[index])) {
+            result.detail = "A validated executable segment could not be read/decompressed.";
             return result;
         }
         mappings.push_back({
@@ -163,8 +190,10 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
     }
 
     for (const auto &relocation_segment : probe.relocation_segments) {
-        std::vector<std::uint8_t> relocation_bytes(relocation_segment.file_size);
-        if (!read_file_range(stream, relocation_segment.file_offset, relocation_bytes)) {
+        std::vector<std::uint8_t> relocation_bytes;
+        if (!read_executable_payload(stream, relocation_segment.file_offset,
+                relocation_segment.stored_size, relocation_segment.file_size,
+                relocation_segment.compressed, relocation_bytes)) {
             std::string unmap_error;
             (void)memory.unmap_all_segments(unmap_error);
             result.detail = "A validated relocation segment could not be read from disk.";
@@ -290,7 +319,8 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
     std::ostringstream detail;
     detail << "Mapped " << probe.load_segments.size() <<
            (probe.executable_type == et_sce_relexec ? " preferred-address relocatable" : " fixed") <<
-           " segment" << (probe.load_segments.size() == 1 ? "" : "s") << " ("
+           " segment" << (probe.load_segments.size() == 1 ? "" : "s")
+           << (probe.kind == "Vita SELF" ? " from SELF" : "") << " ("
            << result.file_bytes << " file bytes, " << result.memory_bytes
            << " guest bytes); readback passed; module " << result.module_name
            << " NID 0x" << std::hex << std::uppercase << std::setw(8)

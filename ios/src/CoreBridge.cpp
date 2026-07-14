@@ -447,6 +447,10 @@ void scan_installed_titles() {
             .app_version = metadata.app_version,
             .patch_installed = std::filesystem::is_directory(
                 host_storage.root / "ux0/patch" / metadata.title_id, error),
+            .base_eboot_present = std::filesystem::is_regular_file(
+                iterator->path() / "eboot.bin", error),
+            .patch_eboot_present = std::filesystem::is_regular_file(
+                host_storage.root / "ux0/patch" / metadata.title_id / "eboot.bin", error),
             .app_path = iterator->path().string()
         });
         error.clear();
@@ -466,6 +470,9 @@ void update_status_from_storage() {
 
     core_status.storage_ready = host_storage.ready;
     core_status.storage_root = host_storage.root.string();
+    core_status.selected_title_id.clear();
+    core_status.selected_executable_loaded = false;
+    core_status.title_preparation_status.clear();
     scan_installed_titles();
     core_status.imported_artifacts.clear();
     core_status.imported_artifacts.reserve(host_storage.imported_files.size());
@@ -630,13 +637,34 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: add an installed-title library/selector and connect selected eboot.bin SELF loading. General Vita games are not active yet.";
+    summary << "\n\nNext: use Game Library to prepare an installed eboot.bin, then report the exact SELF/decryption or loader boundary before the first controlled boot attempt. General Vita games are not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
     core_status.summary = summary.str();
     update_renderer_status();
     update_input_status();
+}
+
+void update_title_preparation_summary(const TitlePreparationResult &result) {
+    const auto marker = core_status.summary.find("\nSelected title:");
+    const auto next = core_status.summary.find("\n\nNext:");
+    if (marker != std::string::npos) {
+        core_status.summary.erase(marker,
+            next == std::string::npos ? std::string::npos : next - marker);
+    }
+
+    std::ostringstream lines;
+    lines << "\nSelected title: " << result.title_id;
+    if (!result.title.empty())
+        lines << " - " << result.title;
+    if (!result.source.empty())
+        lines << "\nBoot source: " << result.source << "/eboot.bin";
+    lines << "\nExecutable preparation: " << result.detail;
+    const auto insertion = core_status.summary.find("\n\nNext:");
+    core_status.summary.insert(insertion == std::string::npos
+            ? core_status.summary.size() : insertion,
+        lines.str());
 }
 
 } // namespace
@@ -715,6 +743,100 @@ GameInstallResult install_game_archive(const std::filesystem::path &archive_path
         .installed_targets = installed.installed_targets,
         .detail = installed.detail
     };
+}
+
+TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer_patch) {
+    std::lock_guard lock(core_mutex);
+    TitlePreparationResult result{
+        .attempted = true,
+        .title_id = std::move(title_id)
+    };
+
+    const auto selected = std::ranges::find(core_status.installed_titles,
+        result.title_id, &InstalledTitle::title_id);
+    if (selected == core_status.installed_titles.end()) {
+        result.detail = "The selected title is no longer installed. Rescan the library.";
+        core_status.selected_title_id = result.title_id;
+        core_status.selected_executable_loaded = false;
+        core_status.title_preparation_status = result.detail;
+        update_title_preparation_summary(result);
+        return result;
+    }
+    result.selected = true;
+    result.title = selected->title;
+
+    if (guest_memory && guest_memory->mapped_segment_count() != 0) {
+        std::string unmap_error;
+        if (!guest_memory->unmap_all_segments(unmap_error)) {
+            result.detail = "The previously prepared executable could not be unloaded: " +
+                unmap_error;
+            core_status.selected_title_id = result.title_id;
+            core_status.selected_executable_loaded = false;
+            core_status.title_preparation_status = result.detail;
+            update_title_preparation_summary(result);
+            return result;
+        }
+    }
+
+    const auto base = host_storage.root / "ux0/app" / result.title_id / "eboot.bin";
+    const auto patch = host_storage.root / "ux0/patch" / result.title_id / "eboot.bin";
+    std::error_code error;
+    const bool base_exists = std::filesystem::is_regular_file(base, error);
+    error.clear();
+    const bool patch_exists = std::filesystem::is_regular_file(patch, error);
+    error.clear();
+    std::filesystem::path executable;
+    if (prefer_patch && patch_exists) {
+        executable = patch;
+        result.patch_selected = true;
+        result.source = "patch";
+    } else if (base_exists) {
+        executable = base;
+        result.source = "base app";
+    } else if (patch_exists) {
+        executable = patch;
+        result.patch_selected = true;
+        result.source = "patch fallback";
+    } else {
+        result.detail = "No base-app or patch eboot.bin exists for this title.";
+    }
+
+    if (!executable.empty()) {
+        result.executable_path = executable.string();
+        const auto probe = probe_artifact(executable);
+        result.probe_valid = probe.structurally_valid;
+        result.self_segments_plain = probe.self_segments_plain;
+        result.kind = probe.kind;
+        result.load_segment_count = probe.load_segments.size();
+        result.encrypted_segment_count = probe.encrypted_segment_count;
+        result.compressed_segment_count = probe.compressed_segment_count;
+        if (!probe.structurally_valid) {
+            result.detail = "Probe stopped: " + probe.detail;
+        } else if (probe.kind == "Vita SELF" && !probe.self_segments_plain) {
+            std::ostringstream detail;
+            detail << "SELF recognized with " << probe.load_segments.size()
+                   << " load segments, but " << probe.encrypted_segment_count
+                   << " segment" << (probe.encrypted_segment_count == 1 ? " is" : "s are")
+                   << " encrypted. Decryption must be integrated before mapping or execution.";
+            result.detail = detail.str();
+        } else if (!guest_memory || !core_status.loader_pipeline_ready) {
+            result.detail = "The guest-memory loader pipeline is unavailable.";
+        } else {
+            const auto load = load_plain_elf(executable, probe, *guest_memory);
+            result.loaded = load.loaded;
+            result.module_name = load.module_name;
+            result.imported_nid_count = load.imported_nid_count;
+            result.bound_import_stub_count = load.bound_import_stub_count;
+            result.module_start_address = load.module_start_address;
+            result.detail = load.detail;
+        }
+    }
+
+    core_status.selected_title_id = result.title_id;
+    core_status.selected_executable_loaded = result.loaded;
+    core_status.title_preparation_status = result.detail;
+    update_title_preparation_summary(result);
+    return result;
 }
 
 bool attach_host_display(std::uint32_t width, std::uint32_t height, std::string &error) {

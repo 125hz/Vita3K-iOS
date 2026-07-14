@@ -13,8 +13,8 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 | CPU/JIT | Dynarmic and memory helpers are built for current desktop/Android hosts | **Started:** a bounded ARM/Thumb runner now completes a tiny real VitaSDK module through its compiler-generated BLX/UXTB/POP path; continue adding instructions from progressively richer samples | Physical-device Milestone 10 diagnostic confirmed; general Vita homebrew still unsupported |
 | Guest memory | Core reserves a contiguous 4 GiB region and uses POSIX signals/mach context details on Apple | **Started:** portable 4 GiB reservation, batch mapping, shared-page permission merging, and temporary write/restore transitions for verified relocations; add iOS fault handling | Native tests pass; physical-device Milestone 5 diagnostic pending |
 | Dependencies | Boost, FFmpeg, SDL, Qt, Vulkan/MoltenVK and other submodules follow desktop/Android recipes | Inventory each dependency, disable unused ones, and build required libraries for `iphoneos arm64` | Reproducible dependency build with no simulator/macOS slices |
-| Filesystem | Desktop paths, dialogs, and writable locations | **Started:** sandbox layout, import enumeration, fixed/preferred-address VELF loading, relocations, NID tables, and ARM import-stub rewriting exist; add alternate relocatable placement, SELF extraction, and Vita VFS mapping | Real VitaSDK Milestone 10 VELF applies 10 relocations, rebinds its stub, and returns on device |
-| Packages/metadata | Full package target depends on crypto, emuenv, FAT/exFAT, io, miniz, psvpfsparser, and vita-toolchain | **Started:** upstream `packages/sfo.cpp` now builds dependency-free with strict bounds checks and identifies imported application metadata; extract the remaining VPK/PKG/SELF dependency closure | Physical-device Milestone 13 parses synthetic and user-owned `param.sfo` files |
+| Filesystem | Desktop paths, dialogs, and writable locations | **Started:** sandbox layout, transactional app/patch installation, title selection, fixed/preferred-address VELF loading, relocations, NID tables, ARM import-stub rewriting, and plain SELF segment loading exist; add alternate relocatable placement, protected SELF decryption, and Vita VFS mapping | Milestone 16 prepares a legal installed SELF and stops safely on encrypted segments |
+| Packages/metadata | Full package target depends on crypto, emuenv, FAT/exFAT, io, miniz, psvpfsparser, and vita-toolchain | **Started:** upstream SFO/miniz paths identify and install app/patch archives; extract the protected SELF, PUP, and remaining VFS dependency closures | Physical-device Milestone 15 installed a user-owned base app and patch transactionally |
 | Audio | Desktop SDL/cubeb device assumptions | Add an AVAudioEngine or SDL-iOS host path, then connect Vita audio HLE | Bounded audio loopback diagnostic passes |
 | Diagnostics | Desktop console/log files and attached debugger | Keep unified log plus rotating/exportable file diagnostics and crash breadcrumbs | A device run produces a useful diagnostic bundle |
 
@@ -33,10 +33,12 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 11. **Done for the first host-display seam:** connect the core to the existing `MTKView`, submit one core-owned clear, present its drawable, and report command-buffer completion.
 12. **Done for the first host-input seam:** normalize UIKit touch events, capture GameController sticks/buttons, and expose bounded input status to the portable core.
 13. **Done for the first upstream package seam:** link Vita3K's real SFO parser, remove its unnecessary Boost/fmt dependency, reject malformed offsets, and identify imported application title metadata.
-14. Extract the upstream VFS and VPK/package installation closure, preserving sandbox-only file access.
-15. Integrate the upstream SELF loader and full interpreter dependency closure.
-16. Connect kernel/thread/HLE state, then renderer and audio closures in bounded steps.
-17. Only after interpreter-mode boot is stable, integrate and validate the ARM64 JIT platform layer.
+14. **Done for bounded package inspection:** identify app/patch roots and reject unsafe archive paths.
+15. **Done for transactional installation:** commit base-app and patch roots together in the private sandbox and inventory installed titles.
+16. **Done for installed-executable preparation:** provide a title library/settings UI, resolve patch-over-base `eboot.bin`, load legal plain SELF segments, and stop explicitly on encrypted segments.
+17. Integrate the protected SELF/decryption dependency closure and attempt a selected title only under a bounded, non-JIT boot harness.
+18. Connect broader kernel/thread/HLE state, then renderer and audio closures in bounded steps.
+19. Only after interpreter-mode boot is stable, integrate and validate the ARM64 JIT platform layer.
 
 Current loader limits are intentional: `ET_SCE_RELEXEC` segments are tried only at their preferred addresses, while SELF segments may require container-specific offset/decompression handling. Imported ARM function stubs are rewritten, but variable/TLS imports and Thumb import stubs are not bound. A valid ELF with a `module_start` is attempted with a 256-instruction ceiling; unsupported code stops with a detailed reason. The Milestone 10 interpreter recognizes only the narrow ARM/Thumb subset used by its two acceptance programs, including one 32-bit BL/BLX form. General Thumb-2 remains unsupported, so this must not be treated as a production Vita CPU backend or scheduler.
 
