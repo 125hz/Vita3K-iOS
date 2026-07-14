@@ -90,6 +90,26 @@ The adapter does not yet implement Vita `SceCtrl` or touch HLE. It proves that r
 4. Confirm the screen reports `Upstream app archive: passed`, `title ID M14TEST01`, and `planned target ux0/app/M14TEST01`.
 
 This fixture is a tiny legal ZIP/VPK made by the smoke tests. The inspector reads only bounded metadata, inventories entries, and rejects absolute, traversal, backslash, or malformed archive paths. Milestone 14 does not extract the VPK, install it, decrypt `eboot.bin`, or execute it. You may inspect a backup you own, but keep large games out of Git and GitHub Actions.
+
+## Milestone 15 Add Game and transactional installation test
+
+1. Install and open the Milestone 15 IPA.
+2. Tap **Add Game ZIP/VPK** and select `milestone15-app-and-patch.zip` from the Actions artifact.
+3. Confirm the success alert reports two application roots and six files.
+4. Confirm the diagnostic view reports `Installed titles: 1`, title ID `M15TEST01`, and `patch installed`.
+
+The picker also accepts a user-owned ZIP with this layout:
+
+```text
+app/PCSG00291/sce_sys/param.sfo
+app/PCSG00291/eboot.bin
+app/PCSG00291/...
+patch/PCSG00291/sce_sys/param.sfo
+patch/PCSG00291/eboot.bin
+patch/PCSG00291/...
+```
+
+Installation runs on a background queue. Every ZIP path is validated, files are decompressed into a private staging directory, sizes/CRC results are checked by miniz, an existing installation is backed up, and the staged app and patch are committed together. A failure rolls the previous installation back. Do not commit game files to this repository or upload them to Actions.
 5. Optionally copy only `sce_sys/param.sfo` from a user-owned Amagami dump. It should report title ID `PCSG00291`.
 
 This is application recognition, not installation or execution. Do not upload game dumps, firmware, keys, or extracted copyrighted assets to the public repository or Actions.
@@ -123,3 +143,5 @@ Milestone 12 adds only the host-input boundary. UIKit touch and GameController s
 Milestone 13 is the first package-layer extraction from upstream: it compiles the real SFO parser into the iOS core and exposes application metadata.
 
 Milestone 14 adds a reusable package archive inspector backed by upstream miniz and the SFO parser. It streams an archive from disk, rejects unsafe paths, inventories its entries, extracts only bounded `sce_sys/param.sfo` metadata in memory, and computes a planned sandbox target. It deliberately leaves transactional extraction, Vita VFS installation, content decryption, and executable loading for later milestones.
+
+Milestone 15 adds the first end-user import UI and a transactional installer for base-app and patch roots. It creates an installed-title inventory under the private emulated Vita filesystem. It does not decrypt or execute the installed `eboot.bin`; title selection and SELF loader integration are the next milestone.

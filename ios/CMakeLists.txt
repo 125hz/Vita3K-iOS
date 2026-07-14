@@ -35,6 +35,7 @@ target_link_libraries(Vita3KiOS PRIVATE
     "-framework Metal"
     "-framework MetalKit"
     "-framework UIKit"
+    "-framework UniformTypeIdentifiers"
 )
 
 set_target_properties(Vita3KiOS PROPERTIES

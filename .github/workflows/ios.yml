@@ -102,6 +102,7 @@ jobs:
             --emit-fixture artifacts/milestone9-thumb-homebrew.elf \
             --emit-sfo-fixture artifacts/milestone13-synthetic-param.sfo \
             --emit-vpk-fixture artifacts/milestone14-synthetic-app.vpk \
+            --emit-install-zip-fixture artifacts/milestone15-app-and-patch.zip \
             --verify-vitasdk artifacts/milestone10-vitasdk-homebrew.velf
 
       - name: Configure iOS application and core target
@@ -143,5 +144,6 @@ jobs:
             artifacts/milestone10-vitasdk-homebrew.self
             artifacts/milestone13-synthetic-param.sfo
             artifacts/milestone14-synthetic-app.vpk
+            artifacts/milestone15-app-and-patch.zip
           if-no-files-found: error
           retention-days: 14

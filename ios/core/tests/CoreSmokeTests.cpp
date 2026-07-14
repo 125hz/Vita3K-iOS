@@ -122,10 +122,21 @@ int main(int argc, char **argv) {
         std::cerr << "The bounded Vita package inspection diagnostic failed.\n";
         return 27;
     }
+    const auto install_zip_fixture = vita3k::ios::make_synthetic_install_zip();
+    const auto parsed_install_zip = packages::inspect_archive(install_zip_fixture);
+    if (!parsed_install_zip.valid || parsed_install_zip.file_count != 6 ||
+        parsed_install_zip.applications.size() != 2 ||
+        parsed_install_zip.applications[0].title_id != "M15TEST01" ||
+        parsed_install_zip.applications[0].install_target != "ux0/app/M15TEST01" ||
+        parsed_install_zip.applications[1].install_target != "ux0/patch/M15TEST01") {
+        std::cerr << parsed_install_zip.detail << '\n';
+        return 30;
+    }
 
     std::filesystem::path emitted_fixture;
     std::filesystem::path emitted_sfo_fixture;
     std::filesystem::path emitted_vpk_fixture;
+    std::filesystem::path emitted_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -135,12 +146,15 @@ int main(int argc, char **argv) {
             emitted_sfo_fixture = argv[++index];
         } else if (argument == "--emit-vpk-fixture" && index + 1 < argc) {
             emitted_vpk_fixture = argv[++index];
+        } else if (argument == "--emit-install-zip-fixture" && index + 1 < argc) {
+            emitted_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
             std::cerr << "Usage: vita3k_ios_core_smoke_tests "
                          "[--emit-fixture <path>] [--emit-sfo-fixture <path>] "
                          "[--emit-vpk-fixture <path>] "
+                         "[--emit-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -152,6 +166,7 @@ int main(int argc, char **argv) {
     const auto status = vita3k::ios::initialize_core(test_root);
     if (!status.linked || !status.self_tests_passed || !status.upstream_metadata_ready ||
         !status.upstream_archive_ready ||
+        !status.package_installer_ready ||
         !status.storage_ready ||
         !status.guest_memory_ready || !status.segment_mapping_ready ||
         !status.loader_pipeline_ready || !status.import_binding_ready ||
@@ -315,6 +330,21 @@ int main(int argc, char **argv) {
             return 28;
         }
     }
+    if (!emitted_install_zip_fixture.empty()) {
+        if (!emitted_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream emitted_install_stream(emitted_install_zip_fixture, std::ios::binary);
+        emitted_install_stream.write(
+            reinterpret_cast<const char *>(install_zip_fixture.data()),
+            static_cast<std::streamsize>(install_zip_fixture.size()));
+        if (error || !emitted_install_stream) {
+            std::cerr << "Could not emit the Milestone 15 installation fixture: "
+                      << error.message() << '\n';
+            return 31;
+        }
+    }
 
     const auto rescanned = vita3k::ios::rescan_imports();
     if (rescanned.imported_artifacts.size() != 1 ||
@@ -432,6 +462,45 @@ int main(int argc, char **argv) {
         return 29;
     }
 
+    const auto archive_path = test_root / "milestone15-app-and-patch.zip";
+    std::ofstream archive_stream(archive_path, std::ios::binary);
+    archive_stream.write(reinterpret_cast<const char *>(install_zip_fixture.data()),
+        static_cast<std::streamsize>(install_zip_fixture.size()));
+    archive_stream.close();
+    const auto previous_app = test_root / "Vita3K/ux0/app/M15TEST01/old.txt";
+    std::filesystem::create_directories(previous_app.parent_path(), error);
+    std::ofstream(previous_app) << "previous installation";
+    const auto install_result = vita3k::ios::install_game_archive(archive_path);
+    const auto installed_status = vita3k::ios::query_core_status();
+    if (!install_result.success || install_result.application_count != 2 ||
+        install_result.file_count != 6 || install_result.installed_targets.size() != 2 ||
+        std::filesystem::exists(previous_app) ||
+        !std::filesystem::is_regular_file(
+            test_root / "Vita3K/ux0/app/M15TEST01/eboot.bin") ||
+        !std::filesystem::is_regular_file(
+            test_root / "Vita3K/ux0/patch/M15TEST01/assets/patch.dat") ||
+        installed_status.installed_titles.size() != 1 ||
+        installed_status.installed_titles.front().title_id != "M15TEST01" ||
+        !installed_status.installed_titles.front().patch_installed ||
+        installed_status.summary.find("Installed titles: 1") == std::string::npos ||
+        installed_status.summary.find("patch installed") == std::string::npos) {
+        std::cerr << installed_status.summary << '\n';
+        return 32;
+    }
+    const auto unsafe_archive_path = test_root / "milestone15-unsafe.zip";
+    const auto unsafe_archive = vita3k::ios::make_synthetic_vpk(true);
+    std::ofstream unsafe_stream(unsafe_archive_path, std::ios::binary);
+    unsafe_stream.write(reinterpret_cast<const char *>(unsafe_archive.data()),
+        static_cast<std::streamsize>(unsafe_archive.size()));
+    unsafe_stream.close();
+    const auto unsafe_install = vita3k::ios::install_game_archive(unsafe_archive_path);
+    if (unsafe_install.success ||
+        !std::filesystem::is_regular_file(
+            test_root / "Vita3K/ux0/app/M15TEST01/eboot.bin")) {
+        std::cerr << "An unsafe archive modified the installed title.\n";
+        return 33;
+    }
+
     if (!vita3k::ios::attach_host_display(1280, 720, display_error)) {
         std::cerr << display_error << '\n';
         return 12;
@@ -489,6 +558,10 @@ int main(int argc, char **argv) {
     if (!emitted_vpk_fixture.empty()) {
         std::cout << "Emitted legal Milestone 14 VPK fixture: "
                   << emitted_vpk_fixture << '\n';
+    }
+    if (!emitted_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 15 installation fixture: "
+                  << emitted_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

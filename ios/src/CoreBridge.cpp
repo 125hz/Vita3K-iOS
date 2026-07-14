@@ -428,6 +428,34 @@ void append_storage_error(std::string message) {
     host_storage.error += std::move(message);
 }
 
+void scan_installed_titles() {
+    core_status.installed_titles.clear();
+    if (!host_storage.ready)
+        return;
+    std::error_code error;
+    const auto app_root = host_storage.root / "ux0/app";
+    for (std::filesystem::directory_iterator iterator(app_root, error), end;
+         iterator != end && !error; iterator.increment(error)) {
+        if (!iterator->is_directory(error) || error)
+            continue;
+        const auto metadata = parse_vita_app_metadata(iterator->path() / "sce_sys/param.sfo");
+        if (!metadata.parsed)
+            continue;
+        core_status.installed_titles.push_back({
+            .title_id = metadata.title_id,
+            .title = metadata.title,
+            .app_version = metadata.app_version,
+            .patch_installed = std::filesystem::is_directory(
+                host_storage.root / "ux0/patch" / metadata.title_id, error),
+            .app_path = iterator->path().string()
+        });
+        error.clear();
+    }
+    if (error)
+        append_storage_error("Installed title scan: " + error.message());
+    std::ranges::sort(core_status.installed_titles, {}, &InstalledTitle::title_id);
+}
+
 void update_status_from_storage() {
     if (guest_memory && guest_memory->mapped_segment_count() != 0) {
         std::string unmap_error;
@@ -438,6 +466,7 @@ void update_status_from_storage() {
 
     core_status.storage_ready = host_storage.ready;
     core_status.storage_root = host_storage.root.string();
+    scan_installed_titles();
     core_status.imported_artifacts.clear();
     core_status.imported_artifacts.reserve(host_storage.imported_files.size());
 
@@ -547,6 +576,9 @@ void update_status_from_storage() {
             << "Upstream app archive: " << (core_status.upstream_archive_ready
                 ? "passed (miniz + Vita3K package inspector linked)"
                 : "FAILED") << "\n"
+            << "Package installer: " << (core_status.package_installer_ready
+                ? "ready (transactional app + patch commit)"
+                : "FAILED") << "\n"
             << "Guest memory: " << (core_status.guest_memory_ready ? "ready" : "FAILED");
     if (core_status.guest_memory_ready) {
         summary << " (" << (core_status.guest_memory_size >> 30) << " GiB reserved, "
@@ -572,7 +604,16 @@ void update_status_from_storage() {
             " instructions + " + std::to_string(core_status.thread_test_hle_dispatch_count) +
             " kernel HLE calls + exit " + std::to_string(core_status.thread_test_exit_status) + ")"
         : "FAILED");
-    summary << "\nStorage: " << (core_status.storage_ready ? "ready" : "FAILED") << "\n"
+    summary << "\nStorage: " << (core_status.storage_ready ? "ready" : "FAILED")
+            << "\nInstalled titles: " << core_status.installed_titles.size();
+    for (const auto &title : core_status.installed_titles) {
+        summary << "\n  + " << title.title_id << " - " << title.title;
+        if (title.patch_installed)
+            summary << " (patch installed)";
+    }
+    if (!core_status.package_install_status.empty())
+        summary << "\nLast install: " << core_status.package_install_status;
+    summary << "\n"
             << "Import candidates: " << core_status.imported_artifacts.size() << "\n"
             << "ELF loader: ";
     if (loaded_filename.empty()) {
@@ -589,7 +630,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: add an explicit sandbox installation transaction, then connect encrypted SELF loading. General Vita homebrew and games are not active yet.";
+    summary << "\n\nNext: add an installed-title library/selector and connect selected eboot.bin SELF loading. General Vita games are not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
@@ -636,6 +677,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     core_status.guest_memory_size = reserved ? guest_memory->size() : 0;
     core_status.host_page_size = reserved ? guest_memory->host_page_size() : 0;
     host_storage = initialize_host_storage(documents_root);
+    core_status.package_installer_ready = core_status.upstream_archive_ready && host_storage.ready;
     if (!memory_error.empty()) {
         append_storage_error("Guest memory: " + memory_error);
     }
@@ -656,6 +698,23 @@ CoreStatus rescan_imports() {
     scan_imports(host_storage);
     update_status_from_storage();
     return core_status;
+}
+
+GameInstallResult install_game_archive(const std::filesystem::path &archive_path) {
+    std::lock_guard lock(core_mutex);
+    const auto installed = packages::install_archive_transactionally(
+        archive_path, host_storage.root);
+    core_status.package_install_status = installed.detail;
+    update_status_from_storage();
+    return {
+        .attempted = installed.attempted,
+        .success = installed.success,
+        .application_count = installed.application_count,
+        .file_count = installed.file_count,
+        .bytes_written = installed.bytes_written,
+        .installed_targets = installed.installed_targets,
+        .detail = installed.detail
+    };
 }
 
 bool attach_host_display(std::uint32_t width, std::uint32_t height, std::string &error) {

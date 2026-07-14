@@ -14,7 +14,7 @@ bool is_import_candidate(const std::filesystem::path &path) {
         return static_cast<char>(std::tolower(character));
     });
     constexpr std::array supported_extensions{
-        ".bin", ".elf", ".self", ".sfo", ".velf", ".vpk"
+        ".bin", ".elf", ".self", ".sfo", ".velf", ".vpk", ".zip"
     };
     return std::ranges::find(supported_extensions, extension) != supported_extensions.end();
 }
@@ -54,6 +54,8 @@ HostStorage initialize_host_storage(const std::filesystem::path &documents_root)
         "imports",
         "logs",
         "ux0/app",
+        "ux0/patch",
+        "ux0/addcont",
         "ux0/data",
         "ux0/user"
     };

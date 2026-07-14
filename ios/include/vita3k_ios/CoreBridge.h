@@ -11,6 +11,24 @@
 
 namespace vita3k::ios {
 
+struct InstalledTitle {
+    std::string title_id;
+    std::string title;
+    std::string app_version;
+    bool patch_installed{};
+    std::string app_path;
+};
+
+struct GameInstallResult {
+    bool attempted{};
+    bool success{};
+    std::size_t application_count{};
+    std::size_t file_count{};
+    std::uint64_t bytes_written{};
+    std::vector<std::string> installed_targets;
+    std::string detail;
+};
+
 struct ImportedArtifact {
     std::string filename;
     std::uintmax_t size;
@@ -62,6 +80,7 @@ struct CoreStatus {
     bool self_tests_passed;
     bool upstream_metadata_ready;
     bool upstream_archive_ready;
+    bool package_installer_ready;
     bool storage_ready;
     bool guest_memory_ready;
     bool segment_mapping_ready;
@@ -90,6 +109,8 @@ struct CoreStatus {
     double input_last_touch_x;
     double input_last_touch_y;
     std::string storage_root;
+    std::vector<InstalledTitle> installed_titles;
+    std::string package_install_status;
     std::vector<ImportedArtifact> imported_artifacts;
     std::string summary;
 };
@@ -97,6 +118,7 @@ struct CoreStatus {
 CoreStatus initialize_core(const std::filesystem::path &documents_root);
 CoreStatus query_core_status();
 CoreStatus rescan_imports();
+GameInstallResult install_game_archive(const std::filesystem::path &archive_path);
 bool attach_host_display(std::uint32_t width, std::uint32_t height, std::string &error);
 std::optional<HostDisplayFrame> acquire_host_display_frame(std::uint32_t width,
     std::uint32_t height, std::string &error);

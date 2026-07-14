@@ -31,7 +31,19 @@ struct ArchiveInspection {
     std::string detail;
 };
 
+struct ArchiveInstallResult {
+    bool attempted{};
+    bool success{};
+    std::size_t application_count{};
+    std::size_t file_count{};
+    std::uint64_t bytes_written{};
+    std::vector<std::string> installed_targets;
+    std::string detail;
+};
+
 ArchiveInspection inspect_archive(std::span<const std::uint8_t> content);
 ArchiveInspection inspect_archive(const std::filesystem::path &path);
+ArchiveInstallResult install_archive_transactionally(const std::filesystem::path &archive_path,
+    const std::filesystem::path &vfs_root);
 
 } // namespace packages
