@@ -52,6 +52,10 @@ The relocation parser implements upstream formats 0–9 and the common ARM/Thumb
 
 The bounded runtime now implements only Amagami's captured `__cxa_set_dso_handle_main` boundary. It matches upstream Vita3K by saving `r0` as the process-wide libc DSO handle, returns through the normal import trampoline, and continues until the next honest boundary. The CI artifact's `milestone23-libc-dso-runtime.zip` verifies the state mutation, successful NID retention, one HLE dispatch, and clean module return. This is not a general libc implementation or a full game boot loop; the Vion comparison in `ios/VION-ANALYSIS.md` identifies the full scheduler, module, VFS, Unicorn, GXM, and renderer integration still required.
 
+## Milestone 24 broad Thumb-2 runtime families
+
+The bounded interpreter now accepts the complete modified-immediate ALU family and the compiler-facing wide single-register load/store family anchored by Amagami's `F05F 0B00` and `F8DD A000` sequence. Immediate expansion, arithmetic/logical flags, signed loads, access widths, pre/post indexing, add/subtract addressing, and writeback are state-tested. Unpredictable aliases, invalid encodings, overflow, and unmapped accesses stop without changing unknown state. The legal `milestone24-thumb2-runtime-families.zip` fixture crosses the libc HLE and both captured instructions before returning cleanly.
+
 ## Firmware packages
 
 Do not commit firmware PUP files to this public repository or upload them as Actions artifacts. The future iOS installer should select user-owned files locally and write only extracted virtual-filesystem content inside the app sandbox. Upstream `install_pup` currently depends on the packages/crypto layers, OpenSSL, vita-toolchain key handling, FAT/exFAT extraction, miniz, and psvpfsparser; those dependencies are not part of the current iOS core slice. `fontpkg.pup`, `preinstall.pup`, and the system update PUP should therefore remain local until that bounded installer milestone is implemented.

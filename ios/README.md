@@ -235,3 +235,19 @@ The accepted Milestone 22 Amagami attempt identified the first real call as `__c
 4. Share the entire next alert or background diagnostic. A later CPU instruction, memory fault, unbound HLE, module return, or instruction ceiling is expected; the previous `0xBFE02B3A` boundary should now count as one dispatched HLE call and execution should continue past it.
 
 The Actions artifact includes `milestone23-libc-dso-runtime.zip`. Its legal synthetic title imports `__cxa_set_dso_handle_main`, passes handle `0x81000200`, dispatches exactly one HLE call, records the handle, and returns through the module's zero-link sentinel after seven instructions. See `ios/VION-ANALYSIS.md` for the verified Vion architecture comparison and the larger full-core migration path.
+
+## Milestone 24 broad Thumb-2 runtime-family batch
+
+The accepted Milestone 23 Amagami attempt crossed the first stateful libc HLE, executed 16 instructions and one HLE call, then stopped at `F05F 0B00` (`MOVS.W r11, #0`) at `0x810175BE`. Its look-ahead immediately exposed `F8DD A000` (`LDR.W r10, [sp]`). Milestone 24 implements both complete compiler-facing families rather than only those two encodings:
+
+- Thumb-2 modified-immediate `AND/BIC/ORR/ORN/EOR`, `MOV/MVN`, `ADD/ADC/SBC/SUB/RSB`, and `TST/TEQ/CMN/CMP`, including architectural immediate replication/rotation and exact `N/Z/C/V` updates.
+- Thumb-2 byte, halfword, signed-byte, signed-halfword, and word loads/stores using imm12 offsets and checked imm8 pre-index, post-index, add/subtract, and writeback forms.
+
+Unpredictable register combinations, invalid replicated-zero encodings, writeback aliasing, address overflow, and guest-memory faults remain hard stops.
+
+1. Install the Milestone 24 IPA and open **Game Library**.
+2. Select `PCSG00291`, keep **Prefer Installed Patch** enabled, and confirm `via lifecycle export`.
+3. Run **Attempt Boot (256 Instructions)** once.
+4. Share the complete next boundary. It must advance beyond both `0x810175BE` and `0x810175C2`, retain one successful libc HLE call and the DSO handle, then stop honestly at the next unsupported CPU, memory, HLE, return, or budget boundary.
+
+The Actions artifact includes `milestone24-thumb2-runtime-families.zip`. Its legal synthetic title dispatches the Milestone 23 libc HLE, executes the exact captured `MOVS.W` and `LDR.W`, and returns after nine instructions. Portable tests cover the wider ALU, flags, signed/unsigned memory, indexed writeback, invalid-encoding, and overflow behavior.

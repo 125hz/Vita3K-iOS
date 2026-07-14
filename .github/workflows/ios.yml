@@ -111,6 +111,7 @@ jobs:
             --emit-m21-install-zip-fixture artifacts/milestone21-thumb2-compiler-batch.zip \
             --emit-m22-install-zip-fixture artifacts/milestone22-inline-hle-diagnostic.zip \
             --emit-m23-install-zip-fixture artifacts/milestone23-libc-dso-runtime.zip \
+            --emit-m24-install-zip-fixture artifacts/milestone24-thumb2-runtime-families.zip \
             --verify-vitasdk artifacts/milestone10-vitasdk-homebrew.velf
 
       - name: Configure iOS application and core target
@@ -161,5 +162,6 @@ jobs:
             artifacts/milestone21-thumb2-compiler-batch.zip
             artifacts/milestone22-inline-hle-diagnostic.zip
             artifacts/milestone23-libc-dso-runtime.zip
+            artifacts/milestone24-thumb2-runtime-families.zip
           if-no-files-found: error
           retention-days: 14

@@ -186,6 +186,10 @@ Good early assignments are dependency inventory, extracting a headless core targ
 
 Run the one-shot Amagami attempt after preparing the installed patch. NID `0xBFE02B3A` now invokes the upstream-compatible `__cxa_set_dso_handle_main` handler, stores `r0` in per-run libc state, returns zero through the import ABI, and continues within the same 256-instruction budget. Return the next complete boundary. The CI artifact's `milestone23-libc-dso-runtime.zip` proves one successful HLE dispatch, handle `0x81000200`, and a clean seven-instruction module return.
 
+## Milestone 24 broad Thumb-2 runtime families
+
+Milestone 24 intentionally batches full instruction families. The interpreter implements Thumb-2 modified-immediate logical/arithmetic/test operations with architectural immediate expansion and flags, plus wide signed/unsigned byte, halfword, and word immediate loads/stores with checked offset and writeback modes. This advances the accepted Amagami boundary past `F05F 0B00` and the following `F8DD A000` in one build. The CI artifact `milestone24-thumb2-runtime-families.zip` executes both after the stateful libc call and returns after nine instructions.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

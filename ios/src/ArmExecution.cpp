@@ -81,6 +81,36 @@ struct ShiftResult {
     bool carry{};
 };
 
+struct ExpandedImmediate {
+    std::uint32_t value{};
+    bool carry{};
+    bool valid{};
+};
+
+ExpandedImmediate thumb_expand_immediate(std::uint16_t upper,
+    std::uint16_t lower, bool carry_in) {
+    const auto immediate12 = static_cast<std::uint32_t>(
+        ((upper & 0x0400u) << 1) | ((lower & 0x7000u) >> 4) | (lower & 0x00FFu));
+    if ((immediate12 & 0x0C00u) == 0) {
+        const auto immediate8 = immediate12 & 0xFFu;
+        switch ((immediate12 >> 8) & 0x3u) {
+        case 0:
+            return { immediate8, carry_in, true };
+        case 1:
+            return { (immediate8 << 16) | immediate8, carry_in, immediate8 != 0 };
+        case 2:
+            return { (immediate8 << 24) | (immediate8 << 8), carry_in, immediate8 != 0 };
+        default:
+            return { immediate8 * 0x01010101u, carry_in, immediate8 != 0 };
+        }
+    }
+
+    const auto rotation = (immediate12 >> 7) & 0x1Fu;
+    const auto unrotated = 0x80u | (immediate12 & 0x7Fu);
+    const auto value = std::rotr(unrotated, static_cast<int>(rotation));
+    return { value, (value & 0x80000000u) != 0, true };
+}
+
 ShiftResult logical_shift_left(std::uint32_t value, std::uint32_t amount, bool carry_in) {
     if (amount == 0) {
         return { value, carry_in };
@@ -1351,6 +1381,208 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
             .final_pc = state_.registers[register_pc],
             .last_instruction = packed_instruction
         };
+    }
+
+    // Thumb-2 data processing with a modified immediate. Decode the complete
+    // architectural immediate expansion and the compiler-facing logical and
+    // arithmetic family, including MOV/MVN and the flag-only test aliases.
+    if ((instruction & 0xFA00u) == 0xF000u) {
+        std::uint16_t lower = 0;
+        std::string lower_error;
+        if (!read_guest_value(memory_, pc + 2u, lower, lower_error)) {
+            return memory_fault("Thumb-2 modified-immediate suffix fetch", lower_error);
+        }
+        if ((lower & 0x8000u) == 0) {
+            const auto packed_instruction = static_cast<std::uint32_t>(instruction) | (static_cast<std::uint32_t>(lower) << 16);
+            const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) | lower;
+            const auto operation = (instruction >> 5) & 0xFu;
+            const bool set_flags = (instruction & 0x0010u) != 0;
+            const auto source = instruction & 0xFu;
+            const auto destination = (lower >> 8) & 0xFu;
+            const bool move_alias = source == register_pc && (operation == 0x2u || operation == 0x3u);
+            const bool test_alias = destination == register_pc && set_flags && (operation == 0x0u || operation == 0x4u || operation == 0x8u || operation == 0xDu);
+            const bool logical_operation = operation <= 0x4u;
+            const bool arithmetic_operation = operation == 0x8u || operation == 0xAu || operation == 0xBu || operation == 0xDu || operation == 0xEu;
+            const bool stack_arithmetic = (operation == 0x8u || operation == 0xDu) && !test_alias;
+            const auto expanded = thumb_expand_immediate(
+                instruction, lower, get_flag(state_, flag_carry));
+            const bool invalid_registers = (!move_alias && source == register_pc) || (!test_alias && destination == register_pc) || ((source == register_sp || destination == register_sp) && (!stack_arithmetic || (destination == register_sp && set_flags))) || (test_alias && source == register_sp);
+            state_.registers[register_pc] = pc + 4u;
+            if ((!logical_operation && !arithmetic_operation) || !expanded.valid || invalid_registers) {
+                return {
+                    .reason = ArmStopReason::unsupported_instruction,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = packed_instruction,
+                    .detail = "Unsupported or unpredictable Thumb-2 modified-immediate instruction " + hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
+                };
+            }
+
+            const auto left = move_alias ? 0u : state_.registers[source];
+            std::uint32_t value = expanded.value;
+            bool arithmetic_flags = false;
+            ArithmeticResult arithmetic;
+            switch (operation) {
+            case 0x0: // AND / TST
+                value = left & expanded.value;
+                break;
+            case 0x1: // BIC
+                value = left & ~expanded.value;
+                break;
+            case 0x2: // ORR / MOV
+                value = move_alias ? expanded.value : left | expanded.value;
+                break;
+            case 0x3: // ORN / MVN
+                value = move_alias ? ~expanded.value : left | ~expanded.value;
+                break;
+            case 0x4: // EOR / TEQ
+                value = left ^ expanded.value;
+                break;
+            case 0x8: // ADD / CMN
+                arithmetic = add_with_carry(left, expanded.value, false);
+                value = arithmetic.value;
+                arithmetic_flags = true;
+                break;
+            case 0xA: // ADC
+                arithmetic = add_with_carry(left, expanded.value,
+                    get_flag(state_, flag_carry));
+                value = arithmetic.value;
+                arithmetic_flags = true;
+                break;
+            case 0xB: // SBC
+                arithmetic = add_with_carry(left, ~expanded.value,
+                    get_flag(state_, flag_carry));
+                value = arithmetic.value;
+                arithmetic_flags = true;
+                break;
+            case 0xD: // SUB / CMP
+                arithmetic = add_with_carry(left, ~expanded.value, true);
+                value = arithmetic.value;
+                arithmetic_flags = true;
+                break;
+            case 0xE: // RSB
+                arithmetic = add_with_carry(expanded.value, ~left, true);
+                value = arithmetic.value;
+                arithmetic_flags = true;
+                break;
+            default:
+                break;
+            }
+
+            if (!test_alias) {
+                state_.registers[destination] = value;
+            }
+            if (set_flags) {
+                if (arithmetic_flags) {
+                    set_arithmetic_flags(state_, arithmetic);
+                } else {
+                    set_negative_zero(state_, value);
+                    set_flag(state_, flag_carry, expanded.carry);
+                }
+            }
+            return {
+                .reason = ArmStopReason::instruction_limit,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = state_.registers[register_pc],
+                .last_instruction = packed_instruction
+            };
+        }
+    }
+
+    // Thumb-2 wide single-register memory operations. This covers unsigned
+    // loads/stores and signed loads for byte, halfword, and word sizes in the
+    // imm12 offset and imm8 pre/post-indexed forms.
+    const auto wide_memory_opcode = instruction & 0xFFF0u;
+    const bool wide_memory_imm12 = wide_memory_opcode == 0xF880u || wide_memory_opcode == 0xF890u || wide_memory_opcode == 0xF8A0u || wide_memory_opcode == 0xF8B0u || wide_memory_opcode == 0xF8C0u || wide_memory_opcode == 0xF8D0u || wide_memory_opcode == 0xF990u || wide_memory_opcode == 0xF9B0u;
+    const bool wide_memory_imm8 = wide_memory_opcode == 0xF800u || wide_memory_opcode == 0xF810u || wide_memory_opcode == 0xF820u || wide_memory_opcode == 0xF830u || wide_memory_opcode == 0xF840u || wide_memory_opcode == 0xF850u || wide_memory_opcode == 0xF910u || wide_memory_opcode == 0xF930u;
+    if (wide_memory_imm12 || wide_memory_imm8) {
+        std::uint16_t lower = 0;
+        std::string lower_error;
+        if (!read_guest_value(memory_, pc + 2u, lower, lower_error)) {
+            return memory_fault("Thumb-2 wide memory suffix fetch", lower_error);
+        }
+        if (wide_memory_imm12 || (lower & 0x0800u) != 0) {
+            const auto packed_instruction = static_cast<std::uint32_t>(instruction) | (static_cast<std::uint32_t>(lower) << 16);
+            const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) | lower;
+            const bool load = wide_memory_opcode == 0xF890u || wide_memory_opcode == 0xF8B0u || wide_memory_opcode == 0xF8D0u || wide_memory_opcode == 0xF990u || wide_memory_opcode == 0xF9B0u || wide_memory_opcode == 0xF810u || wide_memory_opcode == 0xF830u || wide_memory_opcode == 0xF850u || wide_memory_opcode == 0xF910u || wide_memory_opcode == 0xF930u;
+            const bool signed_load = wide_memory_opcode == 0xF990u || wide_memory_opcode == 0xF9B0u || wide_memory_opcode == 0xF910u || wide_memory_opcode == 0xF930u;
+            const std::size_t access_size = (wide_memory_opcode == 0xF880u || wide_memory_opcode == 0xF890u || wide_memory_opcode == 0xF990u || wide_memory_opcode == 0xF800u || wide_memory_opcode == 0xF810u || wide_memory_opcode == 0xF910u)
+                ? 1u
+                : (wide_memory_opcode == 0xF8A0u || wide_memory_opcode == 0xF8B0u || wide_memory_opcode == 0xF9B0u || wide_memory_opcode == 0xF820u || wide_memory_opcode == 0xF830u || wide_memory_opcode == 0xF930u)
+                ? 2u
+                : 4u;
+            const auto base_register = instruction & 0xFu;
+            const auto target_register = (lower >> 12) & 0xFu;
+            const bool pre_index = wide_memory_imm12 || (lower & 0x0400u) != 0;
+            const bool add_offset = wide_memory_imm12 || (lower & 0x0200u) != 0;
+            const bool writeback_bit = (lower & 0x0100u) != 0;
+            const bool writeback = !wide_memory_imm12 && (!pre_index || writeback_bit);
+            const auto immediate = static_cast<std::uint32_t>(
+                wide_memory_imm12 ? lower & 0x0FFFu : lower & 0x00FFu);
+            const bool literal_load = wide_memory_imm12 && load && base_register == register_pc;
+            const bool unprivileged_access = !wide_memory_imm12 && pre_index && add_offset && !writeback_bit;
+            const bool invalid = (!wide_memory_imm12 && !pre_index && !writeback_bit) || unprivileged_access || (!literal_load && base_register == register_pc) || target_register == register_pc || (target_register == register_sp && access_size != sizeof(std::uint32_t)) || (writeback && base_register == target_register);
+            state_.registers[register_pc] = pc + 4u;
+            if (invalid) {
+                return {
+                    .reason = ArmStopReason::unsupported_instruction,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = packed_instruction,
+                    .detail = "Unsupported or unpredictable Thumb-2 wide memory instruction " + hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
+                };
+            }
+
+            const auto base = literal_load
+                ? ((pc + 4u) & ~3u)
+                : state_.registers[base_register];
+            const auto offset_address_64 = add_offset
+                ? static_cast<std::uint64_t>(base) + immediate
+                : (base >= immediate
+                          ? static_cast<std::uint64_t>(base - immediate)
+                          : std::numeric_limits<std::uint64_t>::max());
+            if (offset_address_64 > std::numeric_limits<std::uint32_t>::max()) {
+                return {
+                    .reason = ArmStopReason::memory_fault,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = packed_instruction,
+                    .detail = "Thumb-2 wide memory address overflowed guest address space."
+                };
+            }
+            const auto offset_address = static_cast<std::uint32_t>(offset_address_64);
+            const auto address = pre_index ? offset_address : base;
+            std::array<std::uint8_t, sizeof(std::uint32_t)> data{};
+            std::string data_error;
+            if (load) {
+                if (!memory_.read(address, std::span(data).first(access_size), data_error)) {
+                    return memory_fault("Thumb-2 wide load", data_error);
+                }
+                std::uint32_t value = 0;
+                std::memcpy(&value, data.data(), access_size);
+                if (signed_load && access_size == 1 && (value & 0x80u) != 0) {
+                    value |= 0xFFFFFF00u;
+                } else if (signed_load && access_size == 2 && (value & 0x8000u) != 0) {
+                    value |= 0xFFFF0000u;
+                }
+                state_.registers[target_register] = value;
+            } else {
+                std::memcpy(data.data(), &state_.registers[target_register], access_size);
+                if (!memory_.write(address,
+                        std::span<const std::uint8_t>(data.data(), access_size), data_error)) {
+                    return memory_fault("Thumb-2 wide store", data_error);
+                }
+            }
+            if (writeback) {
+                state_.registers[base_register] = offset_address;
+            }
+            return {
+                .reason = ArmStopReason::instruction_limit,
+                .instructions_executed = state_.instruction_count,
+                .final_pc = state_.registers[register_pc],
+                .last_instruction = packed_instruction
+            };
+        }
     }
 
     // MOVW/MOVT construct compiler constants without touching flags. The

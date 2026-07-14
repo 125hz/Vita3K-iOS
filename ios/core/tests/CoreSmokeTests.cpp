@@ -159,6 +159,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m21_install_zip_fixture;
     std::filesystem::path emitted_m22_install_zip_fixture;
     std::filesystem::path emitted_m23_install_zip_fixture;
+    std::filesystem::path emitted_m24_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -186,6 +187,8 @@ int main(int argc, char **argv) {
             emitted_m22_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m23-install-zip-fixture" && index + 1 < argc) {
             emitted_m23_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m24-install-zip-fixture" && index + 1 < argc) {
+            emitted_m24_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -201,6 +204,7 @@ int main(int argc, char **argv) {
                          "[--emit-m21-install-zip-fixture <path>] "
                          "[--emit-m22-install-zip-fixture <path>] "
                          "[--emit-m23-install-zip-fixture <path>] "
+                         "[--emit-m24-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -412,6 +416,23 @@ int main(int argc, char **argv) {
     const auto libc_dso_runtime_self = make_plain_self(libc_dso_runtime_elf);
     const auto m23_install_zip = vita3k::ios::make_synthetic_install_zip(
         libc_dso_runtime_self, libc_dso_runtime_self);
+    auto runtime_family_elf = libc_dso_runtime_elf;
+    const std::array<std::uint16_t, 9> runtime_family_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4804u, // LDR r0, [pc, #16] -> synthetic DSO handle
+        0x4B04u, // LDR r3, [pc, #16] -> libc import stub
+        0x4798u, // BLX r3
+        0xF05Fu, // MOVS.W r11, #0 (captured Amagami instruction)
+        0x0B00u,
+        0xF8DDu, // LDR.W r10, [sp] (captured Amagami instruction)
+        0xA000u,
+        0xBD10u // POP {r4, pc} -> zero-link return sentinel
+    };
+    std::memcpy(runtime_family_elf.data() + 244, runtime_family_program.data(),
+        sizeof(runtime_family_program));
+    const auto runtime_family_self = make_plain_self(runtime_family_elf);
+    const auto m24_install_zip = vita3k::ios::make_synthetic_install_zip(
+        runtime_family_self, runtime_family_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -439,6 +460,10 @@ int main(int argc, char **argv) {
     if (m23_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 23 libc runtime fixture.\n";
         return 68;
+    }
+    if (m24_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 24 Thumb-2 runtime-family fixture.\n";
+        return 73;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -541,6 +566,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 23 libc runtime fixture.\n";
             return 69;
+        }
+    }
+    if (!emitted_m24_install_zip_fixture.empty()) {
+        if (!emitted_m24_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m24_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m24_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m24_install_zip.data()),
+            static_cast<std::streamsize>(m24_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 24 Thumb-2 runtime-family fixture.\n";
+            return 74;
         }
     }
 
@@ -841,6 +879,27 @@ int main(int argc, char **argv) {
         return 72;
     }
 
+    const auto m24_archive_path = test_root / "milestone24-thumb2-runtime-families.zip";
+    std::ofstream m24_archive_stream(m24_archive_path, std::ios::binary);
+    m24_archive_stream.write(reinterpret_cast<const char *>(m24_install_zip.data()),
+        static_cast<std::streamsize>(m24_install_zip.size()));
+    m24_archive_stream.close();
+    const auto m24_install = vita3k::ios::install_game_archive(m24_archive_path);
+    if (!m24_install.success || m24_install.file_count != 6) {
+        std::cerr << m24_install.detail << '\n';
+        return 75;
+    }
+    const auto runtime_family_prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+    if (!runtime_family_prepared.selected || !runtime_family_prepared.loaded || !runtime_family_prepared.module_start_from_export || runtime_family_prepared.module_start_address != 0x81000061) {
+        std::cerr << runtime_family_prepared.detail << '\n';
+        return 76;
+    }
+    const auto runtime_family_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!runtime_family_boot.started || runtime_family_boot.exited || !runtime_family_boot.returned || runtime_family_boot.instruction_count != 9 || runtime_family_boot.hle_dispatch_count != 1 || runtime_family_boot.last_hle_nid != cxa_set_dso_handle_main_nid || runtime_family_boot.libc_dso_handle_main != synthetic_dso_handle || runtime_family_boot.return_value != 0) {
+        std::cerr << runtime_family_boot.detail << '\n';
+        return 77;
+    }
+
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
@@ -935,6 +994,10 @@ int main(int argc, char **argv) {
     if (!emitted_m23_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 23 libc runtime fixture: "
                   << emitted_m23_install_zip_fixture << '\n';
+    }
+    if (!emitted_m24_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 24 Thumb-2 runtime-family fixture: "
+                  << emitted_m24_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

@@ -711,6 +711,137 @@ bool run_thumb2_compiler_batch_test(GuestMemory &memory, std::string &error) {
     return true;
 }
 
+bool run_thumb2_runtime_family_test(GuestMemory &memory, std::string &error) {
+    constexpr std::uint32_t test_address = 0x70000;
+    std::array<std::uint8_t, 0x100> program{};
+
+    write_value(program, 0x00, static_cast<std::uint16_t>(0xF05F)); // MOVS.W r11, #0
+    write_value(program, 0x02, static_cast<std::uint16_t>(0x0B00));
+    write_value(program, 0x04, static_cast<std::uint16_t>(0xF8DD)); // LDR.W r10, [sp]
+    write_value(program, 0x06, static_cast<std::uint16_t>(0xA000));
+
+    write_value(program, 0x10, static_cast<std::uint16_t>(0xF881)); // STRB.W r0, [r1, #1]
+    write_value(program, 0x12, static_cast<std::uint16_t>(0x0001));
+    write_value(program, 0x14, static_cast<std::uint16_t>(0xF991)); // LDRSB.W r2, [r1, #1]
+    write_value(program, 0x16, static_cast<std::uint16_t>(0x2001));
+    write_value(program, 0x18, static_cast<std::uint16_t>(0xF8A1)); // STRH.W r3, [r1, #2]
+    write_value(program, 0x1A, static_cast<std::uint16_t>(0x3002));
+    write_value(program, 0x1C, static_cast<std::uint16_t>(0xF9B1)); // LDRSH.W r4, [r1, #2]
+    write_value(program, 0x1E, static_cast<std::uint16_t>(0x4002));
+    write_value(program, 0x20, static_cast<std::uint16_t>(0xF8C1)); // STR.W r5, [r1, #4]
+    write_value(program, 0x22, static_cast<std::uint16_t>(0x5004));
+    write_value(program, 0x24, static_cast<std::uint16_t>(0xF8D1)); // LDR.W r6, [r1, #4]
+    write_value(program, 0x26, static_cast<std::uint16_t>(0x6004));
+
+    write_value(program, 0x30, static_cast<std::uint16_t>(0xF841)); // STR.W r0, [r1, #8]!
+    write_value(program, 0x32, static_cast<std::uint16_t>(0x0F08));
+    write_value(program, 0x34, static_cast<std::uint16_t>(0xF851)); // LDR.W r2, [r1], #8
+    write_value(program, 0x36, static_cast<std::uint16_t>(0x2B08));
+    write_value(program, 0x38, static_cast<std::uint16_t>(0xF811)); // LDRB.W r3, [r1, #-1]!
+    write_value(program, 0x3A, static_cast<std::uint16_t>(0x3D01));
+
+    write_value(program, 0x40, static_cast<std::uint16_t>(0xF04F)); // invalid replicated zero
+    write_value(program, 0x42, static_cast<std::uint16_t>(0x3100));
+    write_value(program, 0x44, static_cast<std::uint16_t>(0xF851)); // invalid base/target writeback
+    write_value(program, 0x46, static_cast<std::uint16_t>(0x1F04));
+    write_value(program, 0x48, static_cast<std::uint16_t>(0xF8D1)); // overflowing LDR.W address
+    write_value(program, 0x4A, static_cast<std::uint16_t>(0x0001));
+    write_value(program, 0x4C, static_cast<std::uint16_t>(0xF851)); // unsupported LDRT.W r0, [r1, #4]
+    write_value(program, 0x4E, static_cast<std::uint16_t>(0x0E04));
+
+    write_value(program, 0x50, static_cast<std::uint16_t>(0xF04F)); // MOV.W r0, #0xabababab
+    write_value(program, 0x52, static_cast<std::uint16_t>(0x30AB));
+    write_value(program, 0x54, static_cast<std::uint16_t>(0xF020)); // BIC.W r1, r0, #0x00ff00ff
+    write_value(program, 0x56, static_cast<std::uint16_t>(0x11FF));
+    write_value(program, 0x58, static_cast<std::uint16_t>(0xF111)); // ADDS.W r2, r1, #1
+    write_value(program, 0x5A, static_cast<std::uint16_t>(0x0201));
+    write_value(program, 0x5C, static_cast<std::uint16_t>(0xF172)); // SBCS.W r3, r2, #1
+    write_value(program, 0x5E, static_cast<std::uint16_t>(0x0301));
+    write_value(program, 0x60, static_cast<std::uint16_t>(0xF1B3)); // CMP.W r3, #0
+    write_value(program, 0x62, static_cast<std::uint16_t>(0x0F00));
+    write_value(program, 0x64, static_cast<std::uint16_t>(0xF06F)); // MVN.W r4, #0
+    write_value(program, 0x66, static_cast<std::uint16_t>(0x0400));
+    write_value(program, 0x68, static_cast<std::uint16_t>(0xF064)); // ORN.W r5, r4, #1
+    write_value(program, 0x6A, static_cast<std::uint16_t>(0x0501));
+    write_value(program, 0x6C, static_cast<std::uint16_t>(0xF1C0)); // RSB.W r6, r0, #0
+    write_value(program, 0x6E, static_cast<std::uint16_t>(0x0600));
+    write_value(program, 0x70, static_cast<std::uint16_t>(0xF05F)); // MOVS.W r7, #0x80000000
+    write_value(program, 0x72, static_cast<std::uint16_t>(0x4700));
+
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < 0x400 || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the Thumb-2 runtime-family diagnostic.";
+        return false;
+    }
+    const auto memory_size = static_cast<std::uint32_t>(memory_size_64);
+    if (!memory.map_segment(test_address, program, memory_size, 7, error)) {
+        return false;
+    }
+
+    HLEDispatcher dispatcher;
+    ArmInterpreter interpreter(memory, dispatcher);
+    const auto data_address = test_address + 0x300u;
+    constexpr std::uint32_t captured_stack_word = 0xAABBCCDDu;
+    std::array<std::uint8_t, sizeof(captured_stack_word)> captured_stack_bytes{};
+    std::memcpy(captured_stack_bytes.data(), &captured_stack_word,
+        sizeof(captured_stack_word));
+    if (!memory.write(data_address, captured_stack_bytes, error)) {
+        return false;
+    }
+
+    interpreter.reset(test_address | 1u, data_address);
+    interpreter.state().cpsr = 1u << 29;
+    const auto captured = interpreter.run(2);
+    const auto captured_state = interpreter.state();
+
+    interpreter.reset((test_address + 0x10u) | 1u, data_address);
+    interpreter.state().registers[0] = 0xFFFFFF80u;
+    interpreter.state().registers[1] = data_address;
+    interpreter.state().registers[3] = 0xFFFF8001u;
+    interpreter.state().registers[5] = 0x11223344u;
+    const auto offset_memory = interpreter.run(6);
+    const auto offset_memory_state = interpreter.state();
+
+    interpreter.reset((test_address + 0x30u) | 1u, data_address);
+    interpreter.state().registers[0] = 0x55667788u;
+    interpreter.state().registers[1] = data_address;
+    const auto indexed_memory = interpreter.run(3);
+    const auto indexed_memory_state = interpreter.state();
+
+    interpreter.reset((test_address + 0x40u) | 1u, data_address);
+    const auto invalid_immediate = interpreter.run(1);
+    interpreter.reset((test_address + 0x44u) | 1u, data_address);
+    interpreter.state().registers[1] = data_address;
+    const auto invalid_writeback = interpreter.run(1);
+    interpreter.reset((test_address + 0x48u) | 1u, data_address);
+    interpreter.state().registers[1] = std::numeric_limits<std::uint32_t>::max();
+    const auto overflow = interpreter.run(1);
+    interpreter.reset((test_address + 0x4Cu) | 1u, data_address);
+    interpreter.state().registers[1] = data_address;
+    const auto unprivileged_load = interpreter.run(1);
+
+    interpreter.reset((test_address + 0x50u) | 1u, data_address);
+    const auto modified_alu = interpreter.run(9);
+    const auto modified_alu_state = interpreter.state();
+
+    const auto stopped_at_limit = [](const ArmExecutionResult &result) {
+        return result.reason == ArmStopReason::instruction_limit;
+    };
+    const bool valid = stopped_at_limit(captured) && captured.instructions_executed == 2 && captured_state.registers[11] == 0 && captured_state.registers[10] == captured_stack_word && (captured_state.cpsr & (1u << 30)) != 0 && (captured_state.cpsr & (1u << 29)) != 0 && stopped_at_limit(offset_memory) && offset_memory_state.registers[2] == 0xFFFFFF80u && offset_memory_state.registers[4] == 0xFFFF8001u && offset_memory_state.registers[6] == 0x11223344u && stopped_at_limit(indexed_memory) && indexed_memory_state.registers[2] == 0x55667788u && indexed_memory_state.registers[1] == data_address + 15u && invalid_immediate.reason == ArmStopReason::unsupported_instruction && invalid_writeback.reason == ArmStopReason::unsupported_instruction && overflow.reason == ArmStopReason::memory_fault && unprivileged_load.reason == ArmStopReason::unsupported_instruction && stopped_at_limit(modified_alu) && modified_alu_state.registers[0] == 0xABABABABu && modified_alu_state.registers[1] == 0xAB00AB00u && modified_alu_state.registers[2] == 0xAB00AB01u && modified_alu_state.registers[3] == 0xAB00AAFFu && modified_alu_state.registers[4] == 0xFFFFFFFFu && modified_alu_state.registers[5] == 0xFFFFFFFFu && modified_alu_state.registers[6] == 0x54545455u && modified_alu_state.registers[7] == 0x80000000u && (modified_alu_state.cpsr & (1u << 31)) != 0 && (modified_alu_state.cpsr & (1u << 29)) != 0;
+
+    std::string unmap_error;
+    const bool unmapped = memory.unmap_all_segments(unmap_error);
+    if (!valid) {
+        error = "The Thumb-2 runtime-family diagnostic produced unexpected CPU, flags, memory, or fault state.";
+        return false;
+    }
+    if (!unmapped) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
 void append_storage_error(std::string message) {
     if (!host_storage.error.empty()) {
         host_storage.error += " | ";
@@ -879,7 +1010,7 @@ void update_status_from_storage() {
     summary << "\nBatch segment map: " << (core_status.segment_mapping_ready ? "passed (shared-page permission merge)" : "FAILED");
     summary << "\nRelocation/tables: " << (core_status.loader_pipeline_ready ? "passed (verified patch + 1 export/1 import library)" : "FAILED");
     summary << "\nCompiled import stubs: " << (core_status.import_binding_ready ? "passed (" + std::to_string(core_status.thread_test_bound_stub_count) + " SVC trampolines)" : "FAILED");
-    summary << "\nARM/Thumb execution/HLE: " << (core_status.arm_execution_ready ? "passed (compiler baseline + " + std::to_string(core_status.arm_test_instruction_count) + " ARM instructions + " + std::to_string(core_status.hle_test_dispatch_count) + " bound NID call)" : "FAILED");
+    summary << "\nARM/Thumb execution/HLE: " << (core_status.arm_execution_ready ? "passed (compiler/runtime families + " + std::to_string(core_status.arm_test_instruction_count) + " ARM instructions + " + std::to_string(core_status.hle_test_dispatch_count) + " bound NID call)" : "FAILED");
     summary << "\nThumb/ARM entry/thread: " << (core_status.guest_thread_ready ? "passed (" + std::to_string(core_status.thread_test_instruction_count) + " instructions + " + std::to_string(core_status.thread_test_hle_dispatch_count) + " kernel HLE calls + exit " + std::to_string(core_status.thread_test_exit_status) + ")" : "FAILED");
     summary << "\nStorage: " << (core_status.storage_ready ? "ready" : "FAILED")
             << "\nInstalled titles: " << core_status.installed_titles.size();
@@ -975,7 +1106,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     ImportBindingResult binding_test;
     const bool loader_pipeline_passed = segment_mapping_passed && run_loader_pipeline_test(*guest_memory, binding_test, thread_test, memory_error);
     std::string execution_error;
-    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_inline_hle_nid_diagnostic_test(*guest_memory, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error);
+    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_inline_hle_nid_diagnostic_test(*guest_memory, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error) && run_thumb2_runtime_family_test(*guest_memory, execution_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;
