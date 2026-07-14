@@ -2,25 +2,25 @@
 
 Baseline inspected: upstream Vita3K commit `e8a51a7995812d2393458c3df046b6463f6ad75f` (2026-07-13 checkout).
 
-The CI target currently proves only that an unsigned, device-native UIKit/Metal application can be built and packaged. The following work is required before it becomes an emulator.
+The CI target now proves that an unsigned, device-native UIKit/Metal application can be built and packaged and that a dependency-free upstream Vita3K core slice cross-compiles. The following work is required before it becomes an emulator.
 
 | Area | Current upstream assumption | iOS work required | First acceptance test |
 |---|---|---|---|
-| Build graph | Non-Android builds unconditionally configure Qt and `gui-qt` | Define a headless/mobile core library with dependency feature flags | Core static library links into `Vita3KiOS` |
+| Build graph | Non-Android builds unconditionally configure Qt and `gui-qt` | **Started:** `vita3k_ios_core` links the upstream ARM encoder and NID database; continue extracting the loader/memory dependency closure | Core slice links and passes on-device self-tests; full loader still pending |
 | Frontend/lifecycle | Desktop `main.cpp`, Qt windows, SDL desktop events | Drive initialization, pause, resume, and shutdown from UIKit scenes/controllers | App backgrounds and resumes without losing emulator state |
 | Renderer | Apple desktop path uses Vulkan through MoltenVK and a Cocoa-backed `CAMetalLayer` | Choose and package an iOS-compatible MoltenVK build or create a native Metal backend; accept an `MTKView`/`CAMetalLayer` supplied by UIKit | Clear and present one emulator-owned frame on device |
 | CPU/JIT | Dynarmic and memory helpers are built for current desktop/Android hosts | Cross-compile Dynarmic for `arm64-apple-ios`; isolate executable-memory allocation, protection transitions, cache invalidation, and exception handling | Execute a deterministic guest-code unit test on device |
 | Guest memory | Core reserves a contiguous 4 GiB region and uses POSIX signals/mach context details on Apple | Measure iOS virtual-memory behavior; add an iOS memory strategy and platform exception boundary | Allocate guest memory and pass read/write/protect tests |
 | Dependencies | Boost, FFmpeg, SDL, Qt, Vulkan/MoltenVK and other submodules follow desktop/Android recipes | Inventory each dependency, disable unused ones, and build required libraries for `iphoneos arm64` | Reproducible dependency build with no simulator/macOS slices |
-| Filesystem | Desktop paths, dialogs, and writable locations | Map Vita storage/config/logs to the app sandbox; use document picker/security-scoped URLs where required | Import and enumerate a legal homebrew fixture |
+| Filesystem | Desktop paths, dialogs, and writable locations | **Started:** sandbox layout, import enumeration, and bounded SELF/ELF/VPK/SFO header probing exist; add document picker and Vita VFS mapping | Synthetic Vita ELF passes native smoke test; real fixture/device import pending |
 | Audio/input | Desktop SDL/Qt device and event assumptions | Add AVAudioEngine/SDL-iOS audio path, GameController, and touch input adapters | Controller and audio loopback diagnostics pass |
 | Diagnostics | Desktop console/log files and attached debugger | Keep unified log plus rotating/exportable file diagnostics and crash breadcrumbs | A device run produces a useful diagnostic bundle |
 
 ## Recommended integration order
 
-1. Extract a platform-neutral `vita3k_core` static library without renderer or GUI initialization.
-2. Cross-compile only its minimal dependency closure for iPhone `arm64`.
-3. Replace `CoreBridge.cpp` with a lifecycle-owning adapter and turn `VITA3K_IOS_LINK_CORE` into a real link switch.
+1. **Done for the first dependency-free slice:** create `vita3k_ios_core`, cross-compile the ARM encoder/NID database for iPhone `arm64`, and run on-device self-tests.
+2. **Started:** bounded SELF/ELF header recognition and validation now reuse Vita3K's ELF definitions; next extract program-segment planning without writing guest memory.
+3. Add an iOS guest-memory backend and connect it to the loader through `CoreBridge`.
 4. Run loader and CPU unit tests against legal homebrew fixtures before adding presentation.
 5. Connect the renderer to the existing `MTKView` host.
 6. Add sandboxed storage, controller, touch, and audio adapters.

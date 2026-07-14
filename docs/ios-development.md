@@ -4,7 +4,7 @@ This guide sets up a Vita3K fork so Windows is the primary editing and testing e
 
 ## 1. What this branch can and cannot do
 
-Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application shell, a Metal view, lifecycle handling, and persistent logs. It does not yet contain a working Vita emulator because upstream's core and dependency graph have not been ported to iOS. CI fails deliberately if `VITA3K_IOS_LINK_CORE=ON`.
+Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application host, a Metal view, lifecycle handling, persistent logs, sandbox storage, and the first dependency-free upstream core slice. It does not yet contain a working Vita emulator because the loader, guest memory, CPU backend, renderer, and wider dependency graph have not been ported to iOS. `VITA3K_IOS_LINK_CORE=ON` is required.
 
 Use the pipeline as a stable first milestone: every future porting change should keep the bootstrap IPA green while moving one subsystem across the `CoreBridge` boundary.
 
@@ -154,7 +154,7 @@ Resolve conflicts by preserving the early iOS-only branch in the root `CMakeList
 
 Ask for one verifiable subsystem at a time and require the Windows build plus the unsigned-IPA workflow to remain green. A useful task template is:
 
-> On branch `ios-port`, implement the next item in `ios/PORTING.md`: [one item]. Preserve desktop and Android behavior. Add a platform interface instead of broad Apple conditionals, add tests runnable on Windows where possible, keep `VITA3K_IOS_LINK_CORE=OFF` building, and state exactly what remains stubbed. Do not add signing, sideloading, JIT activation, proprietary firmware, or game files.
+> On branch `ios-port`, implement the next item in `ios/PORTING.md`: [one item]. Preserve desktop and Android behavior. Add a platform interface instead of broad Apple conditionals, add tests runnable on Windows where possible, keep `VITA3K_IOS_LINK_CORE=ON` building, and state exactly what remains stubbed. Do not add signing, sideloading, JIT activation, proprietary firmware, or game files.
 
 Good early assignments are dependency inventory, extracting a headless core target, sandbox path mapping, a renderer surface interface, or a deterministic CPU/memory unit-test harness. “Build the whole emulator” is too broad to diagnose when CI fails.
 
@@ -164,4 +164,4 @@ Good early assignments are dependency inventory, extracting a headless core targ
 - **No `.app` found:** inspect the build step for the actual Xcode configuration and SDK; the packaging script accepts only a `*-iphoneos` device bundle.
 - **Bundle is signed:** remove inherited signing settings. The packager intentionally refuses signed input.
 - **Workflow does not run after a push:** it watches the `ios-port` branch and iOS/build files. Start it manually for other branches or adjust the branch filter in your fork.
-- **Core-link option fails:** this is expected until the blockers in `ios/PORTING.md` are implemented; do not remove the guard merely to make CI green.
+- **Core self-tests fail:** capture `Documents/vita3k.log`; the current tests cover Vita3K's ARM instruction encoder and NID database.

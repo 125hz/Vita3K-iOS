@@ -5,6 +5,7 @@
 #include <vita3k_ios/IOSLogger.h>
 
 @interface VitaViewController : UIViewController
+@property(nonatomic, strong) UILabel *detailsLabel;
 @end
 
 @implementation VitaViewController
@@ -20,25 +21,27 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    const auto status = vita3k::ios::query_core_status();
-    vita3k::ios::log_message("INFO", status.summary);
-
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Vita3K iOS bootstrap";
+    title.text = @"Vita3K iOS — Core Milestone 1";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
     title.textAlignment = NSTextAlignmentCenter;
 
-    UILabel *details = [[UILabel alloc] init];
-    details.translatesAutoresizingMaskIntoConstraints = NO;
-    details.text = [NSString stringWithUTF8String:status.summary.c_str()];
-    details.textColor = [UIColor colorWithWhite:0.78 alpha:1.0];
-    details.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
-    details.numberOfLines = 0;
-    details.textAlignment = NSTextAlignmentCenter;
+    self.detailsLabel = [[UILabel alloc] init];
+    self.detailsLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.detailsLabel.textColor = [UIColor colorWithWhite:0.78 alpha:1.0];
+    self.detailsLabel.font = [UIFont monospacedSystemFontOfSize:14.0 weight:UIFontWeightRegular];
+    self.detailsLabel.numberOfLines = 0;
+    self.detailsLabel.textAlignment = NSTextAlignmentLeft;
 
-    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[title, details]];
+    UIButton *rescanButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    rescanButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [rescanButton setTitle:@"Rescan Imports" forState:UIControlStateNormal];
+    [rescanButton addTarget:self action:@selector(rescanImports) forControlEvents:UIControlEventTouchUpInside];
+    rescanButton.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[title, self.detailsLabel, rescanButton]];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 16.0;
@@ -51,6 +54,19 @@
         [stack.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
         [stack.widthAnchor constraintLessThanOrEqualToConstant:680.0]
     ]];
+
+    [self refreshStatus];
+}
+
+- (void)refreshStatus {
+    const auto status = vita3k::ios::query_core_status();
+    self.detailsLabel.text = [NSString stringWithUTF8String:status.summary.c_str()];
+}
+
+- (void)rescanImports {
+    const auto status = vita3k::ios::rescan_imports();
+    vita3k::ios::log_message("INFO", status.summary);
+    [self refreshStatus];
 }
 
 @end
@@ -65,6 +81,8 @@
     (void)application;
     (void)launchOptions;
     vita3k::ios::initialize_logging();
+    const auto core_status = vita3k::ios::initialize_core(vita3k::ios::log_file_path().parent_path());
+    vita3k::ios::log_message("INFO", core_status.summary);
 
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     self.window.rootViewController = [[VitaViewController alloc] init];

@@ -2,18 +2,17 @@ cmake_minimum_required(VERSION 3.22)
 
 set(VITA3K_IOS_DEPLOYMENT_TARGET "17.0" CACHE STRING "Minimum supported iOS version")
 set(VITA3K_IOS_BUNDLE_ID "org.vita3k.experimental.ios" CACHE STRING "Application bundle identifier")
-option(VITA3K_IOS_LINK_CORE "Link the upstream Vita3K emulator core" OFF)
+option(VITA3K_IOS_LINK_CORE "Link the first upstream Vita3K core slice" ON)
 
-if(VITA3K_IOS_LINK_CORE)
+if(NOT VITA3K_IOS_LINK_CORE)
     message(FATAL_ERROR
-        "VITA3K_IOS_LINK_CORE is not implemented yet. The upstream core currently depends on "
-        "desktop Qt/SDL windowing, macOS Cocoa, MoltenVK packaging, and dependencies that have "
-        "not been made iOS-safe. See ios/PORTING.md.")
+        "Bootstrap-only builds are no longer supported. Set VITA3K_IOS_LINK_CORE=ON.")
 endif()
+
+add_subdirectory(core)
 
 add_executable(Vita3KiOS MACOSX_BUNDLE
     src/AppDelegate.mm
-    src/CoreBridge.cpp
     src/IOSLogger.mm
     src/main.mm
 )
@@ -27,6 +26,7 @@ target_compile_options(Vita3KiOS PRIVATE
 )
 target_compile_definitions(Vita3KiOS PRIVATE VITA3K_PLATFORM_IOS=1)
 target_link_libraries(Vita3KiOS PRIVATE
+    vita3k_ios_core
     "-framework CoreGraphics"
     "-framework Foundation"
     "-framework Metal"
