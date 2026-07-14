@@ -48,6 +48,9 @@ jobs:
           cmake -S ios/core -B build-core-tests -DCMAKE_BUILD_TYPE=Release
           cmake --build build-core-tests --parallel
           ctest --test-dir build-core-tests --output-on-failure
+          mkdir -p artifacts
+          ./build-core-tests/vita3k_ios_core_smoke_tests \
+            --emit-fixture artifacts/milestone8-compiled-homebrew.elf
 
       - name: Configure iOS application and core target
         run: |
@@ -81,6 +84,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Vita3K-iOS-${{ github.sha }}-unsigned
-          path: artifacts/Vita3K-iOS-unsigned.ipa
+          path: |
+            artifacts/Vita3K-iOS-unsigned.ipa
+            artifacts/milestone8-compiled-homebrew.elf
           if-no-files-found: error
           retention-days: 14

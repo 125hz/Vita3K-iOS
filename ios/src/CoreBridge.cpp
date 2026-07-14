@@ -5,6 +5,7 @@
 #include <vita3k_ios/GuestMemory.h>
 #include <vita3k_ios/GuestThread.h>
 #include <vita3k_ios/HostFilesystem.h>
+#include <vita3k_ios/ImportBinder.h>
 #include <vita3k_ios/ModuleTableParser.h>
 #include <vita3k_ios/RelocationEngine.h>
 
@@ -111,8 +112,8 @@ bool run_segment_mapping_test(GuestMemory &memory, std::string &error) {
     return true;
 }
 
-bool run_loader_pipeline_test(GuestMemory &memory, GuestThreadRunResult &thread_result,
-    std::string &error) {
+bool run_loader_pipeline_test(GuestMemory &memory, ImportBindingResult &binding_result,
+    GuestThreadRunResult &thread_result, std::string &error) {
     constexpr std::uint32_t test_address = 0x20000;
     constexpr std::uint32_t module_start = 0x60;
     constexpr std::uint32_t get_thread_id_nid = 0x0FB972F9;
@@ -136,14 +137,14 @@ bool run_loader_pipeline_test(GuestMemory &memory, GuestThreadRunResult &thread_
     write_value(payload, 0x44, module_start);
 
     const std::array<std::uint32_t, 8> guest_program{
-        encode_arm_inst(INSTRUCTION_MOVW, get_thread_id_nid & 0xFFFFu, 12),
-        encode_arm_inst(INSTRUCTION_MOVT, get_thread_id_nid >> 16, 12),
-        encode_arm_inst(INSTRUCTION_SYSCALL, 0, 0),
-        0xE1A02000u, // MOV r2, r0; preserve the UID returned by sceKernelGetThreadId.
+        0xE92D4010u, // PUSH {r4, lr}
+        0xEBFFFFF5u, // BL 0x40: rewritten sceKernelGetThreadId import stub
+        0xE1A04000u, // MOV r4, r0
+        0xE58D4000u, // STR r4, [sp]
+        0xE59D2000u, // LDR r2, [sp]
+        0xE8BD4010u, // POP {r4, lr}
         encode_arm_inst(INSTRUCTION_MOVW, 42, 0),
-        encode_arm_inst(INSTRUCTION_MOVW, exit_thread_nid & 0xFFFFu, 12),
-        encode_arm_inst(INSTRUCTION_MOVT, exit_thread_nid >> 16, 12),
-        encode_arm_inst(INSTRUCTION_SYSCALL, 0, 0)
+        0xEBFFFFF3u // BL 0x50: rewritten sceKernelExitThread import stub
     };
     std::memcpy(payload.data() + module_start, guest_program.data(), sizeof(guest_program));
 
@@ -165,7 +166,7 @@ bool run_loader_pipeline_test(GuestMemory &memory, GuestThreadRunResult &thread_
     write_value(payload, 0xDC, get_thread_id_nid);
     write_value(payload, 0xE0, exit_thread_nid);
     write_value(payload, 0xE4, test_address + static_cast<std::uint32_t>(0x40));
-    write_value(payload, 0xE8, test_address + static_cast<std::uint32_t>(0x4C));
+    write_value(payload, 0xE8, test_address + static_cast<std::uint32_t>(0x50));
 
     constexpr std::uint32_t read_execute_flags = 5;
     if (!memory.map_segment(test_address, payload, memory_size, read_execute_flags, error)) {
@@ -190,8 +191,12 @@ bool run_loader_pipeline_test(GuestMemory &memory, GuestThreadRunResult &thread_
     const auto tables = parse_module_tables(memory, test_address, memory_size,
         std::span(payload).first(0x5C));
     if (tables.success) {
-        thread_result = run_guest_module_start(memory, test_address + module_start,
-            test_address + memory_size, tables.imported_nids, "ios-module-start-selftest");
+        binding_result = bind_import_stubs(memory, tables.imported_function_stubs);
+        if (binding_result.success) {
+            thread_result = run_guest_module_start(memory, test_address + module_start,
+                test_address + memory_size, tables.imported_nids,
+                "ios-compiled-homebrew-selftest");
+        }
     }
 
     std::array<std::uint8_t, 4> patched_bytes{};
@@ -214,12 +219,17 @@ bool run_loader_pipeline_test(GuestMemory &memory, GuestThreadRunResult &thread_
     if (!patch_read || patched_value != test_address + 0x1234 ||
         applied.entry_count != 1 || applied.patched_value_count != 1 ||
         tables.export_library_count != 1 || tables.import_library_count != 1 ||
-        tables.exported_nids.size() != 1 || tables.imported_nids.size() != 2) {
+        tables.exported_nids.size() != 1 || tables.imported_nids.size() != 2 ||
+        tables.imported_function_stubs.size() != 2) {
         error = "The relocation/module-table diagnostic produced unexpected results.";
         return false;
     }
+    if (!binding_result.success || binding_result.bound_function_count != 2) {
+        error = "The compiled import-stub diagnostic failed: " + binding_result.detail;
+        return false;
+    }
     if (!thread_result.started || !thread_result.exited ||
-        thread_result.instruction_count != guest_program.size() ||
+        thread_result.instruction_count != 11 ||
         thread_result.hle_dispatch_count != 2 || thread_result.exit_status != 42 ||
         thread_result.observed_thread_id != static_cast<std::uint32_t>(thread_result.thread_id)) {
         error = "The loaded module_start/thread diagnostic failed: " + thread_result.detail;
@@ -361,6 +371,7 @@ void update_status_from_storage() {
             .module_info_valid = load.module_info_valid,
             .relocations_applied = load.relocations_applied,
             .module_tables_parsed = load.module_tables_parsed,
+            .import_stubs_bound = load.import_stubs_bound,
             .module_start_valid = load.module_start_valid,
             .execution_attempted = thread.attempted,
             .thread_exited = thread.exited,
@@ -373,6 +384,7 @@ void update_status_from_storage() {
             .import_library_count = load.import_library_count,
             .exported_nid_count = load.exported_nid_count,
             .imported_nid_count = load.imported_nid_count,
+            .bound_import_stub_count = load.bound_import_stub_count,
             .module_start_address = load.module_start_address,
             .executed_instruction_count = thread.instruction_count,
             .hle_dispatch_count = thread.hle_dispatch_count,
@@ -394,6 +406,10 @@ void update_status_from_storage() {
         : "FAILED");
     summary << "\nRelocation/tables: " << (core_status.loader_pipeline_ready
         ? "passed (verified patch + 1 export/1 import library)"
+        : "FAILED");
+    summary << "\nCompiled import stubs: " << (core_status.import_binding_ready
+        ? "passed (" + std::to_string(core_status.thread_test_bound_stub_count) +
+            " SVC trampolines)"
         : "FAILED");
     summary << "\nARM execution/HLE: " << (core_status.arm_execution_ready
         ? "passed (" + std::to_string(core_status.arm_test_instruction_count) +
@@ -421,7 +437,7 @@ void update_status_from_storage() {
                 << " - " << (artifact.loaded ? "MAPPED" : "not mapped")
                 << "\n    " << artifact.detail;
     }
-    summary << "\n\nNext: expand ARM/Thumb coverage and HLE services for a tiny real homebrew. Rendering is not active yet.";
+    summary << "\n\nNext: add Thumb-2 and more libc/kernel HLE for a tiny VitaSDK homebrew. Rendering is not active yet.";
     if (!host_storage.error.empty()) {
         summary << "\nStorage error: " << host_storage.error;
     }
@@ -441,8 +457,9 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     const bool segment_mapping_passed = protection_test_passed &&
         run_segment_mapping_test(*guest_memory, memory_error);
     GuestThreadRunResult thread_test;
+    ImportBindingResult binding_test;
     const bool loader_pipeline_passed = segment_mapping_passed &&
-        run_loader_pipeline_test(*guest_memory, thread_test, memory_error);
+        run_loader_pipeline_test(*guest_memory, binding_test, thread_test, memory_error);
     std::string execution_error;
     const bool arm_execution_passed = loader_pipeline_passed &&
         run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count,
@@ -450,11 +467,14 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;
+    core_status.import_binding_ready = loader_pipeline_passed && binding_test.success &&
+        binding_test.bound_function_count == 2;
     core_status.arm_execution_ready = arm_execution_passed;
     core_status.guest_thread_ready = loader_pipeline_passed && thread_test.exited;
     core_status.thread_test_instruction_count = thread_test.instruction_count;
     core_status.thread_test_hle_dispatch_count = thread_test.hle_dispatch_count;
     core_status.thread_test_exit_status = thread_test.exit_status;
+    core_status.thread_test_bound_stub_count = binding_test.bound_function_count;
     core_status.guest_memory_size = reserved ? guest_memory->size() : 0;
     core_status.host_page_size = reserved ? guest_memory->host_page_size() : 0;
     host_storage = initialize_host_storage(documents_root);

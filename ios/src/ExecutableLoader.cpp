@@ -2,6 +2,7 @@
 
 #include <vita3k_ios/ExecutableProbe.h>
 #include <vita3k_ios/GuestMemory.h>
+#include <vita3k_ios/ImportBinder.h>
 #include <vita3k_ios/ModuleTableParser.h>
 #include <vita3k_ios/RelocationEngine.h>
 
@@ -246,11 +247,21 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
         result.detail = "Module-table parsing failed: " + module_tables.detail;
         return result;
     }
+    const auto import_binding = bind_import_stubs(memory,
+        module_tables.imported_function_stubs);
+    if (!import_binding.success) {
+        std::string unmap_error;
+        (void)memory.unmap_all_segments(unmap_error);
+        result.detail = "Import-stub binding failed: " + import_binding.detail;
+        return result;
+    }
     result.module_tables_parsed = true;
+    result.import_stubs_bound = true;
     result.export_library_count = module_tables.export_library_count;
     result.import_library_count = module_tables.import_library_count;
     result.exported_nid_count = module_tables.exported_nids.size();
     result.imported_nid_count = module_tables.imported_nids.size();
+    result.bound_import_stub_count = import_binding.bound_function_count;
     result.imported_nids = module_tables.imported_nids;
     result.loaded = true;
 
@@ -265,7 +276,8 @@ PlainElfLoadResult load_plain_elf(const std::filesystem::path &path,
            << result.export_library_count << " export libraries/"
            << result.exported_nid_count << " NIDs; "
            << result.import_library_count << " import libraries/"
-           << result.imported_nid_count << " NIDs";
+           << result.imported_nid_count << " NIDs; "
+           << result.bound_import_stub_count << " function stubs rebound";
     if (result.module_start_valid) {
         detail << "; module_start 0x" << std::hex << std::uppercase << std::setw(8)
                << std::setfill('0') << result.module_start_address << std::dec;

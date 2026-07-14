@@ -12,6 +12,7 @@ add_library(vita3k_ios_core STATIC
     ../src/GuestMemory.cpp
     ../src/GuestThread.cpp
     ../src/HostFilesystem.cpp
+    ../src/ImportBinder.cpp
     ../src/ModuleTableParser.cpp
     ../src/RelocationEngine.cpp
     ../../vita3k/nids/src/nids.cpp

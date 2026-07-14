@@ -18,6 +18,7 @@ struct ImportedArtifact {
     bool module_info_valid;
     bool relocations_applied;
     bool module_tables_parsed;
+    bool import_stubs_bound;
     bool module_start_valid;
     bool execution_attempted;
     bool thread_exited;
@@ -30,6 +31,7 @@ struct ImportedArtifact {
     std::size_t import_library_count;
     std::size_t exported_nid_count;
     std::size_t imported_nid_count;
+    std::size_t bound_import_stub_count;
     std::uint32_t module_start_address;
     std::uint64_t executed_instruction_count;
     std::size_t hle_dispatch_count;
@@ -44,6 +46,7 @@ struct CoreStatus {
     bool guest_memory_ready;
     bool segment_mapping_ready;
     bool loader_pipeline_ready;
+    bool import_binding_ready;
     bool arm_execution_ready;
     bool guest_thread_ready;
     std::uint64_t guest_memory_size;
@@ -53,6 +56,7 @@ struct CoreStatus {
     std::uint64_t thread_test_instruction_count;
     std::size_t thread_test_hle_dispatch_count;
     std::int32_t thread_test_exit_status;
+    std::size_t thread_test_bound_stub_count;
     std::string storage_root;
     std::vector<ImportedArtifact> imported_artifacts;
     std::string summary;

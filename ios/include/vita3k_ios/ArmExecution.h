@@ -31,6 +31,7 @@ struct HLEDispatchResult {
 class HLEDispatcher {
 public:
     bool bind(std::uint32_t nid, std::string name, HLEHandler handler);
+    [[nodiscard]] bool has_binding(std::uint32_t nid) const;
     [[nodiscard]] HLEDispatchResult dispatch(std::uint32_t nid, ArmCpuState &state) const;
     [[nodiscard]] std::size_t binding_count() const { return bindings_.size(); }
 

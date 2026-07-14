@@ -4,7 +4,7 @@ This guide sets up a Vita3K fork so Windows is the primary editing and testing e
 
 ## 1. What this branch can and cannot do
 
-Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application host, a Metal view, lifecycle handling, persistent logs, sandbox storage, the first dependency-free upstream core slice, a 4 GiB guest address space, shared-page-aware segment mapping, fixed-address plain Vita ELF loading, checked relocation application, and module import/export NID parsing. It does not yet contain a working Vita emulator because SELF decoding, relocatable ELF rebasing, HLE import binding, the CPU backend, renderer, and the wider dependency graph have not been ported to iOS. `VITA3K_IOS_LINK_CORE=ON` is required.
+Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application host, a Metal view, lifecycle handling, persistent logs, sandbox storage, the first dependency-free upstream core slice, a 4 GiB guest address space, shared-page-aware segment mapping, fixed-address plain Vita ELF loading, checked relocation application, NID parsing, ARM import-stub rewriting, and a bounded compiled-style module/thread diagnostic. It does not yet contain a working Vita emulator because SELF/relocatable loading, general ARM/Thumb execution, broader HLE, the renderer, and the wider dependency graph have not been ported to iOS. `VITA3K_IOS_LINK_CORE=ON` is required.
 
 Use the pipeline as a stable first milestone: every future porting change should keep the bootstrap IPA green while moving one subsystem across the `CoreBridge` boundary.
 
@@ -136,7 +136,7 @@ Every subsystem integrated into `CoreBridge` should log:
 
 Keep logging bounded before the emulator core is enabled: add rotation (for example, three 5 MiB files) before high-frequency CPU or renderer tracing. Never log game keys, account credentials, or copyrighted game content.
 
-For the Milestone 5 loader diagnostic, copy a legal, decrypted, fixed-address plain Vita ELF into `Documents/Vita3K/imports` through the Files app, then tap **Rescan Imports**. A successful diagnostic reports `MAPPED`, the module name/NID, verified relocation patches, and parsed import/export NID counts. VPK, SELF, and relocatable ELF files remain probe-only; imported functions are not bound and guest code is not executed yet.
+For the Milestone 8 loader diagnostic, download `milestone8-compiled-homebrew.elf` from the same Actions artifact as the IPA. Copy it through the Files app to `Documents/Vita3K/imports`, then tap **Rescan Imports**. A successful diagnostic reports `MAPPED`, two rebound function stubs, 11 executed instructions, two HLE calls, and exit status 42. VPK, SELF, relocatable ELF, firmware, and commercial-game files remain outside the executable path.
 
 Keep firmware files such as `fontpkg.pup`, `preinstall.pup`, and the system update PUP on the local device/PC. Do not add them to Git, CI caches, or Actions artifacts. Firmware selection and extraction will be added after the iOS build includes the upstream crypto, package, FAT/exFAT, and psvpfs dependencies needed by `install_pup`.
 

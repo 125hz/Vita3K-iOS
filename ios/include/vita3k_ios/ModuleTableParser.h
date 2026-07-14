@@ -10,6 +10,11 @@ namespace vita3k::ios {
 
 class GuestMemory;
 
+struct ImportedFunctionStub {
+    std::uint32_t nid;
+    std::uint32_t stub_address;
+};
+
 struct ModuleTableSummary {
     bool success = false;
     std::size_t export_library_count = 0;
@@ -20,6 +25,7 @@ struct ModuleTableSummary {
     std::size_t imported_variable_count = 0;
     std::vector<std::uint32_t> exported_nids;
     std::vector<std::uint32_t> imported_nids;
+    std::vector<ImportedFunctionStub> imported_function_stubs;
     std::string detail;
 };
 

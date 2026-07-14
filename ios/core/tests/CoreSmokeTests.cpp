@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string_view>
 
 namespace {
 
@@ -16,7 +17,14 @@ void write_value(std::array<std::uint8_t, Size> &image, std::size_t offset, T va
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+    std::filesystem::path emitted_fixture;
+    if (argc == 3 && std::string_view(argv[1]) == "--emit-fixture") {
+        emitted_fixture = argv[2];
+    } else if (argc != 1) {
+        std::cerr << "Usage: vita3k_ios_core_smoke_tests [--emit-fixture <path>]\n";
+        return 64;
+    }
     const auto test_root = std::filesystem::temp_directory_path() / "vita3k-ios-core-smoke-test";
     std::error_code error;
     std::filesystem::remove_all(test_root, error);
@@ -24,11 +32,13 @@ int main() {
     const auto status = vita3k::ios::initialize_core(test_root);
     if (!status.linked || !status.self_tests_passed || !status.storage_ready ||
         !status.guest_memory_ready || !status.segment_mapping_ready ||
-        !status.loader_pipeline_ready || !status.arm_execution_ready ||
+        !status.loader_pipeline_ready || !status.import_binding_ready ||
+        !status.arm_execution_ready ||
         !status.guest_thread_ready ||
         status.arm_test_instruction_count != 7 || status.hle_test_dispatch_count != 1 ||
-        status.thread_test_instruction_count != 8 ||
+        status.thread_test_instruction_count != 11 ||
         status.thread_test_hle_dispatch_count != 2 || status.thread_test_exit_status != 42 ||
+        status.thread_test_bound_stub_count != 2 ||
         status.guest_memory_size != (1ULL << 32)) {
         std::cerr << status.summary << '\n';
         return 1;
@@ -96,20 +106,15 @@ int main() {
 
     constexpr std::uint32_t get_thread_id_nid = 0x0FB972F9;
     constexpr std::uint32_t exit_thread_nid = 0x0C8A38E1;
-    const auto encode_mov = [](std::uint32_t opcode, std::uint32_t immediate,
-                                std::uint32_t destination) {
-        return opcode | ((immediate & 0xF000u) << 4) |
-            (destination << 12) | (immediate & 0xFFFu);
-    };
     const std::array<std::uint32_t, 8> guest_program{
-        encode_mov(0xE3000000u, get_thread_id_nid & 0xFFFFu, 12),
-        encode_mov(0xE3400000u, get_thread_id_nid >> 16, 12),
-        0xEF000000u,
-        0xE1A02000u,
-        encode_mov(0xE3000000u, 42, 0),
-        encode_mov(0xE3000000u, exit_thread_nid & 0xFFFFu, 12),
-        encode_mov(0xE3400000u, exit_thread_nid >> 16, 12),
-        0xEF000000u
+        0xE92D4010u,
+        0xEBFFFFF5u,
+        0xE1A04000u,
+        0xE58D4000u,
+        0xE59D2000u,
+        0xE8BD4010u,
+        0xE300002Au,
+        0xEBFFFFF3u
     };
     std::memcpy(elf.data() + 244, guest_program.data(), sizeof(guest_program));
 
@@ -131,7 +136,7 @@ int main() {
     write_value(elf, 368, get_thread_id_nid);
     write_value(elf, 372, exit_thread_nid);
     write_value(elf, 376, static_cast<std::uint32_t>(0x81000040));
-    write_value(elf, 380, static_cast<std::uint32_t>(0x8100004C));
+    write_value(elf, 380, static_cast<std::uint32_t>(0x81000050));
 
     for (std::size_t index = 404; index < 420; ++index) {
         elf[index] = static_cast<std::uint8_t>(index - 388);
@@ -144,6 +149,16 @@ int main() {
     std::ofstream fixture_stream(fixture, std::ios::binary);
     fixture_stream.write(reinterpret_cast<const char *>(elf.data()), elf.size());
     fixture_stream.close();
+    if (!emitted_fixture.empty()) {
+        if (!emitted_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(emitted_fixture.parent_path(), error);
+        }
+        if (error || !std::filesystem::copy_file(fixture, emitted_fixture,
+                std::filesystem::copy_options::overwrite_existing, error)) {
+            std::cerr << "Could not emit the Milestone 8 fixture: " << error.message() << '\n';
+            return 4;
+        }
+    }
 
     const auto rescanned = vita3k::ios::rescan_imports();
     if (rescanned.imported_artifacts.size() != 1 ||
@@ -155,6 +170,7 @@ int main() {
         !rescanned.imported_artifacts.front().module_info_valid ||
         !rescanned.imported_artifacts.front().relocations_applied ||
         !rescanned.imported_artifacts.front().module_tables_parsed ||
+        !rescanned.imported_artifacts.front().import_stubs_bound ||
         !rescanned.imported_artifacts.front().module_start_valid ||
         !rescanned.imported_artifacts.front().execution_attempted ||
         !rescanned.imported_artifacts.front().thread_exited ||
@@ -164,8 +180,9 @@ int main() {
         rescanned.imported_artifacts.front().import_library_count != 1 ||
         rescanned.imported_artifacts.front().exported_nid_count != 1 ||
         rescanned.imported_artifacts.front().imported_nid_count != 2 ||
+        rescanned.imported_artifacts.front().bound_import_stub_count != 2 ||
         rescanned.imported_artifacts.front().module_start_address != 0x81000060 ||
-        rescanned.imported_artifacts.front().executed_instruction_count != 8 ||
+        rescanned.imported_artifacts.front().executed_instruction_count != 11 ||
         rescanned.imported_artifacts.front().hle_dispatch_count != 2 ||
         rescanned.imported_artifacts.front().thread_exit_status != 42 ||
         rescanned.imported_artifacts.front().module_name != "synthetic-homebrew" ||
@@ -175,6 +192,9 @@ int main() {
     }
 
     std::filesystem::remove_all(test_root, error);
+    if (!emitted_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 8 fixture: " << emitted_fixture << '\n';
+    }
     std::cout << rescanned.summary << '\n';
     return 0;
 }

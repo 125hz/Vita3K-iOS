@@ -69,6 +69,30 @@ bool read_nid_table(GuestMemory &memory, std::uint32_t address, std::uint64_t co
     return true;
 }
 
+bool read_address_table(GuestMemory &memory, std::uint32_t address, std::uint64_t count,
+    std::vector<std::uint32_t> &output, std::string &error) {
+    if (count == 0) {
+        return true;
+    }
+    if (address == 0 || count > maximum_symbols) {
+        error = "A module address table has an invalid pointer or symbol count.";
+        return false;
+    }
+    const auto bytes64 = count * sizeof(std::uint32_t);
+    if (bytes64 > std::numeric_limits<std::size_t>::max()) {
+        error = "A module address table is too large for this host.";
+        return false;
+    }
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(bytes64));
+    if (!memory.read(address, bytes, error)) {
+        error = "Could not read a module address table: " + error;
+        return false;
+    }
+    output.resize(static_cast<std::size_t>(count));
+    std::memcpy(output.data(), bytes.data(), bytes.size());
+    return true;
+}
+
 } // namespace
 
 ModuleTableSummary parse_module_tables(GuestMemory &memory,
@@ -167,17 +191,31 @@ ModuleTableSummary parse_module_tables(GuestMemory &memory,
         }
         const auto function_nids = read_u32(record,
             record_size == import_record_size ? 28 : 20);
+        const auto function_entries = read_u32(record,
+            record_size == import_record_size ? 32 : 24);
         const auto variable_nids = read_u32(record,
             record_size == import_record_size ? 36 : 28);
         const auto tls_nids = record_size == import_record_size ? read_u32(record, 44) : 0;
+        std::vector<std::uint32_t> function_nid_values;
+        std::vector<std::uint32_t> function_entry_values;
         if (!read_nid_table(memory, function_nids, function_count,
-                result.imported_nids, error) ||
+                function_nid_values, error) ||
+            !read_address_table(memory, function_entries, function_count,
+                function_entry_values, error) ||
             !read_nid_table(memory, variable_nids, variable_count,
                 result.imported_nids, error) ||
             !read_nid_table(memory, tls_nids, tls_count,
                 result.imported_nids, error)) {
             result.detail = error;
             return result;
+        }
+        result.imported_nids.insert(result.imported_nids.end(),
+            function_nid_values.begin(), function_nid_values.end());
+        for (std::size_t index = 0; index < function_nid_values.size(); ++index) {
+            result.imported_function_stubs.push_back({
+                .nid = function_nid_values[index],
+                .stub_address = function_entry_values[index]
+            });
         }
         ++result.import_library_count;
         result.imported_function_count += function_count;
