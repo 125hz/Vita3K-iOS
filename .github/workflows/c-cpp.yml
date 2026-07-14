@@ -2,6 +2,8 @@ name: Build CI
 
 on:
   push:
+    branches-ignore:
+      - ios-port
     paths-ignore:
       - '**.md'
   pull_request:

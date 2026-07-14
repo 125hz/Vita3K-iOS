@@ -17,7 +17,7 @@ std::string timestamp() {
     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
     formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
     formatter.dateFormat = @"yyyy-MM-dd'T'HH:mm:ss.SSSZZZZZ";
-    return formatter.stringFromDate(NSDate.date).UTF8String;
+    return [[formatter stringFromDate:[NSDate date]] UTF8String];
 }
 
 } // namespace
