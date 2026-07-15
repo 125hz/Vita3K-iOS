@@ -18,6 +18,7 @@
 #include "SceAppMgr.h"
 
 #include <io/state.h>
+#include <io/vfs.h>
 #include <kernel/state.h>
 #include <packages/sfo.h>
 #include <renderer/state.h>
