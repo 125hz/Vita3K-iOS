@@ -20,6 +20,7 @@
 #include <config/state.h>
 #include <emuenv/state.h>
 #include <io/state.h>
+#include <io/vfs.h>
 #include <packages/sfo.h>
 #include <util/fs.h>
 #include <util/log.h>
