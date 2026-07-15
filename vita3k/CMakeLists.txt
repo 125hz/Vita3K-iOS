@@ -206,7 +206,10 @@ elseif(VITA3K_BUILD_IOS_UPSTREAM_CORE)
 		interface.h
 		performance.cpp
 	)
-	target_include_directories(vita3k PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+	# The iOS shell includes interface.h, which needs this directory plus
+	# util's public headers (exit_code.h, fs.h and their boost includes).
+	target_include_directories(vita3k PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+	target_link_libraries(vita3k PUBLIC util)
 	target_link_libraries(vita3k PRIVATE SDL3::SDL3 pugixml::pugixml)
 else()
 	add_executable(vita3k MACOSX_BUNDLE main.cpp interface.cpp interface.h performance.cpp)
