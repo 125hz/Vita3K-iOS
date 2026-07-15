@@ -48,7 +48,14 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           cmake --version
-          echo "VCPKG_ROOT=${VCPKG_ROOT}"
+
+      - name: Bootstrap pinned vcpkg
+        run: |
+          mkdir -p build-deps
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git build-deps/vcpkg
+          git -C build-deps/vcpkg checkout 77df67cfff9c12ccfdb52284e07c87c75092f723
+          ./build-deps/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          echo "VCPKG_ROOT=$PWD/build-deps/vcpkg" >> "$GITHUB_ENV"
 
       - name: Install pinned MoltenVK iOS package
         run: |
