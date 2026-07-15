@@ -26,6 +26,14 @@ endif()
 
 project(Vita3K)
 
+# CMake's Xcode generator can leave CMAKE_SYSTEM_PROCESSOR empty while targeting
+# iphoneos, even when CMAKE_OSX_ARCHITECTURES is explicitly arm64.  Several
+# upstream dependencies (notably Capstone's packaging setup) require the system
+# processor to be populated during configure.
+if(VITA3K_BUILD_IOS_UPSTREAM_CORE AND NOT CMAKE_SYSTEM_PROCESSOR)
+	set(CMAKE_SYSTEM_PROCESSOR arm64)
+endif()
+
 # Detects the amount of processors of the host machine and forwards the result to CPU_COUNT
 include(ProcessorCount)
 ProcessorCount(CPU_COUNT)
