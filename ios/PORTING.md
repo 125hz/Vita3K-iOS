@@ -44,7 +44,7 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 22. **Implemented pending device acceptance:** resolve inline NIDs from validated `SVC; MOV pc,lr; NID` import trampolines even when unimplemented, and capture the NID name, callsite, return address, arguments, `r12`, and import-inventory status without fabricating HLE results.
 23. After bounded interpreter boot is stable, integrate and validate the ARM64 JIT platform layer.
 
-Current loader limits are intentional: `ET_SCE_RELEXEC` segments are tried only at their preferred addresses, while SELF segments may require container-specific offset/decompression handling. Imported ARM function stubs are rewritten, but variable/TLS imports and Thumb import stubs are not bound. The loader resolves `NID_MODULE_START` from the export entry table before a valid module is attempted with a 256-instruction ceiling; unsupported code stops with a detailed reason and bounded look-ahead. The interpreter now covers common 16-bit Thumb compiler families, one 32-bit BL/BLX form, wide `PUSH.W`/`STMDB sp!`, `MOVW`/`MOVT`, and immediate `LDRD`/`STRD`. IT blocks, much of Thumb-2, floating point/NEON, exceptions, atomics, and production scheduling remain unsupported.
+Current loader limits are intentional: `ET_SCE_RELEXEC` segments are tried only at their preferred addresses, while SELF segments may require container-specific offset/decompression handling. Imported ARM function stubs are rewritten, but variable/TLS imports and Thumb import stubs are not bound. The loader resolves `NID_MODULE_START` from the export entry table before a valid module is attempted with a 256-instruction ceiling; unsupported code stops with a detailed reason and bounded look-ahead. The interpreter now covers common 16-bit Thumb compiler families, one 32-bit BL/BLX form, wide load/store multiple including `PUSH.W`/`POP.W`, `MOVW`/`MOVT`, and immediate `LDRD`/`STRD`. IT blocks, much of Thumb-2, floating point/NEON, exceptions, atomics, and production scheduling remain unsupported.
 
 The relocation parser implements upstream formats 0–9 and the common ARM/Thumb codes, but the current deterministic acceptance fixture exercises format 0 (`ABS32`). Other compact formats still require representative legal fixtures before they should be considered device-validated.
 
@@ -63,6 +63,10 @@ The bounded interpreter now accepts the scalar logical, arithmetic, test, move, 
 ## Milestone 26 libc termination registration
 
 The bounded HLE surface now clears Amagami's captured `__aeabi_atexit` boundary and proactively covers the ABI-equivalent `__cxa_atexit` plus `__cxa_finalize`. Registration calls retain normalized object, destructor, and DSO values for diagnostics while returning upstream's current zero result. Finalization is observable but does not execute guest callbacks, matching upstream Vita3K's present stub rather than inventing teardown behavior. The legal `milestone26-libc-termination.zip` fixture proves import dispatch, argument retention, the return value, and a clean module return; separate portable cases verify both registration argument orders and finalize state.
+
+## Milestone 27 Thumb-2 multiple transfers
+
+The bounded interpreter now implements Thumb-2 `STMIA`, `LDMIA`, `STMDB`, and `LDMDB` with optional writeback, including the wide push/pop aliases and high-register lists. A PC load performs interworking and recognizes the existing zero-link diagnostic sentinel. Transfers use one contiguous checked guest-memory operation, and architectural unpredictable cases remain hard stops. Amagami's exact `E8BD 81F0` epilogue is covered by both CPU-state tests and the legal `milestone27-thumb2-multiple-transfer.zip` title.
 
 ## Firmware packages
 

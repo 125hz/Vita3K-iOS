@@ -198,6 +198,10 @@ Milestone 25 implements Thumb-2 shifted-register scalar ALU/test operations and 
 
 The accepted Milestone 25 device run reached `__aeabi_atexit` after 72 instructions and one prior HLE call. Milestone 26 binds `__aeabi_atexit`, `__cxa_atexit`, and `__cxa_finalize`, preserves normalized registration/finalization arguments in the boot result, and returns the upstream-compatible zero result. It intentionally does not invoke guest destructor callbacks. The CI artifact `milestone26-libc-termination.zip` reproduces the registration path and returns after nine instructions; portable tests also cover the alternate `__cxa_atexit` argument order and finalize bookkeeping.
 
+## Milestone 27 Thumb-2 multiple transfers
+
+The accepted Milestone 26 device run reached `E8BD 81F0` (`POP.W {r4-r8, pc}`) after 106 instructions, four HLE calls, and three termination registrations. Milestone 27 implements the safe Thumb-2 increment-after and decrement-before load/store-multiple family with optional writeback, high registers, push/pop aliases, checked contiguous memory access, and PC interworking. The CI artifact `milestone27-thumb2-multiple-transfer.zip` pairs the exact captured pop with its matching wide push and returns after two instructions.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

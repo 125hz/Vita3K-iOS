@@ -162,6 +162,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m24_install_zip_fixture;
     std::filesystem::path emitted_m25_install_zip_fixture;
     std::filesystem::path emitted_m26_install_zip_fixture;
+    std::filesystem::path emitted_m27_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -195,6 +196,8 @@ int main(int argc, char **argv) {
             emitted_m25_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m26-install-zip-fixture" && index + 1 < argc) {
             emitted_m26_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m27-install-zip-fixture" && index + 1 < argc) {
+            emitted_m27_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -213,6 +216,7 @@ int main(int argc, char **argv) {
                          "[--emit-m24-install-zip-fixture <path>] "
                          "[--emit-m25-install-zip-fixture <path>] "
                          "[--emit-m26-install-zip-fixture <path>] "
+                         "[--emit-m27-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -500,6 +504,18 @@ int main(int argc, char **argv) {
     const auto cxa_finalize_self = make_plain_self(cxa_finalize_elf);
     const auto cxa_finalize_install_zip = vita3k::ios::make_synthetic_install_zip(
         cxa_finalize_self, cxa_finalize_self);
+    auto multiple_transfer_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 4> multiple_transfer_program{
+        0xE92Du, // PUSH.W {r4-r8, lr}
+        0x41F0u,
+        0xE8BDu, // POP.W {r4-r8, pc} (captured Amagami instruction)
+        0x81F0u
+    };
+    std::memcpy(multiple_transfer_elf.data() + 244,
+        multiple_transfer_program.data(), sizeof(multiple_transfer_program));
+    const auto multiple_transfer_self = make_plain_self(multiple_transfer_elf);
+    const auto m27_install_zip = vita3k::ios::make_synthetic_install_zip(
+        multiple_transfer_self, multiple_transfer_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -540,6 +556,10 @@ int main(int argc, char **argv) {
         || cxa_finalize_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 26 libc termination fixtures.\n";
         return 83;
+    }
+    if (m27_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 27 Thumb-2 multiple-transfer fixture.\n";
+        return 94;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -681,6 +701,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 26 libc termination fixture.\n";
             return 84;
+        }
+    }
+    if (!emitted_m27_install_zip_fixture.empty()) {
+        if (!emitted_m27_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m27_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m27_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m27_install_zip.data()),
+            static_cast<std::streamsize>(m27_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 27 Thumb-2 multiple-transfer fixture.\n";
+            return 95;
         }
     }
 
@@ -1105,6 +1138,34 @@ int main(int argc, char **argv) {
         return 93;
     }
 
+    const auto m27_archive_path = test_root / "milestone27-thumb2-multiple-transfer.zip";
+    std::ofstream m27_archive_stream(m27_archive_path, std::ios::binary);
+    m27_archive_stream.write(reinterpret_cast<const char *>(m27_install_zip.data()),
+        static_cast<std::streamsize>(m27_install_zip.size()));
+    m27_archive_stream.close();
+    const auto m27_install = vita3k::ios::install_game_archive(m27_archive_path);
+    if (!m27_install.success || m27_install.file_count != 6) {
+        std::cerr << m27_install.detail << '\n';
+        return 96;
+    }
+    const auto multiple_transfer_prepared = vita3k::ios::prepare_installed_title(
+        "M15TEST01", true);
+    if (!multiple_transfer_prepared.selected || !multiple_transfer_prepared.loaded
+        || !multiple_transfer_prepared.module_start_from_export
+        || multiple_transfer_prepared.module_start_address != 0x81000061) {
+        std::cerr << multiple_transfer_prepared.detail << '\n';
+        return 97;
+    }
+    const auto multiple_transfer_boot = vita3k::ios::attempt_prepared_title_boot(256);
+    if (!multiple_transfer_boot.started || multiple_transfer_boot.exited
+        || !multiple_transfer_boot.returned
+        || multiple_transfer_boot.instruction_count != 2
+        || multiple_transfer_boot.hle_dispatch_count != 0
+        || multiple_transfer_boot.return_value != 0) {
+        std::cerr << multiple_transfer_boot.detail << '\n';
+        return 98;
+    }
+
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
@@ -1211,6 +1272,10 @@ int main(int argc, char **argv) {
     if (!emitted_m26_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 26 libc termination fixture: "
                   << emitted_m26_install_zip_fixture << '\n';
+    }
+    if (!emitted_m27_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 27 Thumb-2 multiple-transfer fixture: "
+                  << emitted_m27_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

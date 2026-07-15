@@ -1,6 +1,6 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 26.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 27.
 
 ## Copy-paste prompt
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 26 boundary
+## Known Milestone 27 boundary
 
-Milestone 25 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It dispatched `__cxa_set_dso_handle_main` once, retained DSO handle `0x812C7690`, and advanced to 72 instructions before reaching `__aeabi_atexit` (NID `0xEDC939E1`) at inline trampoline SVC address `0x8109BDB8`. The call site LR was `0x81001C85`, with object `r0=0x810DFB24`, Thumb destructor `r1=0x8107CBE5`, and DSO `r2=0x812C7690`.
+Milestone 26 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It advanced to 106 instructions and four HLE calls, retained DSO handle `0x812C7690`, and recorded three termination registrations. It then stopped at `E8BD 81F0` (`POP.W {r4-r8, pc}`) at `0x81001CC8`. The next function begins with compact `PUSH`, `MOVW`/`MOVT`, and branch-with-link sequences.
 
-Milestone 26 binds `__aeabi_atexit`, `__cxa_atexit`, and `__cxa_finalize`, normalizes both registration ABI layouts, records their guest arguments, and returns upstream's current zero compatibility result. It does not execute guest destructor callbacks. Install the Milestone 26 artifact, prepare `PCSG00291`, and run the one-shot attempt once. It should advance past 72 instructions with two HLE calls and one retained termination registration. Return the complete next boundary and its expanded sixteen-halfword look-ahead; never skip an unknown instruction or HLE.
+Milestone 27 implements Thumb-2 increment-after/decrement-before load/store multiple with writeback, high registers, push/pop aliases, contiguous checked memory access, and PC interworking. Install the Milestone 27 artifact, prepare `PCSG00291`, and run the one-shot attempt once. It should advance past 106 instructions while preserving all four successful HLE calls and three libc registrations. Return the complete next boundary and its expanded sixteen-halfword look-ahead; never skip an unknown instruction or HLE.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m26-install-zip-fixture artifacts/milestone26-libc-termination.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m27-install-zip-fixture artifacts/milestone27-thumb2-multiple-transfer.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 

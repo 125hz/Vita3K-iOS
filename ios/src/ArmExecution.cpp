@@ -1328,10 +1328,11 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         return continued();
     }
 
-    // PUSH.W {registers} is the Thumb-2 alias of STMDB sp!, {registers}.
-    // Commercial modules commonly use this form when their prologue saves
-    // high registers that cannot be represented by the compact PUSH encoding.
-    if (instruction == 0xE92Du) {
+    // Thumb-2 load/store multiple supports increment-after and decrement-before.
+    // PUSH.W and POP.W are the writeback SP aliases of STMDB and LDMIA.
+    const bool multiple_increment = (instruction & 0xFFC0u) == 0xE880u;
+    const bool multiple_decrement = (instruction & 0xFFC0u) == 0xE900u;
+    if (multiple_increment || multiple_decrement) {
         std::array<std::uint8_t, sizeof(std::uint16_t)> lower_bytes{};
         std::string lower_error;
         if (!memory_.read(pc + 2u, lower_bytes, lower_error)) {
@@ -1340,7 +1341,7 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
                 .instructions_executed = state_.instruction_count,
                 .final_pc = pc,
                 .last_instruction = instruction,
-                .detail = "Thumb-2 PUSH.W register-list fetch failed: " + lower_error
+                .detail = "Thumb-2 load/store-multiple register-list fetch failed: " + lower_error
             };
         }
         std::uint16_t register_list = 0;
@@ -1349,52 +1350,113 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
         const auto displayed_instruction = (static_cast<std::uint32_t>(instruction) << 16) | register_list;
         state_.registers[register_pc] = pc + 4u;
 
-        const auto invalid_registers = static_cast<std::uint16_t>(
-            (1u << register_sp) | (1u << register_pc));
+        const bool writeback = (instruction & 0x0020u) != 0;
+        const bool load = (instruction & 0x0010u) != 0;
+        const auto base_register = instruction & 0xFu;
         const auto register_count = std::popcount(register_list);
-        if ((register_list & invalid_registers) != 0 || register_count < 2) {
+        const bool includes_sp = (register_list & (1u << register_sp)) != 0;
+        const bool includes_lr = (register_list & (1u << register_lr)) != 0;
+        const bool includes_pc = (register_list & (1u << register_pc)) != 0;
+        const bool base_writeback_alias = writeback
+            && (register_list & (1u << base_register)) != 0;
+        if (base_register == register_pc || includes_sp || register_count < 2
+            || (!load && includes_pc) || (load && includes_lr && includes_pc)
+            || base_writeback_alias) {
             return {
                 .reason = ArmStopReason::unsupported_instruction,
                 .instructions_executed = state_.instruction_count,
                 .final_pc = pc,
                 .last_instruction = packed_instruction,
-                .detail = "Unsupported or unpredictable Thumb-2 PUSH.W " + hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
+                .detail = "Unsupported or unpredictable Thumb-2 load/store multiple " + hexadecimal(displayed_instruction) + " at " + hexadecimal(pc) + "."
             };
         }
 
         const auto byte_count = static_cast<std::uint32_t>(
             register_count * sizeof(std::uint32_t));
-        const auto old_sp = state_.registers[register_sp];
-        if (old_sp < byte_count) {
+        const auto base_address = state_.registers[base_register];
+        const auto incremented_address = static_cast<std::uint64_t>(base_address) + byte_count;
+        if ((multiple_decrement && base_address < byte_count)
+            || (multiple_increment
+                && incremented_address > std::numeric_limits<std::uint32_t>::max())) {
             return {
                 .reason = ArmStopReason::memory_fault,
                 .instructions_executed = state_.instruction_count,
                 .final_pc = pc,
                 .last_instruction = packed_instruction,
-                .detail = "Thumb-2 PUSH.W underflowed guest address space."
+                .detail = "Thumb-2 load/store multiple left guest address space."
             };
         }
-        const auto new_sp = old_sp - byte_count;
-        auto cursor = new_sp;
-        for (std::size_t index = 0; index < state_.registers.size(); ++index) {
-            if ((register_list & (1u << index)) == 0) {
-                continue;
-            }
-            std::array<std::uint8_t, sizeof(std::uint32_t)> word{};
-            std::memcpy(word.data(), &state_.registers[index], sizeof(std::uint32_t));
-            std::string stack_error;
-            if (!memory_.write(cursor, word, stack_error)) {
+        const auto transfer_address = multiple_decrement
+            ? base_address - byte_count
+            : base_address;
+        const auto updated_base = multiple_decrement
+            ? transfer_address
+            : static_cast<std::uint32_t>(incremented_address);
+        std::array<std::uint8_t, 16 * sizeof(std::uint32_t)> transfer_bytes{};
+        auto transfer_span = std::span<std::uint8_t>(transfer_bytes).first(byte_count);
+        std::string transfer_error;
+        if (load) {
+            if (!memory_.read(transfer_address, transfer_span, transfer_error)) {
                 return {
                     .reason = ArmStopReason::memory_fault,
                     .instructions_executed = state_.instruction_count,
                     .final_pc = pc,
                     .last_instruction = packed_instruction,
-                    .detail = "Thumb-2 PUSH.W failed: " + stack_error
+                    .detail = "Thumb-2 load multiple failed: " + transfer_error
                 };
             }
-            cursor += sizeof(std::uint32_t);
+        } else {
+            std::size_t transfer_index = 0;
+            for (std::size_t register_index = 0;
+                 register_index < state_.registers.size(); ++register_index) {
+                if ((register_list & (1u << register_index)) == 0) {
+                    continue;
+                }
+                std::memcpy(transfer_bytes.data() + transfer_index * sizeof(std::uint32_t),
+                    &state_.registers[register_index], sizeof(std::uint32_t));
+                ++transfer_index;
+            }
+            if (!memory_.write(transfer_address, transfer_span, transfer_error)) {
+                return {
+                    .reason = ArmStopReason::memory_fault,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = pc,
+                    .last_instruction = packed_instruction,
+                    .detail = "Thumb-2 store multiple failed: " + transfer_error
+                };
+            }
         }
-        state_.registers[register_sp] = new_sp;
+
+        if (load) {
+            std::size_t transfer_index = 0;
+            for (std::size_t register_index = 0;
+                 register_index < state_.registers.size(); ++register_index) {
+                if ((register_list & (1u << register_index)) == 0) {
+                    continue;
+                }
+                std::memcpy(&state_.registers[register_index],
+                    transfer_bytes.data() + transfer_index * sizeof(std::uint32_t),
+                    sizeof(std::uint32_t));
+                ++transfer_index;
+            }
+        }
+        if (writeback) {
+            state_.registers[base_register] = updated_base;
+        }
+        if (load && includes_pc) {
+            const auto target = state_.registers[register_pc];
+            if (target == 0) {
+                return {
+                    .reason = ArmStopReason::halted,
+                    .instructions_executed = state_.instruction_count,
+                    .final_pc = 0,
+                    .last_instruction = packed_instruction,
+                    .detail = "Guest Thumb routine returned through the zero-link sentinel."
+                };
+            }
+            state_.thumb = (target & 1u) != 0;
+            state_.registers[register_pc] = target & (state_.thumb ? ~1u : ~3u);
+        }
         return {
             .reason = ArmStopReason::instruction_limit,
             .instructions_executed = state_.instruction_count,

@@ -503,8 +503,8 @@ bool run_thumb2_wide_push_test(GuestMemory &memory, std::string &error) {
         error = "Thumb-2 PUSH.W produced unexpected stack or register state.";
         return false;
     }
-    if (unsupported_execution.reason != ArmStopReason::unsupported_thumb || unsupported_execution.last_instruction != 0xA55AE8BFu || unsupported_execution.detail.find("0xE8BFA55A") == std::string::npos || unsupported_execution.detail.find("Lookahead:") == std::string::npos) {
-        error = "The unsupported Thumb-2 diagnostic did not retain both halfwords.";
+    if (unsupported_execution.reason != ArmStopReason::unsupported_instruction || unsupported_execution.last_instruction != 0xA55AE8BFu || unsupported_execution.detail.find("0xE8BFA55A") == std::string::npos) {
+        error = "The unpredictable Thumb-2 load-multiple diagnostic did not retain both halfwords.";
         return false;
     }
     if (!unmapped) {
@@ -1026,6 +1026,226 @@ bool run_thumb2_register_family_test(GuestMemory &memory, std::string &error) {
     return true;
 }
 
+bool run_thumb2_multiple_transfer_test(GuestMemory &memory, std::string &error) {
+    constexpr std::uint32_t test_address = 0x90000;
+    std::array<std::uint8_t, 0x100> program{};
+
+    write_value(program, 0x00, static_cast<std::uint16_t>(0xE8BD)); // POP.W {r4-r8, pc}
+    write_value(program, 0x02, static_cast<std::uint16_t>(0x81F0));
+    write_value(program, 0x10, static_cast<std::uint16_t>(0xE8A1)); // STMIA.W r1!, {r0,r2,r8}
+    write_value(program, 0x12, static_cast<std::uint16_t>(0x0105));
+    write_value(program, 0x14, static_cast<std::uint16_t>(0xE892)); // LDMIA.W r2, {r3,r9}
+    write_value(program, 0x16, static_cast<std::uint16_t>(0x0208));
+    write_value(program, 0x18, static_cast<std::uint16_t>(0xE903)); // STMDB.W r3, {r0,r4}
+    write_value(program, 0x1A, static_cast<std::uint16_t>(0x0011));
+    write_value(program, 0x1C, static_cast<std::uint16_t>(0xE934)); // LDMDB.W r4!, {r5,r10}
+    write_value(program, 0x1E, static_cast<std::uint16_t>(0x0420));
+    write_value(program, 0x20, static_cast<std::uint16_t>(0xE8B1)); // invalid one-register LDM
+    write_value(program, 0x22, static_cast<std::uint16_t>(0x0002));
+    write_value(program, 0x24, static_cast<std::uint16_t>(0xE8A1)); // invalid STM including PC
+    write_value(program, 0x26, static_cast<std::uint16_t>(0x8001));
+    write_value(program, 0x28, static_cast<std::uint16_t>(0xE8B1)); // invalid LDM including LR and PC
+    write_value(program, 0x2A, static_cast<std::uint16_t>(0xC001));
+    write_value(program, 0x2C, static_cast<std::uint16_t>(0xE8A1)); // invalid STM including SP
+    write_value(program, 0x2E, static_cast<std::uint16_t>(0x2001));
+    write_value(program, 0x30, static_cast<std::uint16_t>(0xE8A1)); // invalid writeback/base alias
+    write_value(program, 0x32, static_cast<std::uint16_t>(0x0003));
+    write_value(program, 0x34, static_cast<std::uint16_t>(0xE923)); // underflowing STMDB.W
+    write_value(program, 0x36, static_cast<std::uint16_t>(0x0011));
+    write_value(program, 0x38, static_cast<std::uint16_t>(0xE8A1)); // overflowing STMIA.W
+    write_value(program, 0x3A, static_cast<std::uint16_t>(0x0005));
+    write_value(program, 0x3C, static_cast<std::uint16_t>(0xE8B1)); // unmapped LDMIA.W
+    write_value(program, 0x3E, static_cast<std::uint16_t>(0x0005));
+    write_value(program, 0x40, static_cast<std::uint16_t>(0xE8BD)); // zero-link POP.W return
+    write_value(program, 0x42, static_cast<std::uint16_t>(0x8001));
+
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < 0x400 || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the Thumb-2 multiple-transfer diagnostic.";
+        return false;
+    }
+    const auto memory_size = static_cast<std::uint32_t>(memory_size_64);
+    if (!memory.map_segment(test_address, program, memory_size, 7, error)) {
+        return false;
+    }
+
+    HLEDispatcher dispatcher;
+    ArmInterpreter interpreter(memory, dispatcher);
+    const auto data_address = test_address + 0x200u;
+    const auto run_at = [&](std::uint32_t offset, std::uint32_t stack_pointer) {
+        interpreter.reset((test_address + offset) | 1u, stack_pointer);
+        return interpreter.run(1);
+    };
+
+    const std::array<std::uint32_t, 6> pop_words{
+        0x44444444u, 0x55555555u, 0x66666666u,
+        0x77777777u, 0x88888888u, (test_address + 0x80u) | 1u
+    };
+    std::array<std::uint8_t, sizeof(pop_words)> pop_bytes{};
+    std::memcpy(pop_bytes.data(), pop_words.data(), pop_bytes.size());
+    const auto pop_stack = data_address + 0x80u;
+    if (!memory.write(pop_stack, pop_bytes, error)) {
+        return false;
+    }
+    const auto captured_pop = run_at(0x00, pop_stack);
+    const auto captured_pop_state = interpreter.state();
+
+    constexpr std::uint32_t first_value = 0x11111111u;
+    constexpr std::uint32_t second_value = 0x22222222u;
+    constexpr std::uint32_t third_value = 0x88888888u;
+    interpreter.reset((test_address + 0x10u) | 1u, data_address + 0x100u);
+    interpreter.state().registers[0] = first_value;
+    interpreter.state().registers[1] = data_address;
+    interpreter.state().registers[2] = second_value;
+    interpreter.state().registers[8] = third_value;
+    const auto increment_store = interpreter.run(1);
+    const auto increment_store_state = interpreter.state();
+    std::array<std::uint32_t, 3> stored_words{};
+    std::array<std::uint8_t, sizeof(stored_words)> stored_bytes{};
+    const bool stored_read = memory.read(data_address, stored_bytes, error);
+    if (stored_read) {
+        std::memcpy(stored_words.data(), stored_bytes.data(), stored_bytes.size());
+    }
+
+    interpreter.reset((test_address + 0x14u) | 1u, data_address + 0x100u);
+    interpreter.state().registers[2] = data_address;
+    const auto increment_load = interpreter.run(1);
+    const auto increment_load_state = interpreter.state();
+
+    interpreter.reset((test_address + 0x18u) | 1u, data_address + 0x100u);
+    interpreter.state().registers[0] = first_value;
+    interpreter.state().registers[3] = data_address + 0x48u;
+    interpreter.state().registers[4] = second_value;
+    const auto decrement_store = interpreter.run(1);
+    const auto decrement_store_state = interpreter.state();
+    std::array<std::uint32_t, 2> decrement_words{};
+    std::array<std::uint8_t, sizeof(decrement_words)> decrement_bytes{};
+    const bool decrement_read = memory.read(
+        data_address + 0x40u, decrement_bytes, error);
+    if (decrement_read) {
+        std::memcpy(decrement_words.data(), decrement_bytes.data(), decrement_bytes.size());
+    }
+
+    interpreter.reset((test_address + 0x1Cu) | 1u, data_address + 0x100u);
+    interpreter.state().registers[4] = data_address + 0x48u;
+    const auto decrement_load = interpreter.run(1);
+    const auto decrement_load_state = interpreter.state();
+
+    const auto invalid_count = run_at(0x20, data_address + 0x100u);
+    const auto invalid_store_pc = run_at(0x24, data_address + 0x100u);
+    const auto invalid_load_lr_pc = run_at(0x28, data_address + 0x100u);
+    const auto invalid_sp = run_at(0x2C, data_address + 0x100u);
+    const auto invalid_base_alias = run_at(0x30, data_address + 0x100u);
+    interpreter.reset((test_address + 0x34u) | 1u, data_address + 0x100u);
+    interpreter.state().registers[3] = 4;
+    const auto underflow = interpreter.run(1);
+    interpreter.reset((test_address + 0x38u) | 1u, data_address + 0x100u);
+    interpreter.state().registers[1] = 0xFFFFFFFCu;
+    const auto overflow = interpreter.run(1);
+    interpreter.reset((test_address + 0x3Cu) | 1u, data_address + 0x100u);
+    interpreter.state().registers[1] = test_address + memory_size;
+    const auto unmapped = interpreter.run(1);
+
+    const std::array<std::uint32_t, 2> zero_return_words{ 0xAAAAAAAAu, 0u };
+    std::array<std::uint8_t, sizeof(zero_return_words)> zero_return_bytes{};
+    std::memcpy(zero_return_bytes.data(), zero_return_words.data(),
+        zero_return_bytes.size());
+    const auto zero_return_stack = data_address + 0xC0u;
+    if (!memory.write(zero_return_stack, zero_return_bytes, error)) {
+        return false;
+    }
+    const auto zero_return = run_at(0x40, zero_return_stack);
+    const auto zero_return_state = interpreter.state();
+
+    const auto stopped_at_limit = [](const ArmExecutionResult &result) {
+        return result.reason == ArmStopReason::instruction_limit;
+    };
+    const bool transfers_valid = stopped_at_limit(captured_pop)
+        && captured_pop_state.registers[4] == pop_words[0]
+        && captured_pop_state.registers[5] == pop_words[1]
+        && captured_pop_state.registers[6] == pop_words[2]
+        && captured_pop_state.registers[7] == pop_words[3]
+        && captured_pop_state.registers[8] == pop_words[4]
+        && captured_pop_state.registers[13] == pop_stack + sizeof(pop_words)
+        && captured_pop_state.registers[15] == test_address + 0x80u
+        && stopped_at_limit(increment_store) && stored_read
+        && increment_store_state.registers[1] == data_address + sizeof(stored_words)
+        && stored_words[0] == first_value && stored_words[1] == second_value
+        && stored_words[2] == third_value && stopped_at_limit(increment_load)
+        && increment_load_state.registers[2] == data_address
+        && increment_load_state.registers[3] == first_value
+        && increment_load_state.registers[9] == second_value
+        && stopped_at_limit(decrement_store) && decrement_read
+        && decrement_store_state.registers[3] == data_address + 0x48u
+        && decrement_words[0] == first_value && decrement_words[1] == second_value
+        && stopped_at_limit(decrement_load)
+        && decrement_load_state.registers[4] == data_address + 0x40u
+        && decrement_load_state.registers[5] == first_value
+        && decrement_load_state.registers[10] == second_value;
+    const bool boundaries_valid = invalid_count.reason == ArmStopReason::unsupported_instruction
+        && invalid_store_pc.reason == ArmStopReason::unsupported_instruction
+        && invalid_load_lr_pc.reason == ArmStopReason::unsupported_instruction
+        && invalid_sp.reason == ArmStopReason::unsupported_instruction
+        && invalid_base_alias.reason == ArmStopReason::unsupported_instruction
+        && underflow.reason == ArmStopReason::memory_fault
+        && overflow.reason == ArmStopReason::memory_fault
+        && unmapped.reason == ArmStopReason::memory_fault
+        && zero_return.reason == ArmStopReason::halted
+        && zero_return_state.registers[0] == zero_return_words[0]
+        && zero_return_state.registers[13] == zero_return_stack + sizeof(zero_return_words);
+
+    std::string unmap_error;
+    const bool unmap_succeeded = memory.unmap_all_segments(unmap_error);
+    if (!transfers_valid || !boundaries_valid) {
+        std::ostringstream diagnostic;
+        diagnostic << "The Thumb-2 multiple-transfer diagnostic produced unexpected state: "
+                   << "pop_reason=" << static_cast<int>(captured_pop.reason)
+                   << ", pop_instruction=" << captured_pop.last_instruction
+                   << ", pop_sp=" << captured_pop_state.registers[13]
+                   << ", pop_pc=" << captured_pop_state.registers[15]
+                   << ", pop_regs=" << captured_pop_state.registers[4]
+                   << "/" << captured_pop_state.registers[5]
+                   << "/" << captured_pop_state.registers[6]
+                   << "/" << captured_pop_state.registers[7]
+                   << "/" << captured_pop_state.registers[8]
+                   << ", stm_reason=" << static_cast<int>(increment_store.reason)
+                   << ", stm_base=" << increment_store_state.registers[1]
+                   << ", stm_read=" << stored_read
+                   << ", stm_words=" << stored_words[0]
+                   << "/" << stored_words[1] << "/" << stored_words[2]
+                   << ", ldm_reason=" << static_cast<int>(increment_load.reason)
+                   << ", ldm_r2=" << increment_load_state.registers[2]
+                   << ", ldm_r3=" << increment_load_state.registers[3]
+                   << ", ldm_r9=" << increment_load_state.registers[9]
+                   << ", stmdb_reason=" << static_cast<int>(decrement_store.reason)
+                   << ", stmdb_base=" << decrement_store_state.registers[3]
+                   << ", stmdb_words=" << decrement_words[0]
+                   << "/" << decrement_words[1]
+                   << ", ldmdb_reason=" << static_cast<int>(decrement_load.reason)
+                   << ", ldmdb_base=" << decrement_load_state.registers[4]
+                   << ", ldmdb_regs=" << decrement_load_state.registers[5]
+                   << "/" << decrement_load_state.registers[10]
+                   << ", invalid=" << static_cast<int>(invalid_count.reason)
+                   << "/" << static_cast<int>(invalid_store_pc.reason)
+                   << "/" << static_cast<int>(invalid_load_lr_pc.reason)
+                   << "/" << static_cast<int>(invalid_sp.reason)
+                   << "/" << static_cast<int>(invalid_base_alias.reason)
+                   << ", faults=" << static_cast<int>(underflow.reason)
+                   << "/" << static_cast<int>(overflow.reason)
+                   << "/" << static_cast<int>(unmapped.reason)
+                   << ", zero=" << static_cast<int>(zero_return.reason)
+                   << ", zero_r0=" << zero_return_state.registers[0]
+                   << ", zero_sp=" << zero_return_state.registers[13] << ".";
+        error = diagnostic.str();
+        return false;
+    }
+    if (!unmap_succeeded) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
 void append_storage_error(std::string message) {
     if (!host_storage.error.empty()) {
         host_storage.error += " | ";
@@ -1290,7 +1510,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     ImportBindingResult binding_test;
     const bool loader_pipeline_passed = segment_mapping_passed && run_loader_pipeline_test(*guest_memory, binding_test, thread_test, memory_error);
     std::string execution_error;
-    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_inline_hle_nid_diagnostic_test(*guest_memory, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error) && run_thumb2_runtime_family_test(*guest_memory, execution_error) && run_thumb2_register_family_test(*guest_memory, execution_error);
+    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_inline_hle_nid_diagnostic_test(*guest_memory, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error) && run_thumb2_runtime_family_test(*guest_memory, execution_error) && run_thumb2_register_family_test(*guest_memory, execution_error) && run_thumb2_multiple_transfer_test(*guest_memory, execution_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;

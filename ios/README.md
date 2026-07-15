@@ -277,3 +277,16 @@ Milestone 26 binds the complete closely related `__aeabi_atexit`, `__cxa_atexit`
 4. Share the complete next boundary. It should exceed 72 instructions, report two successful HLE calls and `Libc termination registrations=1` with the three captured values, then stop honestly at the next CPU, memory, HLE, return, or instruction-ceiling boundary.
 
 The Actions artifact includes `milestone26-libc-termination.zip`. Its legal synthetic title dispatches `__aeabi_atexit`, records object `0x81000240`, destructor `0x81000301`, and DSO `0x81000200`, then returns after nine instructions. Portable regressions separately exercise the `__cxa_atexit` argument order and `__cxa_finalize` diagnostic state.
+
+## Milestone 27 Thumb-2 multiple-transfer family
+
+The accepted Milestone 26 Amagami attempt advanced from 72 to 106 instructions, completed four HLE calls and three libc termination registrations, then stopped at `E8BD 81F0` (`POP.W {r4-r8, pc}`) at `0x81001CC8`. This is the `LDMIA sp!` function-epilogue alias.
+
+Milestone 27 replaces the earlier one-off wide-push decoder with the complete safe Thumb-2 increment-after/decrement-before load/store-multiple family. It supports high registers, optional writeback, `PUSH.W`/`POP.W`, and PC loads with ARM/Thumb interworking or the diagnostic zero-link return. Empty or one-register lists, SP in the list, store-PC, simultaneous LR/PC loads, writeback/base aliasing, overflow/underflow, and unmapped ranges remain explicit boundaries. Each contiguous transfer is performed as one checked memory operation so a failed range does not partially update registers or memory.
+
+1. Install the Milestone 27 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (256 Instructions)** once.
+4. Share the complete next boundary and all look-ahead halfwords. It should advance beyond 106 instructions while retaining four HLE calls, DSO `0x812C7690`, and three termination registrations.
+
+The Actions artifact includes `milestone27-thumb2-multiple-transfer.zip`. Its legal synthetic title executes `PUSH.W {r4-r8, lr}` followed by Amagami's exact `POP.W {r4-r8, pc}` and returns after two instructions. Portable tests additionally cover all four transfer modes, writeback, high registers, PC interworking, zero-link return, invalid lists, range overflow, and guest faults.
