@@ -1809,6 +1809,10 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.app_util_initialized = thread.app_util_initialized;
         result.app_util_init_call_count = thread.app_util_init_call_count;
         result.app_util_shutdown_call_count = thread.app_util_shutdown_call_count;
+        result.sysmodule_load_call_count = thread.sysmodule_load_call_count;
+        result.sysmodule_is_loaded_call_count = thread.sysmodule_is_loaded_call_count;
+        result.sysmodule_unload_call_count = thread.sysmodule_unload_call_count;
+        result.loaded_sysmodule_count = thread.loaded_sysmodule_count;
         result.libc_heap_live_bytes = thread.libc_heap_live_bytes;
         result.libc_heap_peak_bytes = thread.libc_heap_peak_bytes;
         result.last_libc_atexit_object = thread.last_libc_atexit_object;
@@ -1827,6 +1831,8 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.last_app_util_boot_attribute = thread.last_app_util_boot_attribute;
         result.last_app_util_app_version = thread.last_app_util_app_version;
         result.last_app_util_result = thread.last_app_util_result;
+        result.last_sysmodule_id = thread.last_sysmodule_id;
+        result.last_sysmodule_result = thread.last_sysmodule_result;
         result.exit_status = thread.exit_status;
         result.return_value = thread.return_value;
         result.detail = thread.detail;

@@ -46,11 +46,17 @@ constexpr std::uint32_t nid_new = 0xF99ED5AC;
 constexpr std::uint32_t nid_new_nothrow = 0x0AE71DC3;
 constexpr std::uint32_t nid_sce_app_util_init = 0xDAFFE671;
 constexpr std::uint32_t nid_sce_app_util_shutdown = 0xB220B00B;
+constexpr std::uint32_t nid_sce_sysmodule_is_loaded = 0x53099B7A;
+constexpr std::uint32_t nid_sce_sysmodule_load_module = 0x79A0160A;
+constexpr std::uint32_t nid_sce_sysmodule_unload_module = 0x31D87805;
 constexpr std::uint32_t sce_app_util_error_parameter = 0x80100600;
 constexpr std::uint32_t sce_app_util_error_not_initialized = 0x80100601;
 constexpr std::uint32_t sce_app_util_error_busy = 0x80100603;
 constexpr std::size_t sce_app_util_init_param_size = 0x40;
 constexpr std::size_t sce_app_util_boot_param_size = 0x28;
+constexpr std::uint32_t sce_sysmodule_count = 0x56;
+constexpr std::uint32_t sce_sysmodule_error_invalid_value = 0x805A1000;
+constexpr std::uint32_t sce_sysmodule_error_unloaded = 0x805A1001;
 constexpr std::int32_t first_diagnostic_thread_id = 0x10001;
 constexpr std::uint32_t diagnostic_heap_base = 0x90000000;
 constexpr std::uint32_t diagnostic_heap_size = 16 * 1024 * 1024;
@@ -140,6 +146,12 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     const bool imports_new_nothrow = contains_nid(imported_nids, nid_new_nothrow);
     const bool imports_sce_app_util_init = contains_nid(imported_nids, nid_sce_app_util_init);
     const bool imports_sce_app_util_shutdown = contains_nid(imported_nids, nid_sce_app_util_shutdown);
+    const bool imports_sce_sysmodule_is_loaded = contains_nid(
+        imported_nids, nid_sce_sysmodule_is_loaded);
+    const bool imports_sce_sysmodule_load_module = contains_nid(
+        imported_nids, nid_sce_sysmodule_load_module);
+    const bool imports_sce_sysmodule_unload_module = contains_nid(
+        imported_nids, nid_sce_sysmodule_unload_module);
     if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" || (imports_exit_thread && std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
         return result;
@@ -189,6 +201,18 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         result.detail = "The upstream Vita NID database did not match the AppUtil lifecycle bindings.";
         return result;
     }
+    if ((imports_sce_sysmodule_is_loaded
+            && std::string_view(import_name(nid_sce_sysmodule_is_loaded))
+                != "sceSysmoduleIsLoaded")
+        || (imports_sce_sysmodule_load_module
+            && std::string_view(import_name(nid_sce_sysmodule_load_module))
+                != "sceSysmoduleLoadModule")
+        || (imports_sce_sysmodule_unload_module
+            && std::string_view(import_name(nid_sce_sysmodule_unload_module))
+                != "sceSysmoduleUnloadModule")) {
+        result.detail = "The upstream Vita NID database did not match the Sysmodule lifecycle bindings.";
+        return result;
+    }
 
     HLEDispatcher dispatcher;
     bool exit_requested = false;
@@ -197,6 +221,7 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     std::string guard_error;
     std::string app_util_error;
     bool app_util_initialized = false;
+    std::vector<std::uint32_t> loaded_sysmodules;
     GuestHeap heap;
     std::string heap_error;
     const bool imports_heap = imports_calloc || imports_free || imports_malloc
@@ -307,6 +332,64 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                 app_util_initialized = false;
                 result.app_util_initialized = false;
                 return set_app_util_result(0);
+            });
+    }
+    const auto set_sysmodule_result = [&](std::uint32_t module_id,
+                                          std::uint32_t value) -> std::int32_t {
+        result.last_sysmodule_id = module_id;
+        result.last_sysmodule_result = static_cast<std::int32_t>(value);
+        result.loaded_sysmodule_count = loaded_sysmodules.size();
+        return result.last_sysmodule_result;
+    };
+    const auto sysmodule_id_valid = [](std::uint32_t module_id) {
+        return module_id <= sce_sysmodule_count;
+    };
+    bool sysmodule_load_bound = true;
+    if (imports_sce_sysmodule_load_module) {
+        sysmodule_load_bound = dispatcher.bind(nid_sce_sysmodule_load_module,
+            "sceSysmoduleLoadModule", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.sysmodule_load_call_count;
+                const auto module_id = state.registers[0];
+                if (!sysmodule_id_valid(module_id)) {
+                    return set_sysmodule_result(
+                        module_id, sce_sysmodule_error_invalid_value);
+                }
+                if (!std::ranges::contains(loaded_sysmodules, module_id)) {
+                    loaded_sysmodules.push_back(module_id);
+                }
+                return set_sysmodule_result(module_id, 0);
+            });
+    }
+    bool sysmodule_is_loaded_bound = true;
+    if (imports_sce_sysmodule_is_loaded) {
+        sysmodule_is_loaded_bound = dispatcher.bind(nid_sce_sysmodule_is_loaded,
+            "sceSysmoduleIsLoaded", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.sysmodule_is_loaded_call_count;
+                const auto module_id = state.registers[0];
+                if (!sysmodule_id_valid(module_id)) {
+                    return set_sysmodule_result(
+                        module_id, sce_sysmodule_error_invalid_value);
+                }
+                return set_sysmodule_result(module_id,
+                    std::ranges::contains(loaded_sysmodules, module_id)
+                        ? 0u : sce_sysmodule_error_unloaded);
+            });
+    }
+    bool sysmodule_unload_bound = true;
+    if (imports_sce_sysmodule_unload_module) {
+        sysmodule_unload_bound = dispatcher.bind(nid_sce_sysmodule_unload_module,
+            "sceSysmoduleUnloadModule", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.sysmodule_unload_call_count;
+                const auto module_id = state.registers[0];
+                if (!sysmodule_id_valid(module_id)) {
+                    return set_sysmodule_result(
+                        module_id, sce_sysmodule_error_invalid_value);
+                }
+                std::erase(loaded_sysmodules, module_id);
+                return set_sysmodule_result(module_id, 0);
             });
     }
     const auto record_atexit_registration = [&](std::uint32_t object,
@@ -681,7 +764,10 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         + static_cast<std::size_t>(imports_new)
         + static_cast<std::size_t>(imports_new_nothrow)
         + static_cast<std::size_t>(imports_sce_app_util_init)
-        + static_cast<std::size_t>(imports_sce_app_util_shutdown);
+        + static_cast<std::size_t>(imports_sce_app_util_shutdown)
+        + static_cast<std::size_t>(imports_sce_sysmodule_is_loaded)
+        + static_cast<std::size_t>(imports_sce_sysmodule_load_module)
+        + static_cast<std::size_t>(imports_sce_sysmodule_unload_module);
     if (!get_id_bound || !exit_bound || !dso_handle_bound || !aeabi_atexit_bound
         || !cxa_atexit_bound || !cxa_finalize_bound || !cxa_guard_abort_bound
         || !cxa_guard_acquire_bound || !cxa_guard_release_bound
@@ -692,6 +778,7 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         || !delete_array_bound || !delete_array_nothrow_bound
         || !delete_array_placement_bound
         || !app_util_init_bound || !app_util_shutdown_bound
+        || !sysmodule_is_loaded_bound || !sysmodule_load_bound || !sysmodule_unload_bound
         || dispatcher.binding_count() != expected_binding_count) {
         result.detail = "The minimal kernel/runtime HLE bindings could not be registered.";
         return result;
@@ -807,6 +894,17 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     }
     if (!app_util_error.empty()) {
         detail << " AppUtil boundary: " << app_util_error << ".";
+    }
+    const auto sysmodule_call_count = result.sysmodule_load_call_count
+        + result.sysmodule_is_loaded_call_count + result.sysmodule_unload_call_count;
+    if (sysmodule_call_count != 0) {
+        detail << " Sysmodule lifecycle: loaded=" << result.loaded_sysmodule_count
+               << ", load calls=" << result.sysmodule_load_call_count
+               << ", status calls=" << result.sysmodule_is_loaded_call_count
+               << ", unload calls=" << result.sysmodule_unload_call_count
+               << "; last module=" << nid_hex(result.last_sysmodule_id)
+               << ", last result=" << nid_hex(
+                    static_cast<std::uint32_t>(result.last_sysmodule_result)) << ".";
     }
     result.detail = detail.str();
     return result;

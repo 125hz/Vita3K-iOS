@@ -366,3 +366,14 @@ Milestone 33 implements a bounded AppUtil lifecycle rather than returning a blin
 4. Share the entire next boundary. It should exceed 5676 instructions and 31 HLE calls and include `AppUtil lifecycle: initialized=yes, init calls=1` unless startup later shuts it down.
 
 The Actions artifact includes `milestone33-app-util-lifecycle.zip`. Its legal synthetic title initializes AppUtil with correctly sized zeroed guest structures and returns cleanly. Portable companions cover null parameters, unmapped pointers, shutdown-before-init, and a complete init/shutdown sequence with three rebound imports.
+
+## Milestone 34 public Sysmodule lifecycle
+
+The accepted Milestone 33 device run initialized AppUtil successfully and advanced to 5683 instructions and 32 HLE calls before reaching `sceSysmoduleLoadModule(0x15)` (NID `0x79A0160A`). Module `0x15` is `SCE_SYSMODULE_NP`. Milestone 34 batches the complete public lifecycle family: `sceSysmoduleLoadModule`, `sceSysmoduleIsLoaded`, and `sceSysmoduleUnloadModule`. The bounded runner records loaded IDs per boot, preserves idempotent loads, reports unloaded and invalid-ID errors with upstream codes, and exposes call/state diagnostics. In the upstream-compatible HLE path, loading records availability without claiming that proprietary firmware code executed; the first NP service call remains an honest boundary.
+
+1. Install the Milestone 34 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (65536 Instructions)** once.
+4. Share the complete next boundary and the `Sysmodule lifecycle:` diagnostic.
+
+The Actions artifact includes `milestone34-sysmodule-lifecycle.zip`. Its legal synthetic title proves load, loaded-status, unload, and unloaded-status ordering in one run. Portable companions cover unloaded status and invalid module IDs.

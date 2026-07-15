@@ -172,6 +172,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m31_install_zip_fixture;
     std::filesystem::path emitted_m32_install_zip_fixture;
     std::filesystem::path emitted_m33_install_zip_fixture;
+    std::filesystem::path emitted_m34_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -219,6 +220,8 @@ int main(int argc, char **argv) {
             emitted_m32_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m33-install-zip-fixture" && index + 1 < argc) {
             emitted_m33_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m34-install-zip-fixture" && index + 1 < argc) {
+            emitted_m34_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -244,6 +247,7 @@ int main(int argc, char **argv) {
                          "[--emit-m31-install-zip-fixture <path>] "
                          "[--emit-m32-install-zip-fixture <path>] "
                          "[--emit-m33-install-zip-fixture <path>] "
+                         "[--emit-m34-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -831,6 +835,49 @@ int main(int argc, char **argv) {
     const auto app_util_lifecycle_self = make_plain_self(app_util_lifecycle_elf);
     const auto app_util_lifecycle_install_zip = vita3k::ios::make_synthetic_install_zip(
         app_util_lifecycle_self, app_util_lifecycle_self);
+    constexpr std::uint32_t sysmodule_is_loaded_nid = 0x53099B7Au;
+    constexpr std::uint32_t sysmodule_load_nid = 0x79A0160Au;
+    constexpr std::uint32_t sysmodule_unload_nid = 0x31D87805u;
+    constexpr std::uint32_t sysmodule_np_id = 0x15u;
+    constexpr std::uint32_t sysmodule_error_invalid_value = 0x805A1000u;
+    constexpr std::uint32_t sysmodule_error_unloaded = 0x805A1001u;
+    const auto unloaded_sysmodule_install_zip = make_cpp_allocation_archive(
+        sysmodule_is_loaded_nid, sysmodule_np_id);
+    const auto invalid_sysmodule_install_zip = make_cpp_allocation_archive(
+        sysmodule_load_nid, 0x57u);
+    auto sysmodule_lifecycle_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 14> sysmodule_lifecycle_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2015u, // MOVS r0, #0x15 (SCE_SYSMODULE_NP)
+        0x4B05u, // LDR r3, [pc, #20] -> load stub
+        0x4798u, // BLX r3
+        0x2015u, // MOVS r0, #0x15
+        0x3310u, // ADDS r3, #16 -> status stub
+        0x4798u, // BLX r3
+        0x2015u, // MOVS r0, #0x15
+        0x3310u, // ADDS r3, #16 -> unload stub
+        0x4798u, // BLX r3
+        0x2015u, // MOVS r0, #0x15
+        0x3B10u, // SUBS r3, #16 -> status stub
+        0x4798u, // BLX r3
+        0xBD10u // POP {r4, pc}
+    };
+    std::memcpy(sysmodule_lifecycle_elf.data() + 244,
+        sysmodule_lifecycle_program.data(), sizeof(sysmodule_lifecycle_program));
+    write_value(sysmodule_lifecycle_elf, 272, static_cast<std::uint32_t>(0x81000030));
+    write_value(sysmodule_lifecycle_elf, 314, static_cast<std::uint16_t>(4));
+    write_value(sysmodule_lifecycle_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(sysmodule_lifecycle_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(sysmodule_lifecycle_elf, 348, static_cast<std::uint32_t>(0x81000030));
+    write_value(sysmodule_lifecycle_elf, 352, static_cast<std::uint32_t>(0x81000040));
+    write_value(sysmodule_lifecycle_elf, 356, static_cast<std::uint32_t>(0x81000050));
+    write_value(sysmodule_lifecycle_elf, 368, get_thread_id_nid);
+    write_value(sysmodule_lifecycle_elf, 372, sysmodule_load_nid);
+    write_value(sysmodule_lifecycle_elf, 376, sysmodule_is_loaded_nid);
+    write_value(sysmodule_lifecycle_elf, 380, sysmodule_unload_nid);
+    const auto sysmodule_lifecycle_self = make_plain_self(sysmodule_lifecycle_elf);
+    const auto m34_install_zip = vita3k::ios::make_synthetic_install_zip(
+        sysmodule_lifecycle_self, sysmodule_lifecycle_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -910,6 +957,11 @@ int main(int argc, char **argv) {
         || app_util_lifecycle_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 33 AppUtil lifecycle fixtures.\n";
         return 132;
+    }
+    if (m34_install_zip.empty() || unloaded_sysmodule_install_zip.empty()
+        || invalid_sysmodule_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 34 Sysmodule lifecycle fixtures.\n";
+        return 139;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -1142,6 +1194,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 33 AppUtil lifecycle fixture.\n";
             return 133;
+        }
+    }
+    if (!emitted_m34_install_zip_fixture.empty()) {
+        if (!emitted_m34_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m34_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m34_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m34_install_zip.data()),
+            static_cast<std::streamsize>(m34_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 34 Sysmodule lifecycle fixture.\n";
+            return 140;
         }
     }
 
@@ -1891,6 +1956,53 @@ int main(int argc, char **argv) {
         std::cerr << app_util_lifecycle_boot.detail << '\n';
         return 138;
     }
+    const auto unloaded_sysmodule_boot = run_guard_fixture(
+        unloaded_sysmodule_install_zip, "milestone34-sysmodule-unloaded.zip");
+    if (!unloaded_sysmodule_boot.returned
+        || unloaded_sysmodule_boot.hle_dispatch_count != 1
+        || unloaded_sysmodule_boot.last_hle_nid != sysmodule_is_loaded_nid
+        || unloaded_sysmodule_boot.sysmodule_is_loaded_call_count != 1
+        || unloaded_sysmodule_boot.loaded_sysmodule_count != 0
+        || unloaded_sysmodule_boot.last_sysmodule_id != sysmodule_np_id
+        || static_cast<std::uint32_t>(unloaded_sysmodule_boot.last_sysmodule_result)
+            != sysmodule_error_unloaded
+        || unloaded_sysmodule_boot.return_value != sysmodule_error_unloaded) {
+        std::cerr << unloaded_sysmodule_boot.detail << '\n';
+        return 141;
+    }
+    const auto invalid_sysmodule_boot = run_guard_fixture(
+        invalid_sysmodule_install_zip, "milestone34-sysmodule-invalid.zip");
+    if (!invalid_sysmodule_boot.returned
+        || invalid_sysmodule_boot.hle_dispatch_count != 1
+        || invalid_sysmodule_boot.last_hle_nid != sysmodule_load_nid
+        || invalid_sysmodule_boot.sysmodule_load_call_count != 1
+        || invalid_sysmodule_boot.loaded_sysmodule_count != 0
+        || invalid_sysmodule_boot.last_sysmodule_id != 0x57u
+        || static_cast<std::uint32_t>(invalid_sysmodule_boot.last_sysmodule_result)
+            != sysmodule_error_invalid_value
+        || invalid_sysmodule_boot.return_value != sysmodule_error_invalid_value) {
+        std::cerr << invalid_sysmodule_boot.detail << '\n';
+        return 142;
+    }
+    const auto sysmodule_lifecycle_boot = run_guard_fixture(
+        m34_install_zip, "milestone34-sysmodule-lifecycle.zip");
+    if (!sysmodule_lifecycle_boot.returned
+        || sysmodule_lifecycle_boot.hle_dispatch_count != 4
+        || sysmodule_lifecycle_boot.last_hle_nid != sysmodule_is_loaded_nid
+        || sysmodule_lifecycle_boot.sysmodule_load_call_count != 1
+        || sysmodule_lifecycle_boot.sysmodule_is_loaded_call_count != 2
+        || sysmodule_lifecycle_boot.sysmodule_unload_call_count != 1
+        || sysmodule_lifecycle_boot.loaded_sysmodule_count != 0
+        || sysmodule_lifecycle_boot.last_sysmodule_id != sysmodule_np_id
+        || static_cast<std::uint32_t>(sysmodule_lifecycle_boot.last_sysmodule_result)
+            != sysmodule_error_unloaded
+        || sysmodule_lifecycle_boot.return_value != sysmodule_error_unloaded
+        || sysmodule_lifecycle_boot.detail.find(
+            "Sysmodule lifecycle: loaded=0, load calls=1, status calls=2, unload calls=1")
+            == std::string::npos) {
+        std::cerr << sysmodule_lifecycle_boot.detail << '\n';
+        return 143;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -2026,6 +2138,10 @@ int main(int argc, char **argv) {
     if (!emitted_m33_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 33 AppUtil lifecycle fixture: "
                   << emitted_m33_install_zip_fixture << '\n';
+    }
+    if (!emitted_m34_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 34 Sysmodule lifecycle fixture: "
+                  << emitted_m34_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

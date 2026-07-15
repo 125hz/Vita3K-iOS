@@ -226,6 +226,10 @@ The accepted Milestone 31 device run continued forward to 5637 instructions and 
 
 The accepted Milestone 32 device run completed `_Znwj(8)`, then advanced to 5676 instructions and 31 HLE calls before reaching `sceAppUtilInit` with two mapped guest parameter blocks. Milestone 33 implements stateful init/shutdown using the official VitaSDK `0x40`/`0x28` structure sizes, bounded guest reads, reserved-field checks, documented parameter/state errors, and observable input diagnostics. Unmapped pointers stop rather than becoming host pointers. Savedata, events, mounts, and system settings are deliberately not faked. CI emits `milestone33-app-util-lifecycle.zip`, and portable tests cover valid init, null input, an unmapped pointer, shutdown-before-init, and a complete paired lifecycle.
 
+## Milestone 34 public Sysmodule lifecycle
+
+The accepted Milestone 33 device run advanced through AppUtil to `sceSysmoduleLoadModule(0x15)` (`SCE_SYSMODULE_NP`) at 5683 instructions and 32 HLE calls. Milestone 34 binds `sceSysmoduleLoadModule`, `sceSysmoduleIsLoaded`, and `sceSysmoduleUnloadModule` as a stateful family matching upstream HLE bookkeeping and error values. Loading makes a module available to HLE dispatch but does not claim firmware execution. CI emits `milestone34-sysmodule-lifecycle.zip`; portable tests cover load/status/unload/status ordering, unloaded queries, and invalid IDs.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

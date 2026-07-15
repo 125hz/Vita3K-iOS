@@ -46,6 +46,10 @@ struct GuestThreadRunResult {
     bool app_util_initialized = false;
     std::size_t app_util_init_call_count = 0;
     std::size_t app_util_shutdown_call_count = 0;
+    std::size_t sysmodule_load_call_count = 0;
+    std::size_t sysmodule_is_loaded_call_count = 0;
+    std::size_t sysmodule_unload_call_count = 0;
+    std::size_t loaded_sysmodule_count = 0;
     std::uint64_t libc_heap_live_bytes = 0;
     std::uint64_t libc_heap_peak_bytes = 0;
     std::uint32_t last_libc_atexit_object = 0;
@@ -64,6 +68,8 @@ struct GuestThreadRunResult {
     std::uint32_t last_app_util_boot_attribute = 0;
     std::uint32_t last_app_util_app_version = 0;
     std::int32_t last_app_util_result = 0;
+    std::uint32_t last_sysmodule_id = 0;
+    std::int32_t last_sysmodule_result = 0;
     std::uint32_t return_value = 0;
     std::string detail;
 };

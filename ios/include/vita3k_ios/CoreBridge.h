@@ -78,6 +78,10 @@ struct TitleBootResult {
     bool app_util_initialized{};
     std::size_t app_util_init_call_count{};
     std::size_t app_util_shutdown_call_count{};
+    std::size_t sysmodule_load_call_count{};
+    std::size_t sysmodule_is_loaded_call_count{};
+    std::size_t sysmodule_unload_call_count{};
+    std::size_t loaded_sysmodule_count{};
     std::uint64_t libc_heap_live_bytes{};
     std::uint64_t libc_heap_peak_bytes{};
     std::uint32_t last_libc_atexit_object{};
@@ -96,6 +100,8 @@ struct TitleBootResult {
     std::uint32_t last_app_util_boot_attribute{};
     std::uint32_t last_app_util_app_version{};
     std::int32_t last_app_util_result{};
+    std::uint32_t last_sysmodule_id{};
+    std::int32_t last_sysmodule_result{};
     std::int32_t exit_status{};
     std::uint32_t return_value{};
     std::string title_id;
