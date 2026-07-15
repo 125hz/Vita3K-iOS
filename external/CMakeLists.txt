@@ -96,6 +96,20 @@ set(USE_SANITIZERS FALSE CACHE BOOL "Dont't use sanitizers")
 
 add_subdirectory(cubeb EXCLUDE_FROM_ALL)
 
+if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
+	# Cubeb's AudioUnit implementation supports TARGET_OS_IPHONE, but its CMake
+	# feature check also adds a macOS-only notification helper and CoreServices.
+	# The helper includes CoreAudio/AudioHardware.h, which is not in the iOS SDK,
+	# and its only call site is already excluded by Cubeb on iPhone.
+	get_target_property(CUBEB_IOS_SOURCES cubeb SOURCES)
+	list(FILTER CUBEB_IOS_SOURCES EXCLUDE REGEX "cubeb_osx_run_loop\\.cpp$")
+	set_property(TARGET cubeb PROPERTY SOURCES "${CUBEB_IOS_SOURCES}")
+
+	get_target_property(CUBEB_IOS_LINK_LIBRARIES cubeb LINK_LIBRARIES)
+	list(REMOVE_ITEM CUBEB_IOS_LINK_LIBRARIES "-framework CoreServices")
+	set_property(TARGET cubeb PROPERTY LINK_LIBRARIES "${CUBEB_IOS_LINK_LIBRARIES}")
+endif()
+
 if (ARCHITECTURE STREQUAL "arm64")
 	target_compile_definitions(speex PUBLIC
 		#_USE_NEON
