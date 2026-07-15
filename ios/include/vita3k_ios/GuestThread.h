@@ -24,10 +24,18 @@ struct GuestThreadRunResult {
     std::uint32_t libc_dso_handle_main = 0;
     std::size_t libc_atexit_registration_count = 0;
     std::size_t libc_finalize_call_count = 0;
+    std::size_t libc_guard_acquire_count = 0;
+    std::size_t libc_guard_release_count = 0;
+    std::size_t libc_guard_abort_count = 0;
+    std::size_t libc_guard_initialization_count = 0;
+    std::size_t libc_guard_recursive_acquire_count = 0;
     std::uint32_t last_libc_atexit_object = 0;
     std::uint32_t last_libc_atexit_destructor = 0;
     std::uint32_t last_libc_atexit_dso = 0;
     std::uint32_t last_libc_finalize_dso = 0;
+    std::uint32_t last_libc_guard_address = 0;
+    std::uint32_t last_libc_guard_word = 0;
+    std::int32_t last_libc_guard_result = 0;
     std::uint32_t return_value = 0;
     std::string detail;
 };

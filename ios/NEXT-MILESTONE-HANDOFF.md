@@ -1,6 +1,6 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 27.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 28.
 
 ## Copy-paste prompt
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 27 boundary
+## Known Milestone 28 boundary
 
-Milestone 26 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It advanced to 106 instructions and four HLE calls, retained DSO handle `0x812C7690`, and recorded three termination registrations. It then stopped at `E8BD 81F0` (`POP.W {r4-r8, pc}`) at `0x81001CC8`. The next function begins with compact `PUSH`, `MOVW`/`MOVT`, and branch-with-link sequences.
+Milestone 27 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It advanced to 122 instructions and four HLE calls, retained DSO handle `0x812C7690`, and recorded three termination registrations. It then reached `__cxa_guard_acquire` (NID `0xD0310E31`) at SVC `0x8109BD78`, called from LR `0x81001F5F`, with guard address `r0=0x812C75D8`.
 
-Milestone 27 implements Thumb-2 increment-after/decrement-before load/store multiple with writeback, high registers, push/pop aliases, contiguous checked memory access, and PC interworking. Install the Milestone 27 artifact, prepare `PCSG00291`, and run the one-shot attempt once. It should advance past 106 instructions while preserving all four successful HLE calls and three libc registrations. Return the complete next boundary and its expanded sixteen-halfword look-ahead; never skip an unknown instruction or HLE.
+Milestone 28 implements the full Arm 32-bit `__cxa_guard_acquire`, `__cxa_guard_release`, and `__cxa_guard_abort` cluster with aligned guest-word access, initialized-bit publication, per-run ownership, exact acquire returns, and explicit recursive/fault boundaries. Install the Milestone 28 artifact, prepare `PCSG00291`, and run the one-shot attempt once. It should advance past 122 instructions, count the acquire as the fifth successful HLE call, and include a `C++ guards:` diagnostic. Return the complete next CPU, memory, HLE, return, or instruction-limit boundary; never skip unknown behavior.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m27-install-zip-fixture artifacts/milestone27-thumb2-multiple-transfer.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m28-install-zip-fixture artifacts/milestone28-cxa-guards.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 

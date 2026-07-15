@@ -115,6 +115,7 @@ jobs:
             --emit-m25-install-zip-fixture artifacts/milestone25-thumb2-register-families.zip \
             --emit-m26-install-zip-fixture artifacts/milestone26-libc-termination.zip \
             --emit-m27-install-zip-fixture artifacts/milestone27-thumb2-multiple-transfer.zip \
+            --emit-m28-install-zip-fixture artifacts/milestone28-cxa-guards.zip \
             --verify-vitasdk artifacts/milestone10-vitasdk-homebrew.velf
 
       - name: Configure iOS application and core target
@@ -169,5 +170,6 @@ jobs:
             artifacts/milestone25-thumb2-register-families.zip
             artifacts/milestone26-libc-termination.zip
             artifacts/milestone27-thumb2-multiple-transfer.zip
+            artifacts/milestone28-cxa-guards.zip
           if-no-files-found: error
           retention-days: 14

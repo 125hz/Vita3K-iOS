@@ -68,6 +68,10 @@ The bounded HLE surface now clears Amagami's captured `__aeabi_atexit` boundary 
 
 The bounded interpreter now implements Thumb-2 `STMIA`, `LDMIA`, `STMDB`, and `LDMDB` with optional writeback, including the wide push/pop aliases and high-register lists. A PC load performs interworking and recognizes the existing zero-link diagnostic sentinel. Transfers use one contiguous checked guest-memory operation, and architectural unpredictable cases remain hard stops. Amagami's exact `E8BD 81F0` epilogue is covered by both CPU-state tests and the legal `milestone27-thumb2-multiple-transfer.zip` title.
 
+## Milestone 28 C++ static-initialization guards
+
+The bounded runtime now implements the complete Arm 32-bit `__cxa_guard_acquire`, `__cxa_guard_release`, and `__cxa_guard_abort` cluster reached by Amagami after 122 instructions. Guard words are checked as aligned 4-byte guest objects; acquire observes initialized bit zero and grants one owner, release sets that bit while preserving the remainder of the word, and abort only releases ownership. Invalid memory and recursive initialization remain explicit execution boundaries. The legal `milestone28-cxa-guards.zip` fixture covers first acquisition, while portable companion cases cover initialized, release, abort, and recursion paths.
+
 ## Firmware packages
 
 Do not commit firmware PUP files to this public repository or upload them as Actions artifacts. The future iOS installer should select user-owned files locally and write only extracted virtual-filesystem content inside the app sandbox. Upstream `install_pup` currently depends on the packages/crypto layers, OpenSSL, vita-toolchain key handling, FAT/exFAT extraction, miniz, and psvpfsparser; those dependencies are not part of the current iOS core slice. `fontpkg.pup`, `preinstall.pup`, and the system update PUP should therefore remain local until that bounded installer milestone is implemented.

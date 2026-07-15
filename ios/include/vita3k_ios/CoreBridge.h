@@ -56,10 +56,18 @@ struct TitleBootResult {
     std::uint32_t libc_dso_handle_main{};
     std::size_t libc_atexit_registration_count{};
     std::size_t libc_finalize_call_count{};
+    std::size_t libc_guard_acquire_count{};
+    std::size_t libc_guard_release_count{};
+    std::size_t libc_guard_abort_count{};
+    std::size_t libc_guard_initialization_count{};
+    std::size_t libc_guard_recursive_acquire_count{};
     std::uint32_t last_libc_atexit_object{};
     std::uint32_t last_libc_atexit_destructor{};
     std::uint32_t last_libc_atexit_dso{};
     std::uint32_t last_libc_finalize_dso{};
+    std::uint32_t last_libc_guard_address{};
+    std::uint32_t last_libc_guard_word{};
+    std::int32_t last_libc_guard_result{};
     std::int32_t exit_status{};
     std::uint32_t return_value{};
     std::string title_id;

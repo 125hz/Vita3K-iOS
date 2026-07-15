@@ -290,3 +290,14 @@ Milestone 27 replaces the earlier one-off wide-push decoder with the complete sa
 4. Share the complete next boundary and all look-ahead halfwords. It should advance beyond 106 instructions while retaining four HLE calls, DSO `0x812C7690`, and three termination registrations.
 
 The Actions artifact includes `milestone27-thumb2-multiple-transfer.zip`. Its legal synthetic title executes `PUSH.W {r4-r8, lr}` followed by Amagami's exact `POP.W {r4-r8, pc}` and returns after two instructions. Portable tests additionally cover all four transfer modes, writeback, high registers, PC interworking, zero-link return, invalid lists, range overflow, and guest faults.
+
+## Milestone 28 C++ static-initialization guards
+
+The accepted Milestone 27 Amagami attempt advanced to 122 instructions and four HLE calls, then reached `__cxa_guard_acquire` (NID `0xD0310E31`) for guard word `0x812C75D8`. Milestone 28 binds the complete 32-bit Arm `__cxa_guard_acquire`, `__cxa_guard_release`, and `__cxa_guard_abort` protocol. Acquire reads the aligned 4-byte guest word and returns one only to the initializer owner; release atomically preserves the word while setting initialized bit zero; abort releases ownership without claiming initialization. The bounded single-thread runtime tracks ownership explicitly and stops on recursive acquisition, invalid alignment, or inaccessible guest memory instead of fabricating progress.
+
+1. Install the Milestone 28 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (256 Instructions)** once.
+4. Share the complete next boundary. It should exceed 122 instructions, report at least five successful HLE calls, preserve the DSO and termination-registration state, and include a `C++ guards:` summary.
+
+The Actions artifact includes `milestone28-cxa-guards.zip`. Its legal synthetic title exercises first acquisition and returns one. Portable regressions also validate the already-initialized zero result, release bit-setting, abort behavior, and an honest recursive-initialization boundary.

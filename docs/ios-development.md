@@ -202,6 +202,10 @@ The accepted Milestone 25 device run reached `__aeabi_atexit` after 72 instructi
 
 The accepted Milestone 26 device run reached `E8BD 81F0` (`POP.W {r4-r8, pc}`) after 106 instructions, four HLE calls, and three termination registrations. Milestone 27 implements the safe Thumb-2 increment-after and decrement-before load/store-multiple family with optional writeback, high registers, push/pop aliases, checked contiguous memory access, and PC interworking. The CI artifact `milestone27-thumb2-multiple-transfer.zip` pairs the exact captured pop with its matching wide push and returns after two instructions.
 
+## Milestone 28 C++ static-initialization guards
+
+The accepted Milestone 27 device run advanced to 122 instructions and reached `__cxa_guard_acquire` (NID `0xD0310E31`) for guest guard `0x812C75D8`. Milestone 28 implements the complete Arm 32-bit one-time-construction API: acquire ownership and exact 0/1 results, release with initialized-bit publication, abort without publication, aligned guest-memory validation, and a hard recursive-initialization boundary. CI emits `milestone28-cxa-guards.zip`; portable regressions exercise every handler and both acquire outcomes.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

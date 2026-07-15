@@ -163,6 +163,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m25_install_zip_fixture;
     std::filesystem::path emitted_m26_install_zip_fixture;
     std::filesystem::path emitted_m27_install_zip_fixture;
+    std::filesystem::path emitted_m28_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -198,6 +199,8 @@ int main(int argc, char **argv) {
             emitted_m26_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m27-install-zip-fixture" && index + 1 < argc) {
             emitted_m27_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m28-install-zip-fixture" && index + 1 < argc) {
+            emitted_m28_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -217,6 +220,7 @@ int main(int argc, char **argv) {
                          "[--emit-m25-install-zip-fixture <path>] "
                          "[--emit-m26-install-zip-fixture <path>] "
                          "[--emit-m27-install-zip-fixture <path>] "
+                         "[--emit-m28-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -516,6 +520,71 @@ int main(int argc, char **argv) {
     const auto multiple_transfer_self = make_plain_self(multiple_transfer_elf);
     const auto m27_install_zip = vita3k::ios::make_synthetic_install_zip(
         multiple_transfer_self, multiple_transfer_self);
+    constexpr std::uint32_t cxa_guard_abort_nid = 0xD18E461Du;
+    constexpr std::uint32_t cxa_guard_acquire_nid = 0xD0310E31u;
+    constexpr std::uint32_t cxa_guard_release_nid = 0x4ED1056Fu;
+    constexpr std::uint32_t synthetic_guard_address = 0x81000240u;
+    const std::array<std::uint16_t, 8> guard_call_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4803u, // LDR r0, [pc, #12] -> guard word
+        0x4B03u, // LDR r3, [pc, #12] -> libc import stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc} -> zero-link return sentinel
+        0xBF00u, 0xBF00u, 0xBF00u
+    };
+    auto cxa_guard_acquire_elf = lifecycle_elf;
+    std::memcpy(cxa_guard_acquire_elf.data() + 244, guard_call_program.data(),
+        sizeof(guard_call_program));
+    write_value(cxa_guard_acquire_elf, 260, synthetic_guard_address);
+    write_value(cxa_guard_acquire_elf, 264, static_cast<std::uint32_t>(0x81000050));
+    write_value(cxa_guard_acquire_elf, 372, cxa_guard_acquire_nid);
+    const auto cxa_guard_acquire_self = make_plain_self(cxa_guard_acquire_elf);
+    const auto m28_install_zip = vita3k::ios::make_synthetic_install_zip(
+        cxa_guard_acquire_self, cxa_guard_acquire_self);
+    auto cxa_guard_release_elf = cxa_guard_acquire_elf;
+    write_value(cxa_guard_release_elf, 372, cxa_guard_release_nid);
+    const auto cxa_guard_release_self = make_plain_self(cxa_guard_release_elf);
+    const auto cxa_guard_release_install_zip = vita3k::ios::make_synthetic_install_zip(
+        cxa_guard_release_self, cxa_guard_release_self);
+    auto cxa_guard_abort_elf = cxa_guard_acquire_elf;
+    write_value(cxa_guard_abort_elf, 372, cxa_guard_abort_nid);
+    const auto cxa_guard_abort_self = make_plain_self(cxa_guard_abort_elf);
+    const auto cxa_guard_abort_install_zip = vita3k::ios::make_synthetic_install_zip(
+        cxa_guard_abort_self, cxa_guard_abort_self);
+    auto initialized_guard_elf = cxa_guard_acquire_elf;
+    const std::array<std::uint16_t, 8> initialized_guard_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4C03u, // LDR r4, [pc, #12] -> guard word
+        0x2101u, // MOVS r1, #1
+        0x6021u, // STR r1, [r4]
+        0x4620u, // MOV r0, r4
+        0x4B02u, // LDR r3, [pc, #8] -> libc import stub
+        0x4798u, // BLX r3
+        0xBD10u // POP {r4, pc}
+    };
+    std::memcpy(initialized_guard_elf.data() + 244, initialized_guard_program.data(),
+        sizeof(initialized_guard_program));
+    const auto initialized_guard_self = make_plain_self(initialized_guard_elf);
+    const auto initialized_guard_install_zip = vita3k::ios::make_synthetic_install_zip(
+        initialized_guard_self, initialized_guard_self);
+    auto recursive_guard_elf = cxa_guard_acquire_elf;
+    const std::array<std::uint16_t, 8> recursive_guard_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4C04u, // LDR r4, [pc, #16] -> guard word
+        0x4620u, // MOV r0, r4
+        0x4B04u, // LDR r3, [pc, #16] -> libc import stub
+        0x4798u, // BLX r3
+        0x4620u, // MOV r0, r4
+        0x4798u, // BLX r3 -> honest recursive-initialization boundary
+        0xBD10u
+    };
+    std::memcpy(recursive_guard_elf.data() + 244, recursive_guard_program.data(),
+        sizeof(recursive_guard_program));
+    write_value(recursive_guard_elf, 264, synthetic_guard_address);
+    write_value(recursive_guard_elf, 268, static_cast<std::uint32_t>(0x81000050));
+    const auto recursive_guard_self = make_plain_self(recursive_guard_elf);
+    const auto recursive_guard_install_zip = vita3k::ios::make_synthetic_install_zip(
+        recursive_guard_self, recursive_guard_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -560,6 +629,12 @@ int main(int argc, char **argv) {
     if (m27_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 27 Thumb-2 multiple-transfer fixture.\n";
         return 94;
+    }
+    if (m28_install_zip.empty() || cxa_guard_release_install_zip.empty()
+        || cxa_guard_abort_install_zip.empty() || initialized_guard_install_zip.empty()
+        || recursive_guard_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 28 C++ guard fixtures.\n";
+        return 99;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -714,6 +789,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 27 Thumb-2 multiple-transfer fixture.\n";
             return 95;
+        }
+    }
+    if (!emitted_m28_install_zip_fixture.empty()) {
+        if (!emitted_m28_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m28_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m28_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m28_install_zip.data()),
+            static_cast<std::streamsize>(m28_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 28 C++ guard fixture.\n";
+            return 100;
         }
     }
 
@@ -1166,6 +1254,92 @@ int main(int argc, char **argv) {
         return 98;
     }
 
+    const auto run_guard_fixture = [&](std::span<const std::uint8_t> archive,
+                                       std::string_view filename) {
+        const auto archive_path = test_root / filename;
+        std::ofstream archive_stream(archive_path, std::ios::binary);
+        archive_stream.write(reinterpret_cast<const char *>(archive.data()),
+            static_cast<std::streamsize>(archive.size()));
+        archive_stream.close();
+        const auto install = vita3k::ios::install_game_archive(archive_path);
+        if (!install.success) {
+            std::cerr << install.detail << '\n';
+            return vita3k::ios::TitleBootResult{};
+        }
+        const auto prepared = vita3k::ios::prepare_installed_title("M15TEST01", true);
+        if (!prepared.loaded) {
+            std::cerr << prepared.detail << '\n';
+            return vita3k::ios::TitleBootResult{};
+        }
+        return vita3k::ios::attempt_prepared_title_boot(256);
+    };
+    const auto guard_acquire_boot = run_guard_fixture(
+        m28_install_zip, "milestone28-cxa-guard-acquire.zip");
+    if (!guard_acquire_boot.returned || guard_acquire_boot.instruction_count != 7
+        || guard_acquire_boot.hle_dispatch_count != 1
+        || guard_acquire_boot.last_hle_nid != cxa_guard_acquire_nid
+        || guard_acquire_boot.libc_guard_acquire_count != 1
+        || guard_acquire_boot.libc_guard_initialization_count != 1
+        || guard_acquire_boot.libc_guard_recursive_acquire_count != 0
+        || guard_acquire_boot.last_libc_guard_address != synthetic_guard_address
+        || guard_acquire_boot.last_libc_guard_word != 0
+        || guard_acquire_boot.last_libc_guard_result != 1
+        || guard_acquire_boot.return_value != 1
+        || guard_acquire_boot.detail.find("C++ guards: acquire=1") == std::string::npos) {
+        std::cerr << guard_acquire_boot.detail << '\n';
+        return 101;
+    }
+    const auto initialized_guard_boot = run_guard_fixture(
+        initialized_guard_install_zip, "milestone28-cxa-guard-initialized.zip");
+    if (!initialized_guard_boot.returned || initialized_guard_boot.instruction_count != 10
+        || initialized_guard_boot.hle_dispatch_count != 1
+        || initialized_guard_boot.last_hle_nid != cxa_guard_acquire_nid
+        || initialized_guard_boot.libc_guard_acquire_count != 1
+        || initialized_guard_boot.libc_guard_initialization_count != 0
+        || initialized_guard_boot.last_libc_guard_address != synthetic_guard_address
+        || initialized_guard_boot.last_libc_guard_word != 1
+        || initialized_guard_boot.last_libc_guard_result != 0
+        || initialized_guard_boot.return_value != 0) {
+        std::cerr << initialized_guard_boot.detail << '\n';
+        return 102;
+    }
+    const auto guard_release_boot = run_guard_fixture(
+        cxa_guard_release_install_zip, "milestone28-cxa-guard-release.zip");
+    if (!guard_release_boot.returned || guard_release_boot.instruction_count != 7
+        || guard_release_boot.hle_dispatch_count != 1
+        || guard_release_boot.last_hle_nid != cxa_guard_release_nid
+        || guard_release_boot.libc_guard_release_count != 1
+        || guard_release_boot.last_libc_guard_address != synthetic_guard_address
+        || guard_release_boot.last_libc_guard_word != 1
+        || guard_release_boot.last_libc_guard_result != 0) {
+        std::cerr << guard_release_boot.detail << '\n';
+        return 103;
+    }
+    const auto guard_abort_boot = run_guard_fixture(
+        cxa_guard_abort_install_zip, "milestone28-cxa-guard-abort.zip");
+    if (!guard_abort_boot.returned || guard_abort_boot.instruction_count != 7
+        || guard_abort_boot.hle_dispatch_count != 1
+        || guard_abort_boot.last_hle_nid != cxa_guard_abort_nid
+        || guard_abort_boot.libc_guard_abort_count != 1
+        || guard_abort_boot.last_libc_guard_address != synthetic_guard_address
+        || guard_abort_boot.last_libc_guard_word != 0
+        || guard_abort_boot.last_libc_guard_result != 0) {
+        std::cerr << guard_abort_boot.detail << '\n';
+        return 104;
+    }
+    const auto recursive_guard_boot = run_guard_fixture(
+        recursive_guard_install_zip, "milestone28-cxa-guard-recursive.zip");
+    if (!recursive_guard_boot.started || recursive_guard_boot.returned
+        || recursive_guard_boot.hle_dispatch_count != 2
+        || recursive_guard_boot.last_hle_nid != cxa_guard_acquire_nid
+        || recursive_guard_boot.libc_guard_acquire_count != 2
+        || recursive_guard_boot.libc_guard_initialization_count != 1
+        || recursive_guard_boot.libc_guard_recursive_acquire_count != 1
+        || recursive_guard_boot.detail.find("recursive initialization was detected") == std::string::npos) {
+        std::cerr << recursive_guard_boot.detail << '\n';
+        return 105;
+    }
+
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
@@ -1276,6 +1450,10 @@ int main(int argc, char **argv) {
     if (!emitted_m27_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 27 Thumb-2 multiple-transfer fixture: "
                   << emitted_m27_install_zip_fixture << '\n';
+    }
+    if (!emitted_m28_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 28 C++ static-initialization guard fixture: "
+                  << emitted_m28_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;
