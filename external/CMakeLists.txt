@@ -291,9 +291,22 @@ target_include_directories(vma INTERFACE
 if(ANDROID)
 	set(USE_STATIC_ANDROID_FFMPEG ON)
 endif()
-add_subdirectory(ffmpeg)
+if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
+	# The ffmpeg-core submodule only ships desktop/Android prebuilts; its
+	# macOS static libraries cannot link into an iPhoneOS binary. Use the
+	# vcpkg-built iOS ffmpeg under the same target name instead.
+	find_package(FFMPEG REQUIRED)
+	add_library(ffmpeg INTERFACE)
+	target_include_directories(ffmpeg INTERFACE ${FFMPEG_INCLUDE_DIRS})
+	target_link_directories(ffmpeg INTERFACE ${FFMPEG_LIBRARY_DIRS})
+	target_link_libraries(ffmpeg INTERFACE ${FFMPEG_LIBRARIES})
+else()
+	add_subdirectory(ffmpeg)
+endif()
 
-if(APPLE OR NOT FORCE_BUILD_OPENSSL_MAC)
+# The Homebrew OpenSSL is a macOS library; hinting it while cross-compiling
+# for iPhoneOS would outrank the vcpkg iOS OpenSSL in FindOpenSSL.
+if((APPLE OR NOT FORCE_BUILD_OPENSSL_MAC) AND NOT VITA3K_BUILD_IOS_UPSTREAM_CORE)
 	execute_process(
 		COMMAND brew --prefix openssl
 		RESULT_VARIABLE BREW_RESULT

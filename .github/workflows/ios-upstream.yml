@@ -63,6 +63,8 @@ jobs:
         with:
           path: ~/.cache/vcpkg/archives
           key: vcpkg-arm64-ios-77df67c-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-arm64-ios-77df67c-
 
       - name: Install pinned MoltenVK iOS package
         run: |

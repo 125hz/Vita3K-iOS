@@ -9,6 +9,16 @@
     "boost-system",
     "boost-variant",
     "curl",
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "avcodec",
+        "avformat",
+        "swresample",
+        "swscale"
+      ]
+    },
     "openssl",
     "zlib"
   ]
