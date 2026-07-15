@@ -206,6 +206,10 @@ The accepted Milestone 26 device run reached `E8BD 81F0` (`POP.W {r4-r8, pc}`) a
 
 The accepted Milestone 27 device run advanced to 122 instructions and reached `__cxa_guard_acquire` (NID `0xD0310E31`) for guest guard `0x812C75D8`. Milestone 28 implements the complete Arm 32-bit one-time-construction API: acquire ownership and exact 0/1 results, release with initialized-bit publication, abort without publication, aligned guest-memory validation, and a hard recursive-initialization boundary. CI emits `milestone28-cxa-guards.zip`; portable regressions exercise every handler and both acquire outcomes.
 
+## Milestone 29 bounded libc guest heap
+
+The accepted Milestone 28 device run advanced to 133 instructions and five HLE calls, then reached `memalign` (NID `0xA9363E6B`) with alignment 16 and size 384. Milestone 29 maps a bounded guest arena and implements `calloc`, `malloc`, `memalign`, `free`, `realloc`, and `malloc_usable_size` with block reuse, coalescing, alignment, zeroing, resize preservation, and diagnostics. CI emits `milestone29-libc-heap.zip`, whose synthetic title reproduces the captured allocation and returns aligned address `0x90000000`.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

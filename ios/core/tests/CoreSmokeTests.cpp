@@ -1,4 +1,6 @@
 #include <vita3k_ios/CoreBridge.h>
+#include <vita3k_ios/GuestHeap.h>
+#include <vita3k_ios/GuestMemory.h>
 #include <vita3k_ios/HostDisplay.h>
 #include <vita3k_ios/HostInput.h>
 #include <vita3k_ios/VitaAppArchive.h>
@@ -6,6 +8,7 @@
 
 #include <packages/archive.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -164,6 +167,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m26_install_zip_fixture;
     std::filesystem::path emitted_m27_install_zip_fixture;
     std::filesystem::path emitted_m28_install_zip_fixture;
+    std::filesystem::path emitted_m29_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -201,6 +205,8 @@ int main(int argc, char **argv) {
             emitted_m27_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m28-install-zip-fixture" && index + 1 < argc) {
             emitted_m28_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m29-install-zip-fixture" && index + 1 < argc) {
+            emitted_m29_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -221,6 +227,7 @@ int main(int argc, char **argv) {
                          "[--emit-m26-install-zip-fixture <path>] "
                          "[--emit-m27-install-zip-fixture <path>] "
                          "[--emit-m28-install-zip-fixture <path>] "
+                         "[--emit-m29-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -228,6 +235,75 @@ int main(int argc, char **argv) {
     const auto test_root = std::filesystem::temp_directory_path() / "vita3k-ios-core-smoke-test";
     std::error_code error;
     std::filesystem::remove_all(test_root, error);
+
+    vita3k::ios::GuestMemory heap_memory;
+    std::string heap_error;
+    if (!heap_memory.reserve(1ULL << 32, heap_error)) {
+        std::cerr << heap_error << '\n';
+        return 106;
+    }
+    vita3k::ios::GuestHeap heap;
+    if (!heap.initialize(heap_memory, 0x90000000u, 64 * 1024, heap_error)) {
+        std::cerr << heap_error << '\n';
+        return 107;
+    }
+    const auto aligned_allocation = heap.allocate(24, 256, false, heap_error);
+    if (aligned_allocation == 0 || (aligned_allocation & 255u) != 0) {
+        std::cerr << heap_error << '\n';
+        return 108;
+    }
+    std::array<std::uint8_t, 24> heap_pattern{};
+    for (std::size_t index = 0; index < heap_pattern.size(); ++index) {
+        heap_pattern[index] = static_cast<std::uint8_t>(index + 1);
+    }
+    if (!heap_memory.write(aligned_allocation, heap_pattern, heap_error)) {
+        std::cerr << heap_error << '\n';
+        return 109;
+    }
+    const auto resized_allocation = heap.reallocate(aligned_allocation, 80, heap_error);
+    std::array<std::uint8_t, 24> resized_prefix{};
+    if (resized_allocation == 0
+        || !heap_memory.read(resized_allocation, resized_prefix, heap_error)
+        || resized_prefix != heap_pattern) {
+        std::cerr << heap_error << '\n';
+        return 110;
+    }
+    std::uint32_t usable_size = 0;
+    if (!heap.usable_size(resized_allocation, usable_size, heap_error) || usable_size < 80
+        || !heap.free(resized_allocation, heap_error)) {
+        std::cerr << heap_error << '\n';
+        return 111;
+    }
+    const auto dirty_allocation = heap.allocate(32, 16, false, heap_error);
+    const std::array<std::uint8_t, 32> dirty_bytes{0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF};
+    if (dirty_allocation == 0
+        || !heap_memory.write(dirty_allocation, dirty_bytes, heap_error)
+        || !heap.free(dirty_allocation, heap_error)) {
+        std::cerr << heap_error << '\n';
+        return 112;
+    }
+    const auto zeroed_allocation = heap.allocate(32, 16, true, heap_error);
+    std::array<std::uint8_t, 32> zeroed_bytes{};
+    if (zeroed_allocation == 0
+        || !heap_memory.read(zeroed_allocation, zeroed_bytes, heap_error)
+        || std::ranges::any_of(zeroed_bytes, [](std::uint8_t value) { return value != 0; })
+        || !heap.free(zeroed_allocation, heap_error)) {
+        std::cerr << heap_error << '\n';
+        return 113;
+    }
+    std::string invalid_alignment_error;
+    std::string invalid_free_error;
+    if (heap.allocate(16, 3, false, invalid_alignment_error) != 0
+        || invalid_alignment_error.find("power of two") == std::string::npos
+        || heap.free(0x90001234u, invalid_free_error)
+        || invalid_free_error.find("live heap allocation") == std::string::npos
+        || heap.stats().live_bytes != 0 || heap.stats().peak_bytes < 80) {
+        std::cerr << invalid_alignment_error << ' ' << invalid_free_error << '\n';
+        return 114;
+    }
 
     const auto status = vita3k::ios::initialize_core(test_root);
     if (!status.linked || !status.self_tests_passed || !status.upstream_metadata_ready || !status.upstream_archive_ready || !status.package_installer_ready || !status.storage_ready || !status.guest_memory_ready || !status.segment_mapping_ready || !status.loader_pipeline_ready || !status.import_binding_ready || !status.arm_execution_ready || !status.guest_thread_ready || status.renderer_attached || status.renderer_frame_presented || status.summary.find("Renderer: waiting for MTKView host") == std::string::npos || status.input_surface_attached || status.input_touch_received || status.summary.find("Input: waiting for UIKit touch surface") == std::string::npos || status.summary.find("Upstream app metadata: passed") == std::string::npos || status.arm_test_instruction_count != 7 || status.hle_test_dispatch_count != 1 || status.thread_test_instruction_count != 12 || status.thread_test_hle_dispatch_count != 2 || status.thread_test_exit_status != 42 || status.thread_test_bound_stub_count != 2 || status.guest_memory_size != (1ULL << 32)) {
@@ -585,6 +661,26 @@ int main(int argc, char **argv) {
     const auto recursive_guard_self = make_plain_self(recursive_guard_elf);
     const auto recursive_guard_install_zip = vita3k::ios::make_synthetic_install_zip(
         recursive_guard_self, recursive_guard_self);
+    constexpr std::uint32_t memalign_nid = 0xA9363E6Bu;
+    constexpr std::uint32_t synthetic_heap_base = 0x90000000u;
+    auto libc_heap_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 8> libc_heap_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2010u, // MOVS r0, #16 -> alignment
+        0x4903u, // LDR r1, [pc, #12] -> size
+        0x4B04u, // LDR r3, [pc, #16] -> libc import stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc}
+        0xBF00u, 0xBF00u
+    };
+    std::memcpy(libc_heap_elf.data() + 244, libc_heap_program.data(),
+        sizeof(libc_heap_program));
+    write_value(libc_heap_elf, 264, static_cast<std::uint32_t>(0x180));
+    write_value(libc_heap_elf, 268, static_cast<std::uint32_t>(0x81000050));
+    write_value(libc_heap_elf, 372, memalign_nid);
+    const auto libc_heap_self = make_plain_self(libc_heap_elf);
+    const auto m29_install_zip = vita3k::ios::make_synthetic_install_zip(
+        libc_heap_self, libc_heap_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -635,6 +731,10 @@ int main(int argc, char **argv) {
         || recursive_guard_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 28 C++ guard fixtures.\n";
         return 99;
+    }
+    if (m29_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 29 libc heap fixture.\n";
+        return 115;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -802,6 +902,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 28 C++ guard fixture.\n";
             return 100;
+        }
+    }
+    if (!emitted_m29_install_zip_fixture.empty()) {
+        if (!emitted_m29_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m29_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m29_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m29_install_zip.data()),
+            static_cast<std::streamsize>(m29_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 29 libc heap fixture.\n";
+            return 116;
         }
     }
 
@@ -1339,6 +1452,24 @@ int main(int argc, char **argv) {
         std::cerr << recursive_guard_boot.detail << '\n';
         return 105;
     }
+    const auto libc_heap_boot = run_guard_fixture(
+        m29_install_zip, "milestone29-libc-heap.zip");
+    if (!libc_heap_boot.returned || libc_heap_boot.instruction_count != 8
+        || libc_heap_boot.hle_dispatch_count != 1
+        || libc_heap_boot.last_hle_nid != memalign_nid
+        || libc_heap_boot.libc_heap_allocation_count != 1
+        || libc_heap_boot.libc_heap_free_count != 0
+        || libc_heap_boot.libc_heap_failure_count != 0
+        || libc_heap_boot.libc_heap_live_bytes != 0x180
+        || libc_heap_boot.libc_heap_peak_bytes != 0x180
+        || libc_heap_boot.last_libc_heap_address != synthetic_heap_base
+        || libc_heap_boot.last_libc_heap_size != 0x180
+        || libc_heap_boot.last_libc_heap_alignment != 16
+        || libc_heap_boot.return_value != synthetic_heap_base
+        || libc_heap_boot.detail.find("Libc heap: allocations=1") == std::string::npos) {
+        std::cerr << libc_heap_boot.detail << '\n';
+        return 117;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -1454,6 +1585,10 @@ int main(int argc, char **argv) {
     if (!emitted_m28_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 28 C++ static-initialization guard fixture: "
                   << emitted_m28_install_zip_fixture << '\n';
+    }
+    if (!emitted_m29_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 29 libc heap fixture: "
+                  << emitted_m29_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

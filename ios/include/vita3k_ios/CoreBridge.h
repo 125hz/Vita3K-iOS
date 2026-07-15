@@ -61,6 +61,12 @@ struct TitleBootResult {
     std::size_t libc_guard_abort_count{};
     std::size_t libc_guard_initialization_count{};
     std::size_t libc_guard_recursive_acquire_count{};
+    std::size_t libc_heap_allocation_count{};
+    std::size_t libc_heap_free_count{};
+    std::size_t libc_heap_realloc_count{};
+    std::size_t libc_heap_failure_count{};
+    std::uint64_t libc_heap_live_bytes{};
+    std::uint64_t libc_heap_peak_bytes{};
     std::uint32_t last_libc_atexit_object{};
     std::uint32_t last_libc_atexit_destructor{};
     std::uint32_t last_libc_atexit_dso{};
@@ -68,6 +74,9 @@ struct TitleBootResult {
     std::uint32_t last_libc_guard_address{};
     std::uint32_t last_libc_guard_word{};
     std::int32_t last_libc_guard_result{};
+    std::uint32_t last_libc_heap_address{};
+    std::uint32_t last_libc_heap_size{};
+    std::uint32_t last_libc_heap_alignment{};
     std::int32_t exit_status{};
     std::uint32_t return_value{};
     std::string title_id;

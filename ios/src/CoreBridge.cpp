@@ -1705,6 +1705,12 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.libc_guard_abort_count = thread.libc_guard_abort_count;
         result.libc_guard_initialization_count = thread.libc_guard_initialization_count;
         result.libc_guard_recursive_acquire_count = thread.libc_guard_recursive_acquire_count;
+        result.libc_heap_allocation_count = thread.libc_heap_allocation_count;
+        result.libc_heap_free_count = thread.libc_heap_free_count;
+        result.libc_heap_realloc_count = thread.libc_heap_realloc_count;
+        result.libc_heap_failure_count = thread.libc_heap_failure_count;
+        result.libc_heap_live_bytes = thread.libc_heap_live_bytes;
+        result.libc_heap_peak_bytes = thread.libc_heap_peak_bytes;
         result.last_libc_atexit_object = thread.last_libc_atexit_object;
         result.last_libc_atexit_destructor = thread.last_libc_atexit_destructor;
         result.last_libc_atexit_dso = thread.last_libc_atexit_dso;
@@ -1712,6 +1718,9 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.last_libc_guard_address = thread.last_libc_guard_address;
         result.last_libc_guard_word = thread.last_libc_guard_word;
         result.last_libc_guard_result = thread.last_libc_guard_result;
+        result.last_libc_heap_address = thread.last_libc_heap_address;
+        result.last_libc_heap_size = thread.last_libc_heap_size;
+        result.last_libc_heap_alignment = thread.last_libc_heap_alignment;
         result.exit_status = thread.exit_status;
         result.return_value = thread.return_value;
         result.detail = thread.detail;

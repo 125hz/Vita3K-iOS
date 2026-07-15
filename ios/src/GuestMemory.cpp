@@ -323,6 +323,72 @@ bool GuestMemory::map_segments(std::span<const GuestSegmentMapping> segments, st
     return true;
 }
 
+bool GuestMemory::map_dynamic_segment(std::uint32_t guest_address,
+    std::uint32_t memory_size,
+    std::uint32_t guest_flags,
+    std::string &error) {
+    if (!ready() || host_page_size_ == 0) {
+        error = "Guest memory is not reserved.";
+        return false;
+    }
+    if (memory_size == 0 || (guest_flags & ~supported_guest_flags) != 0
+        || (guest_flags & guest_flag_write) == 0) {
+        error = "The dynamic guest segment has an invalid size or permissions.";
+        return false;
+    }
+    const auto start = static_cast<std::uint64_t>(guest_address);
+    const auto end = start + memory_size;
+    const auto page_size = static_cast<std::uint64_t>(host_page_size_);
+    if ((start % page_size) != 0 || (end % page_size) != 0 || end > size_ || end <= start) {
+        error = "The dynamic guest segment is not host-page aligned or exceeds guest memory.";
+        return false;
+    }
+    const auto segment_overlap = std::ranges::any_of(mapped_segment_ranges_,
+        [start, end](const MappedSegmentRange &range) {
+            const auto range_start = static_cast<std::uint64_t>(range.guest_start);
+            const auto range_end = range_start + range.memory_size;
+            return start < range_end && range_start < end;
+        });
+    const auto page_overlap = std::ranges::any_of(mapped_page_ranges_,
+        [start, end](const MappedPageRange &range) {
+            const auto range_end = range.page_start + range.page_size;
+            return start < range_end && range.page_start < end;
+        });
+    if (segment_overlap || page_overlap) {
+        error = "The dynamic guest segment overlaps an existing mapping.";
+        return false;
+    }
+
+    auto *pointer = static_cast<std::uint8_t *>(base_) + start;
+#ifdef _WIN32
+    void *result = VirtualAlloc(pointer, static_cast<std::size_t>(memory_size),
+        MEM_COMMIT, PAGE_READWRITE);
+    if (result != pointer) {
+        error = "Could not commit dynamic guest pages: " + host_error_message();
+        return false;
+    }
+#else
+    if (mprotect(pointer, static_cast<std::size_t>(memory_size), PROT_READ | PROT_WRITE) != 0) {
+        error = "Could not make dynamic guest pages writable: " + host_error_message();
+        return false;
+    }
+#endif
+    std::memset(pointer, 0, memory_size);
+    mapped_page_ranges_.push_back({
+        .page_start = start,
+        .page_size = memory_size,
+        .guest_flags = guest_flags
+    });
+    mapped_segment_ranges_.push_back({
+        .guest_start = guest_address,
+        .memory_size = memory_size,
+        .guest_flags = guest_flags
+    });
+    std::ranges::sort(mapped_page_ranges_, {}, &MappedPageRange::page_start);
+    std::ranges::sort(mapped_segment_ranges_, {}, &MappedSegmentRange::guest_start);
+    return true;
+}
+
 bool GuestMemory::read(std::uint32_t guest_address,
     std::span<std::uint8_t> output,
     std::string &error) const {

@@ -1,6 +1,7 @@
 #include <vita3k_ios/GuestThread.h>
 
 #include <vita3k_ios/ArmExecution.h>
+#include <vita3k_ios/GuestHeap.h>
 #include <vita3k_ios/GuestMemory.h>
 
 #include <nids/functions.h>
@@ -9,6 +10,7 @@
 #include <array>
 #include <cstring>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string_view>
 #include <utility>
@@ -26,7 +28,15 @@ constexpr std::uint32_t nid_cxa_finalize = 0xB538BF48;
 constexpr std::uint32_t nid_cxa_guard_abort = 0xD18E461D;
 constexpr std::uint32_t nid_cxa_guard_acquire = 0xD0310E31;
 constexpr std::uint32_t nid_cxa_guard_release = 0x4ED1056F;
+constexpr std::uint32_t nid_calloc = 0xE7EC3D0B;
+constexpr std::uint32_t nid_free = 0x5B9BB802;
+constexpr std::uint32_t nid_malloc = 0x775A0CB2;
+constexpr std::uint32_t nid_malloc_usable_size = 0x54A54EB1;
+constexpr std::uint32_t nid_memalign = 0xA9363E6B;
+constexpr std::uint32_t nid_realloc = 0x006B54BA;
 constexpr std::int32_t first_diagnostic_thread_id = 0x10001;
+constexpr std::uint32_t diagnostic_heap_base = 0x90000000;
+constexpr std::uint32_t diagnostic_heap_size = 16 * 1024 * 1024;
 
 struct LibcAtexitRegistration {
     std::uint32_t object = 0;
@@ -95,6 +105,12 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     const bool imports_cxa_guard_abort = contains_nid(imported_nids, nid_cxa_guard_abort);
     const bool imports_cxa_guard_acquire = contains_nid(imported_nids, nid_cxa_guard_acquire);
     const bool imports_cxa_guard_release = contains_nid(imported_nids, nid_cxa_guard_release);
+    const bool imports_calloc = contains_nid(imported_nids, nid_calloc);
+    const bool imports_free = contains_nid(imported_nids, nid_free);
+    const bool imports_malloc = contains_nid(imported_nids, nid_malloc);
+    const bool imports_malloc_usable_size = contains_nid(imported_nids, nid_malloc_usable_size);
+    const bool imports_memalign = contains_nid(imported_nids, nid_memalign);
+    const bool imports_realloc = contains_nid(imported_nids, nid_realloc);
     if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" || (imports_exit_thread && std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
         return result;
@@ -115,12 +131,30 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         result.detail = "The upstream Vita NID database did not match the C++ guard bindings.";
         return result;
     }
+    if ((imports_calloc && std::string_view(import_name(nid_calloc)) != "calloc")
+        || (imports_free && std::string_view(import_name(nid_free)) != "free")
+        || (imports_malloc && std::string_view(import_name(nid_malloc)) != "malloc")
+        || (imports_malloc_usable_size && std::string_view(import_name(nid_malloc_usable_size)) != "malloc_usable_size")
+        || (imports_memalign && std::string_view(import_name(nid_memalign)) != "memalign")
+        || (imports_realloc && std::string_view(import_name(nid_realloc)) != "realloc")) {
+        result.detail = "The upstream Vita NID database did not match the libc heap bindings.";
+        return result;
+    }
 
     HLEDispatcher dispatcher;
     bool exit_requested = false;
     std::vector<LibcAtexitRegistration> atexit_registrations;
     std::vector<std::uint32_t> guards_in_progress;
     std::string guard_error;
+    GuestHeap heap;
+    std::string heap_error;
+    const bool imports_heap = imports_calloc || imports_free || imports_malloc
+        || imports_malloc_usable_size || imports_memalign || imports_realloc;
+    if (imports_heap && !heap.initialize(memory,
+            diagnostic_heap_base, diagnostic_heap_size, heap_error)) {
+        result.detail = "The bounded libc heap could not be initialized: " + heap_error;
+        return result;
+    }
     result.hle_dispatch_count = 0;
     const bool get_id_bound = dispatcher.bind(nid_sce_kernel_get_thread_id,
         "sceKernelGetThreadId", [&](ArmCpuState &) -> std::int32_t {
@@ -281,6 +315,132 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                 return 0;
             });
     }
+    const auto sync_heap_stats = [&] {
+        result.libc_heap_allocation_count = heap.stats().allocation_count;
+        result.libc_heap_free_count = heap.stats().free_count;
+        result.libc_heap_realloc_count = heap.stats().realloc_count;
+        result.libc_heap_live_bytes = heap.stats().live_bytes;
+        result.libc_heap_peak_bytes = heap.stats().peak_bytes;
+    };
+    const auto fail_heap = [&](ArmCpuState &state, std::string operation,
+                               std::string error) -> std::int32_t {
+        ++result.libc_heap_failure_count;
+        heap_error = std::move(operation) + " failed: " + std::move(error);
+        state.stop_requested = true;
+        state.stop_code = -1;
+        sync_heap_stats();
+        return 0;
+    };
+    bool calloc_bound = true;
+    if (imports_calloc) {
+        calloc_bound = dispatcher.bind(nid_calloc,
+            "calloc", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                const auto count = state.registers[0];
+                const auto element_size = state.registers[1];
+                const auto total = static_cast<std::uint64_t>(count) * element_size;
+                result.last_libc_heap_size = total <= std::numeric_limits<std::uint32_t>::max()
+                    ? static_cast<std::uint32_t>(total) : 0;
+                result.last_libc_heap_alignment = 16;
+                if (total > std::numeric_limits<std::uint32_t>::max()) {
+                    return fail_heap(state, "calloc", "the element count and size overflow 32 bits");
+                }
+                std::string error;
+                const auto address = heap.allocate(static_cast<std::uint32_t>(total), 16, true, error);
+                if (address == 0) {
+                    return fail_heap(state, "calloc", std::move(error));
+                }
+                result.last_libc_heap_address = address;
+                sync_heap_stats();
+                return static_cast<std::int32_t>(address);
+            });
+    }
+    bool malloc_bound = true;
+    if (imports_malloc) {
+        malloc_bound = dispatcher.bind(nid_malloc,
+            "malloc", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                result.last_libc_heap_size = state.registers[0];
+                result.last_libc_heap_alignment = 16;
+                std::string error;
+                const auto address = heap.allocate(state.registers[0], 16, false, error);
+                if (address == 0) {
+                    return fail_heap(state, "malloc", std::move(error));
+                }
+                result.last_libc_heap_address = address;
+                sync_heap_stats();
+                return static_cast<std::int32_t>(address);
+            });
+    }
+    bool memalign_bound = true;
+    if (imports_memalign) {
+        memalign_bound = dispatcher.bind(nid_memalign,
+            "memalign", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                const auto alignment = state.registers[0];
+                const auto size = state.registers[1];
+                result.last_libc_heap_size = size;
+                result.last_libc_heap_alignment = alignment;
+                std::string error;
+                const auto address = heap.allocate(size, alignment, false, error);
+                if (address == 0) {
+                    return fail_heap(state, "memalign", std::move(error));
+                }
+                result.last_libc_heap_address = address;
+                sync_heap_stats();
+                return static_cast<std::int32_t>(address);
+            });
+    }
+    bool free_bound = true;
+    if (imports_free) {
+        free_bound = dispatcher.bind(nid_free,
+            "free", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                result.last_libc_heap_address = state.registers[0];
+                result.last_libc_heap_size = 0;
+                result.last_libc_heap_alignment = 0;
+                std::string error;
+                if (!heap.free(state.registers[0], error)) {
+                    return fail_heap(state, "free", std::move(error));
+                }
+                sync_heap_stats();
+                return 0;
+            });
+    }
+    bool realloc_bound = true;
+    if (imports_realloc) {
+        realloc_bound = dispatcher.bind(nid_realloc,
+            "realloc", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                result.last_libc_heap_size = state.registers[1];
+                result.last_libc_heap_alignment = 16;
+                std::string error;
+                const auto address = heap.reallocate(state.registers[0], state.registers[1], error);
+                if (address == 0 && (state.registers[1] != 0 || !error.empty())) {
+                    return fail_heap(state, "realloc", std::move(error));
+                }
+                result.last_libc_heap_address = address;
+                sync_heap_stats();
+                return static_cast<std::int32_t>(address);
+            });
+    }
+    bool malloc_usable_size_bound = true;
+    if (imports_malloc_usable_size) {
+        malloc_usable_size_bound = dispatcher.bind(nid_malloc_usable_size,
+            "malloc_usable_size", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                result.last_libc_heap_address = state.registers[0];
+                result.last_libc_heap_alignment = 0;
+                std::uint32_t size = 0;
+                std::string error;
+                if (!heap.usable_size(state.registers[0], size, error)) {
+                    return fail_heap(state, "malloc_usable_size", std::move(error));
+                }
+                result.last_libc_heap_size = size;
+                sync_heap_stats();
+                return static_cast<std::int32_t>(size);
+            });
+    }
     const auto expected_binding_count = 1u
         + static_cast<std::size_t>(imports_exit_thread)
         + static_cast<std::size_t>(imports_cxa_set_dso_handle_main)
@@ -289,10 +449,18 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         + static_cast<std::size_t>(imports_cxa_finalize)
         + static_cast<std::size_t>(imports_cxa_guard_abort)
         + static_cast<std::size_t>(imports_cxa_guard_acquire)
-        + static_cast<std::size_t>(imports_cxa_guard_release);
+        + static_cast<std::size_t>(imports_cxa_guard_release)
+        + static_cast<std::size_t>(imports_calloc)
+        + static_cast<std::size_t>(imports_free)
+        + static_cast<std::size_t>(imports_malloc)
+        + static_cast<std::size_t>(imports_malloc_usable_size)
+        + static_cast<std::size_t>(imports_memalign)
+        + static_cast<std::size_t>(imports_realloc);
     if (!get_id_bound || !exit_bound || !dso_handle_bound || !aeabi_atexit_bound
         || !cxa_atexit_bound || !cxa_finalize_bound || !cxa_guard_abort_bound
         || !cxa_guard_acquire_bound || !cxa_guard_release_bound
+        || !calloc_bound || !free_bound || !malloc_bound || !malloc_usable_size_bound
+        || !memalign_bound || !realloc_bound
         || dispatcher.binding_count() != expected_binding_count) {
         result.detail = "The minimal kernel/runtime HLE bindings could not be registered.";
         return result;
@@ -360,6 +528,21 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     }
     if (!guard_error.empty()) {
         detail << " Guard boundary: " << guard_error << ".";
+    }
+    if (result.libc_heap_allocation_count != 0 || result.libc_heap_free_count != 0
+        || result.libc_heap_realloc_count != 0 || result.libc_heap_failure_count != 0) {
+        detail << " Libc heap: allocations=" << result.libc_heap_allocation_count
+               << ", frees=" << result.libc_heap_free_count
+               << ", reallocs=" << result.libc_heap_realloc_count
+               << ", failures=" << result.libc_heap_failure_count
+               << ", live=" << result.libc_heap_live_bytes
+               << ", peak=" << result.libc_heap_peak_bytes
+               << "; last address=" << nid_hex(result.last_libc_heap_address)
+               << ", size=" << result.last_libc_heap_size
+               << ", alignment=" << result.last_libc_heap_alignment << ".";
+    }
+    if (!heap_error.empty()) {
+        detail << " Heap boundary: " << heap_error << ".";
     }
     result.detail = detail.str();
     return result;

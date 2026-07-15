@@ -72,6 +72,10 @@ The bounded interpreter now implements Thumb-2 `STMIA`, `LDMIA`, `STMDB`, and `L
 
 The bounded runtime now implements the complete Arm 32-bit `__cxa_guard_acquire`, `__cxa_guard_release`, and `__cxa_guard_abort` cluster reached by Amagami after 122 instructions. Guard words are checked as aligned 4-byte guest objects; acquire observes initialized bit zero and grants one owner, release sets that bit while preserving the remainder of the word, and abort only releases ownership. Invalid memory and recursive initialization remain explicit execution boundaries. The legal `milestone28-cxa-guards.zip` fixture covers first acquisition, while portable companion cases cover initialized, release, abort, and recursion paths.
 
+## Milestone 29 bounded libc guest heap
+
+The bounded runtime now maps a separate 16 MiB read/write guest arena and services the standard `calloc`, `malloc`, `memalign`, `free`, `realloc`, and `malloc_usable_size` imports. This clears Amagami's captured `memalign(16, 384)` startup boundary with a real writable guest pointer rather than a host pointer or fabricated address. Block splitting, alignment padding, coalescing, zeroing, resize copying, pointer validation, and live/peak diagnostics are state-tested. Cross-thread allocation, arena growth, errno, mspaces, and integration with upstream Vita3K's process memory allocator remain future work.
+
 ## Firmware packages
 
 Do not commit firmware PUP files to this public repository or upload them as Actions artifacts. The future iOS installer should select user-owned files locally and write only extracted virtual-filesystem content inside the app sandbox. Upstream `install_pup` currently depends on the packages/crypto layers, OpenSSL, vita-toolchain key handling, FAT/exFAT extraction, miniz, and psvpfsparser; those dependencies are not part of the current iOS core slice. `fontpkg.pup`, `preinstall.pup`, and the system update PUP should therefore remain local until that bounded installer milestone is implemented.

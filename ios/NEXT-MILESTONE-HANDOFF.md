@@ -1,6 +1,6 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 28.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 29.
 
 ## Copy-paste prompt
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 28 boundary
+## Known Milestone 29 boundary
 
-Milestone 27 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It advanced to 122 instructions and four HLE calls, retained DSO handle `0x812C7690`, and recorded three termination registrations. It then reached `__cxa_guard_acquire` (NID `0xD0310E31`) at SVC `0x8109BD78`, called from LR `0x81001F5F`, with guard address `r0=0x812C75D8`.
+Milestone 28 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It advanced to 133 instructions and five HLE calls, retained DSO handle `0x812C7690`, recorded three termination registrations, and successfully acquired guard `0x812C75D8`. It then reached `memalign` (NID `0xA9363E6B`) at SVC `0x8109BD28`, called from LR `0x81001F79`, with alignment `r0=0x10` and size `r1=0x180`.
 
-Milestone 28 implements the full Arm 32-bit `__cxa_guard_acquire`, `__cxa_guard_release`, and `__cxa_guard_abort` cluster with aligned guest-word access, initialized-bit publication, per-run ownership, exact acquire returns, and explicit recursive/fault boundaries. Install the Milestone 28 artifact, prepare `PCSG00291`, and run the one-shot attempt once. It should advance past 122 instructions, count the acquire as the fifth successful HLE call, and include a `C++ guards:` diagnostic. Return the complete next CPU, memory, HLE, return, or instruction-limit boundary; never skip unknown behavior.
+Milestone 29 implements a bounded 16 MiB guest heap plus `calloc`, `malloc`, `memalign`, `free`, `realloc`, and `malloc_usable_size`. Install the Milestone 29 artifact, prepare `PCSG00291`, and run the one-shot attempt once. It should advance past 133 instructions, count `memalign` as the sixth successful HLE call, return writable aligned guest address `0x90000000`, and include a `Libc heap:` diagnostic. Return the complete next CPU, memory, HLE, return, or instruction-limit boundary; never skip unknown behavior.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m28-install-zip-fixture artifacts/milestone28-cxa-guards.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m29-install-zip-fixture artifacts/milestone29-libc-heap.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 

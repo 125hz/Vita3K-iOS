@@ -15,6 +15,7 @@ add_library(vita3k_ios_core STATIC
     ../src/CoreBridge.cpp
     ../src/ExecutableLoader.cpp
     ../src/ExecutableProbe.cpp
+    ../src/GuestHeap.cpp
     ../src/GuestMemory.cpp
     ../src/GuestThread.cpp
     ../src/HostDisplay.cpp

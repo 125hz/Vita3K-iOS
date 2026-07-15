@@ -31,6 +31,10 @@ public:
         std::uint32_t guest_flags,
         std::string &error);
     bool map_segments(std::span<const GuestSegmentMapping> segments, std::string &error);
+    bool map_dynamic_segment(std::uint32_t guest_address,
+        std::uint32_t memory_size,
+        std::uint32_t guest_flags,
+        std::string &error);
     bool read(std::uint32_t guest_address,
         std::span<std::uint8_t> output,
         std::string &error) const;

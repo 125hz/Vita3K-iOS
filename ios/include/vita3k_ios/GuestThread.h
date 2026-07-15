@@ -29,6 +29,12 @@ struct GuestThreadRunResult {
     std::size_t libc_guard_abort_count = 0;
     std::size_t libc_guard_initialization_count = 0;
     std::size_t libc_guard_recursive_acquire_count = 0;
+    std::size_t libc_heap_allocation_count = 0;
+    std::size_t libc_heap_free_count = 0;
+    std::size_t libc_heap_realloc_count = 0;
+    std::size_t libc_heap_failure_count = 0;
+    std::uint64_t libc_heap_live_bytes = 0;
+    std::uint64_t libc_heap_peak_bytes = 0;
     std::uint32_t last_libc_atexit_object = 0;
     std::uint32_t last_libc_atexit_destructor = 0;
     std::uint32_t last_libc_atexit_dso = 0;
@@ -36,6 +42,9 @@ struct GuestThreadRunResult {
     std::uint32_t last_libc_guard_address = 0;
     std::uint32_t last_libc_guard_word = 0;
     std::int32_t last_libc_guard_result = 0;
+    std::uint32_t last_libc_heap_address = 0;
+    std::uint32_t last_libc_heap_size = 0;
+    std::uint32_t last_libc_heap_alignment = 0;
     std::uint32_t return_value = 0;
     std::string detail;
 };

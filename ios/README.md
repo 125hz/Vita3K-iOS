@@ -301,3 +301,16 @@ The accepted Milestone 27 Amagami attempt advanced to 122 instructions and four 
 4. Share the complete next boundary. It should exceed 122 instructions, report at least five successful HLE calls, preserve the DSO and termination-registration state, and include a `C++ guards:` summary.
 
 The Actions artifact includes `milestone28-cxa-guards.zip`. Its legal synthetic title exercises first acquisition and returns one. Portable regressions also validate the already-initialized zero result, release bit-setting, abort behavior, and an honest recursive-initialization boundary.
+
+## Milestone 29 bounded libc guest heap
+
+The accepted Milestone 28 Amagami attempt advanced from 122 to 133 instructions and from four to five HLE calls. Its C++ guard acquired successfully, then startup called `memalign` (NID `0xA9363E6B`) with alignment `0x10` and size `0x180`.
+
+Milestone 29 adds a host-page-aligned 16 MiB guest heap arena at `0x90000000` and binds the coherent `calloc`, `malloc`, `memalign`, `free`, `realloc`, and `malloc_usable_size` family when imported. The allocator splits and coalesces blocks, reuses freed ranges, preserves bytes across growth, zeroes `calloc` storage, validates power-of-two alignment, tracks live/peak usage, and stops explicitly on invalid pointers, artificial arena exhaustion, mapping failure, or arithmetic overflow. It is a bounded single-thread startup heap, not yet upstream Vita3K's process-wide page allocator.
+
+1. Install the Milestone 29 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (256 Instructions)** once.
+4. Share the complete next boundary. It should exceed 133 instructions, report at least six successful HLE calls, preserve the DSO/termination/guard state, and include `Libc heap: allocations=1` with address `0x90000000`, size `384`, and alignment `16`.
+
+The Actions artifact includes `milestone29-libc-heap.zip`. Its legal synthetic title reproduces `memalign(0x10, 0x180)`, receives aligned writable guest address `0x90000000`, and returns cleanly. Portable regressions cover alignment, resize preservation, usable size, free/coalescing, zeroed reuse, and invalid alignment.
