@@ -388,3 +388,14 @@ The accepted Milestone 34 device run crossed two public sysmodule loads in one a
 4. Share the complete next boundary and the `NP lifecycle:`/`Trophy lifecycle:` diagnostics.
 
 The Actions artifact includes `milestone35-np-lifecycle.zip`, reproducing the captured null-argument NP initialization. Portable companions cover duplicate initialization, signed-out service-state output, null/unmapped outputs, clean NP termination, Trophy initialization/termination, and their state errors.
+
+## Milestone 36 NP Trophy object lifecycle
+
+The accepted Milestone 35 device run initialized NP Manager and NP Trophy, advanced to 5712 instructions and 36 HLE calls, then reached `sceNpTrophyCreateContext` (NID `0xC49FD33F`) with mapped context, Communication ID, and Communication Signature pointers. Milestone 36 batches the five Trophy object exports: create/destroy context plus create/destroy/abort handle. The bounded runner validates the 12-byte Communication ID and numeric suffix, performs checked guest writes for context/handle IDs, tracks one startup context and handle, clears them during Trophy/NP termination, and preserves upstream lifecycle and invalid-context errors. It does not parse TRP packages or fabricate trophy metadata, icons, progress, or unlock state; those remain hard boundaries until the guest VFS is connected.
+
+1. Install the Milestone 36 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (65536 Instructions)** once.
+4. Share the complete next boundary and the `Trophy objects:` diagnostic.
+
+The Actions artifact includes `milestone36-trophy-objects.zip`, which initializes Trophy and creates a context using mapped guest structures. Portable companions cover null/unmapped outputs, invalid Communication IDs, initialization state, context errors, and create/destroy/abort handle behavior.

@@ -54,6 +54,11 @@ constexpr std::uint32_t nid_sce_np_init = 0x04D9F484;
 constexpr std::uint32_t nid_sce_np_term = 0x19E40AE1;
 constexpr std::uint32_t nid_sce_np_trophy_init = 0x34516838;
 constexpr std::uint32_t nid_sce_np_trophy_term = 0xBFE0F28F;
+constexpr std::uint32_t nid_sce_np_trophy_abort_handle = 0xD55C6F4C;
+constexpr std::uint32_t nid_sce_np_trophy_create_context = 0xC49FD33F;
+constexpr std::uint32_t nid_sce_np_trophy_create_handle = 0x4EBC6977;
+constexpr std::uint32_t nid_sce_np_trophy_destroy_context = 0x56F5CBA5;
+constexpr std::uint32_t nid_sce_np_trophy_destroy_handle = 0xFF142071;
 constexpr std::uint32_t sce_app_util_error_parameter = 0x80100600;
 constexpr std::uint32_t sce_app_util_error_not_initialized = 0x80100601;
 constexpr std::uint32_t sce_app_util_error_busy = 0x80100603;
@@ -66,6 +71,10 @@ constexpr std::uint32_t sce_np_error_already_initialized = 0x80550001;
 constexpr std::uint32_t sce_np_error_invalid_argument = 0x80550003;
 constexpr std::uint32_t sce_np_trophy_error_not_initialized = 0x80551601;
 constexpr std::uint32_t sce_np_trophy_error_already_initialized = 0x80551602;
+constexpr std::uint32_t sce_np_trophy_error_invalid_argument = 0x80551604;
+constexpr std::uint32_t sce_np_trophy_error_invalid_context = 0x80551609;
+constexpr std::uint32_t sce_np_trophy_error_invalid_np_comm_id = 0x8055160A;
+constexpr std::uint32_t sce_np_trophy_error_context_already_exists = 0x80551616;
 constexpr std::uint32_t sce_np_service_state_signed_out = 1;
 constexpr std::size_t sce_np_communication_config_size = 12;
 constexpr std::size_t sce_np_communication_id_size = 12;
@@ -172,6 +181,16 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         imported_nids, nid_sce_np_trophy_init);
     const bool imports_sce_np_trophy_term = contains_nid(
         imported_nids, nid_sce_np_trophy_term);
+    const bool imports_sce_np_trophy_abort_handle = contains_nid(
+        imported_nids, nid_sce_np_trophy_abort_handle);
+    const bool imports_sce_np_trophy_create_context = contains_nid(
+        imported_nids, nid_sce_np_trophy_create_context);
+    const bool imports_sce_np_trophy_create_handle = contains_nid(
+        imported_nids, nid_sce_np_trophy_create_handle);
+    const bool imports_sce_np_trophy_destroy_context = contains_nid(
+        imported_nids, nid_sce_np_trophy_destroy_context);
+    const bool imports_sce_np_trophy_destroy_handle = contains_nid(
+        imported_nids, nid_sce_np_trophy_destroy_handle);
     if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" || (imports_exit_thread && std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
         return result;
@@ -245,7 +264,22 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                 != "sceNpTrophyInit")
         || (imports_sce_np_trophy_term
             && std::string_view(import_name(nid_sce_np_trophy_term))
-                != "sceNpTrophyTerm")) {
+                != "sceNpTrophyTerm")
+        || (imports_sce_np_trophy_abort_handle
+            && std::string_view(import_name(nid_sce_np_trophy_abort_handle))
+                != "sceNpTrophyAbortHandle")
+        || (imports_sce_np_trophy_create_context
+            && std::string_view(import_name(nid_sce_np_trophy_create_context))
+                != "sceNpTrophyCreateContext")
+        || (imports_sce_np_trophy_create_handle
+            && std::string_view(import_name(nid_sce_np_trophy_create_handle))
+                != "sceNpTrophyCreateHandle")
+        || (imports_sce_np_trophy_destroy_context
+            && std::string_view(import_name(nid_sce_np_trophy_destroy_context))
+                != "sceNpTrophyDestroyContext")
+        || (imports_sce_np_trophy_destroy_handle
+            && std::string_view(import_name(nid_sce_np_trophy_destroy_handle))
+                != "sceNpTrophyDestroyHandle")) {
         result.detail = "The upstream Vita NID database did not match the NP lifecycle bindings.";
         return result;
     }
@@ -260,6 +294,8 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     std::vector<std::uint32_t> loaded_sysmodules;
     bool np_initialized = false;
     bool np_trophy_initialized = false;
+    std::vector<std::int32_t> np_trophy_contexts;
+    std::vector<std::int32_t> np_trophy_handles;
     std::string np_error;
     GuestHeap heap;
     std::string heap_error;
@@ -435,12 +471,16 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         result.last_np_result = static_cast<std::int32_t>(value);
         result.np_initialized = np_initialized;
         result.np_trophy_initialized = np_trophy_initialized;
+        result.np_trophy_context_count = np_trophy_contexts.size();
+        result.np_trophy_handle_count = np_trophy_handles.size();
         return result.last_np_result;
     };
     const auto set_np_trophy_result = [&](std::uint32_t value) -> std::int32_t {
         result.last_np_trophy_result = static_cast<std::int32_t>(value);
         result.np_initialized = np_initialized;
         result.np_trophy_initialized = np_trophy_initialized;
+        result.np_trophy_context_count = np_trophy_contexts.size();
+        result.np_trophy_handle_count = np_trophy_handles.size();
         return result.last_np_trophy_result;
     };
     const auto fail_np_memory = [&](ArmCpuState &state, std::string operation,
@@ -450,6 +490,15 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         state.stop_requested = true;
         state.stop_code = -1;
         return set_np_result(sce_np_error_invalid_argument);
+    };
+    const auto fail_np_trophy_memory = [&](ArmCpuState &state,
+                                           std::string operation,
+                                           std::string error) -> std::int32_t {
+        np_error = std::move(operation) + " guest-memory validation failed: "
+            + std::move(error);
+        state.stop_requested = true;
+        state.stop_code = -1;
+        return set_np_trophy_result(sce_np_trophy_error_invalid_argument);
     };
     bool np_init_bound = true;
     if (imports_sce_np_init) {
@@ -509,6 +558,8 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
             "sceNpTerm", [&](ArmCpuState &) -> std::int32_t {
                 ++result.hle_dispatch_count;
                 ++result.np_term_call_count;
+                np_trophy_contexts.clear();
+                np_trophy_handles.clear();
                 np_trophy_initialized = false;
                 np_initialized = false;
                 return set_np_result(0);
@@ -538,7 +589,125 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                     return set_np_trophy_result(
                         sce_np_trophy_error_not_initialized);
                 }
+                np_trophy_contexts.clear();
+                np_trophy_handles.clear();
                 np_trophy_initialized = false;
+                return set_np_trophy_result(0);
+            });
+    }
+    bool np_trophy_create_context_bound = true;
+    if (imports_sce_np_trophy_create_context) {
+        np_trophy_create_context_bound = dispatcher.bind(
+            nid_sce_np_trophy_create_context, "sceNpTrophyCreateContext",
+            [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_trophy_context_create_call_count;
+                result.last_np_trophy_context_address = state.registers[0];
+                result.last_np_trophy_communication_id_address = state.registers[1];
+                result.last_np_trophy_communication_signature_address = state.registers[2];
+                if (!np_trophy_initialized) {
+                    return set_np_trophy_result(
+                        sce_np_trophy_error_not_initialized);
+                }
+                if (state.registers[0] == 0) {
+                    return set_np_trophy_result(
+                        sce_np_trophy_error_invalid_argument);
+                }
+                if (state.registers[1] != 0) {
+                    std::array<std::uint8_t, sce_np_communication_id_size>
+                        communication_id{};
+                    std::string error;
+                    if (!memory.read(state.registers[1], communication_id, error)) {
+                        return fail_np_trophy_memory(state,
+                            "sceNpTrophyCreateContext communication ID",
+                            std::move(error));
+                    }
+                    result.last_np_trophy_communication_number = communication_id[10];
+                    if (communication_id[10] > 99) {
+                        return set_np_trophy_result(
+                            sce_np_trophy_error_invalid_np_comm_id);
+                    }
+                }
+                if (!np_trophy_contexts.empty()) {
+                    return set_np_trophy_result(
+                        sce_np_trophy_error_context_already_exists);
+                }
+                constexpr std::int32_t context = 1;
+                std::string error;
+                if (!write_guest_u32(memory, state.registers[0],
+                        static_cast<std::uint32_t>(context), error)) {
+                    return fail_np_trophy_memory(state,
+                        "sceNpTrophyCreateContext output", std::move(error));
+                }
+                np_trophy_contexts.push_back(context);
+                result.last_np_trophy_context = context;
+                return set_np_trophy_result(0);
+            });
+    }
+    bool np_trophy_create_handle_bound = true;
+    if (imports_sce_np_trophy_create_handle) {
+        np_trophy_create_handle_bound = dispatcher.bind(
+            nid_sce_np_trophy_create_handle, "sceNpTrophyCreateHandle",
+            [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_trophy_handle_create_call_count;
+                if (state.registers[0] == 0) {
+                    return set_np_trophy_result(
+                        sce_np_trophy_error_invalid_argument);
+                }
+                constexpr std::int32_t handle = 1;
+                std::string error;
+                if (!write_guest_u32(memory, state.registers[0],
+                        static_cast<std::uint32_t>(handle), error)) {
+                    return fail_np_trophy_memory(state,
+                        "sceNpTrophyCreateHandle output", std::move(error));
+                }
+                if (!std::ranges::contains(np_trophy_handles, handle)) {
+                    np_trophy_handles.push_back(handle);
+                }
+                result.last_np_trophy_handle = handle;
+                return set_np_trophy_result(0);
+            });
+    }
+    bool np_trophy_destroy_context_bound = true;
+    if (imports_sce_np_trophy_destroy_context) {
+        np_trophy_destroy_context_bound = dispatcher.bind(
+            nid_sce_np_trophy_destroy_context, "sceNpTrophyDestroyContext",
+            [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_trophy_context_destroy_call_count;
+                const auto context = static_cast<std::int32_t>(state.registers[0]);
+                result.last_np_trophy_context = context;
+                if (!std::ranges::contains(np_trophy_contexts, context)) {
+                    return set_np_trophy_result(
+                        sce_np_trophy_error_invalid_context);
+                }
+                std::erase(np_trophy_contexts, context);
+                return set_np_trophy_result(0);
+            });
+    }
+    bool np_trophy_destroy_handle_bound = true;
+    if (imports_sce_np_trophy_destroy_handle) {
+        np_trophy_destroy_handle_bound = dispatcher.bind(
+            nid_sce_np_trophy_destroy_handle, "sceNpTrophyDestroyHandle",
+            [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_trophy_handle_destroy_call_count;
+                const auto handle = static_cast<std::int32_t>(state.registers[0]);
+                result.last_np_trophy_handle = handle;
+                std::erase(np_trophy_handles, handle);
+                return set_np_trophy_result(0);
+            });
+    }
+    bool np_trophy_abort_handle_bound = true;
+    if (imports_sce_np_trophy_abort_handle) {
+        np_trophy_abort_handle_bound = dispatcher.bind(
+            nid_sce_np_trophy_abort_handle, "sceNpTrophyAbortHandle",
+            [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_trophy_handle_abort_call_count;
+                result.last_np_trophy_handle =
+                    static_cast<std::int32_t>(state.registers[0]);
                 return set_np_trophy_result(0);
             });
     }
@@ -922,7 +1091,12 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         + static_cast<std::size_t>(imports_sce_np_init)
         + static_cast<std::size_t>(imports_sce_np_term)
         + static_cast<std::size_t>(imports_sce_np_trophy_init)
-        + static_cast<std::size_t>(imports_sce_np_trophy_term);
+        + static_cast<std::size_t>(imports_sce_np_trophy_term)
+        + static_cast<std::size_t>(imports_sce_np_trophy_abort_handle)
+        + static_cast<std::size_t>(imports_sce_np_trophy_create_context)
+        + static_cast<std::size_t>(imports_sce_np_trophy_create_handle)
+        + static_cast<std::size_t>(imports_sce_np_trophy_destroy_context)
+        + static_cast<std::size_t>(imports_sce_np_trophy_destroy_handle);
     if (!get_id_bound || !exit_bound || !dso_handle_bound || !aeabi_atexit_bound
         || !cxa_atexit_bound || !cxa_finalize_bound || !cxa_guard_abort_bound
         || !cxa_guard_acquire_bound || !cxa_guard_release_bound
@@ -936,6 +1110,9 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         || !sysmodule_is_loaded_bound || !sysmodule_load_bound || !sysmodule_unload_bound
         || !np_get_service_state_bound || !np_init_bound || !np_term_bound
         || !np_trophy_init_bound || !np_trophy_term_bound
+        || !np_trophy_abort_handle_bound || !np_trophy_create_context_bound
+        || !np_trophy_create_handle_bound || !np_trophy_destroy_context_bound
+        || !np_trophy_destroy_handle_bound
         || dispatcher.binding_count() != expected_binding_count) {
         result.detail = "The minimal kernel/runtime HLE bindings could not be registered.";
         return result;
@@ -1065,7 +1242,12 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     }
     const auto np_call_count = result.np_init_call_count + result.np_term_call_count
         + result.np_service_state_call_count + result.np_trophy_init_call_count
-        + result.np_trophy_term_call_count;
+        + result.np_trophy_term_call_count
+        + result.np_trophy_context_create_call_count
+        + result.np_trophy_context_destroy_call_count
+        + result.np_trophy_handle_create_call_count
+        + result.np_trophy_handle_destroy_call_count
+        + result.np_trophy_handle_abort_call_count;
     if (np_call_count != 0) {
         detail << " NP lifecycle: initialized=" << (result.np_initialized ? "yes" : "no")
                << ", init calls=" << result.np_init_call_count
@@ -1082,7 +1264,22 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                << ", init calls=" << result.np_trophy_init_call_count
                << ", term calls=" << result.np_trophy_term_call_count
                << ", last result=" << nid_hex(
-                    static_cast<std::uint32_t>(result.last_np_trophy_result)) << ".";
+                    static_cast<std::uint32_t>(result.last_np_trophy_result))
+               << ". Trophy objects: contexts=" << result.np_trophy_context_count
+               << " (create=" << result.np_trophy_context_create_call_count
+               << ", destroy=" << result.np_trophy_context_destroy_call_count
+               << "), handles=" << result.np_trophy_handle_count
+               << " (create=" << result.np_trophy_handle_create_call_count
+               << ", destroy=" << result.np_trophy_handle_destroy_call_count
+               << ", abort=" << result.np_trophy_handle_abort_call_count
+               << "); last context=" << result.last_np_trophy_context
+               << " at " << nid_hex(result.last_np_trophy_context_address)
+               << ", commId="
+               << nid_hex(result.last_np_trophy_communication_id_address)
+               << " #" << result.last_np_trophy_communication_number
+               << ", commSign="
+               << nid_hex(result.last_np_trophy_communication_signature_address)
+               << ", last handle=" << result.last_np_trophy_handle << ".";
     }
     if (!np_error.empty()) {
         detail << " NP boundary: " << np_error << ".";

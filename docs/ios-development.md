@@ -234,6 +234,10 @@ The accepted Milestone 33 device run advanced through AppUtil to `sceSysmoduleLo
 
 The accepted Milestone 34 device run loaded NP plus NP Trophy and reached `sceNpInit(nullptr, nullptr)` at 5692 instructions and 34 HLE calls. Milestone 35 batches NP init/service-state/term with Trophy init/term. It validates optional communication guest pointers, reports deterministic offline signed-out state through checked guest writes, preserves upstream lifecycle errors, and cascades NP termination into Trophy shutdown. Callback and trophy-context APIs remain diagnostic boundaries pending scheduler and VFS support. CI emits `milestone35-np-lifecycle.zip`, and portable tests cover all state transitions and pointer boundaries.
 
+## Milestone 36 NP Trophy object lifecycle
+
+The accepted Milestone 35 run advanced to `sceNpTrophyCreateContext` at 5712 instructions and 36 HLE calls after both NP lifecycles initialized. Milestone 36 binds create/destroy context and create/destroy/abort handle as one stateful family. It uses bounded Communication ID reads, checked context/handle output writes, guest-visible IDs, upstream state/error values, and termination cleanup. It intentionally does not return invented TRP-derived trophy data. CI emits `milestone36-trophy-objects.zip`; nine portable paths cover the captured success case, invalid state/arguments/IDs, unmapped memory, and handle operations.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

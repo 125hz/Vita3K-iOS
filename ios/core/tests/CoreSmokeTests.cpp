@@ -174,6 +174,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m33_install_zip_fixture;
     std::filesystem::path emitted_m34_install_zip_fixture;
     std::filesystem::path emitted_m35_install_zip_fixture;
+    std::filesystem::path emitted_m36_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -225,6 +226,8 @@ int main(int argc, char **argv) {
             emitted_m34_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m35-install-zip-fixture" && index + 1 < argc) {
             emitted_m35_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m36-install-zip-fixture" && index + 1 < argc) {
+            emitted_m36_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -252,6 +255,7 @@ int main(int argc, char **argv) {
                          "[--emit-m33-install-zip-fixture <path>] "
                          "[--emit-m34-install-zip-fixture <path>] "
                          "[--emit-m35-install-zip-fixture <path>] "
+                         "[--emit-m36-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -976,6 +980,79 @@ int main(int argc, char **argv) {
     const auto trophy_lifecycle_self = make_plain_self(trophy_lifecycle_elf);
     const auto trophy_lifecycle_install_zip = vita3k::ios::make_synthetic_install_zip(
         trophy_lifecycle_self, trophy_lifecycle_self);
+    constexpr std::uint32_t np_trophy_abort_handle_nid = 0xD55C6F4Cu;
+    constexpr std::uint32_t np_trophy_create_context_nid = 0xC49FD33Fu;
+    constexpr std::uint32_t np_trophy_create_handle_nid = 0x4EBC6977u;
+    constexpr std::uint32_t np_trophy_destroy_context_nid = 0x56F5CBA5u;
+    constexpr std::uint32_t np_trophy_destroy_handle_nid = 0xFF142071u;
+    constexpr std::uint32_t np_trophy_error_invalid_argument = 0x80551604u;
+    constexpr std::uint32_t np_trophy_error_invalid_context = 0x80551609u;
+    constexpr std::uint32_t np_trophy_error_invalid_np_comm_id = 0x8055160Au;
+    constexpr std::uint32_t synthetic_trophy_context = 0x81000240u;
+    constexpr std::uint32_t synthetic_trophy_communication_id = 0x81000250u;
+    constexpr std::uint32_t synthetic_trophy_communication_signature = 0x81000260u;
+    const auto make_trophy_context_archive = [&](std::uint32_t context,
+                                                  std::uint32_t communication_id,
+                                                  bool invalid_communication_number = false) {
+        auto trophy_context_elf = lifecycle_elf;
+        const std::array<std::uint16_t, 10> trophy_context_program{
+            0xB510u, // PUSH {r4, lr}
+            0x4B04u, // LDR r3, [pc, #16] -> init stub (r0 starts at zero)
+            0x4798u, // BLX r3
+            0x4804u, // LDR r0, [pc, #16] -> context output
+            0x4904u, // LDR r1, [pc, #16] -> communication ID
+            0x460Au, // MOV r2, r1
+            0x3210u, // ADDS r2, #16 -> communication signature
+            0x3310u, // ADDS r3, #16 -> create-context stub
+            0x4798u, // BLX r3
+            0xBD10u // POP {r4, pc}
+        };
+        std::memcpy(trophy_context_elf.data() + 244,
+            trophy_context_program.data(), sizeof(trophy_context_program));
+        write_value(trophy_context_elf, 264,
+            static_cast<std::uint32_t>(0x81000040));
+        write_value(trophy_context_elf, 268, context);
+        write_value(trophy_context_elf, 272, communication_id);
+        write_value(trophy_context_elf, 314, static_cast<std::uint16_t>(3));
+        write_value(trophy_context_elf, 340,
+            static_cast<std::uint32_t>(0x810000C4));
+        write_value(trophy_context_elf, 344,
+            static_cast<std::uint32_t>(0x81000020));
+        write_value(trophy_context_elf, 348,
+            static_cast<std::uint32_t>(0x81000040));
+        write_value(trophy_context_elf, 352,
+            static_cast<std::uint32_t>(0x81000050));
+        write_value(trophy_context_elf, 368, get_thread_id_nid);
+        write_value(trophy_context_elf, 372, np_trophy_init_nid);
+        write_value(trophy_context_elf, 376, np_trophy_create_context_nid);
+        if (invalid_communication_number) {
+            // Guest 0x810000FA is byte 398 in PT_LOAD #0 and is otherwise unused.
+            trophy_context_elf[398] = 100;
+        }
+        const auto self = make_plain_self(trophy_context_elf);
+        return vita3k::ios::make_synthetic_install_zip(self, self);
+    };
+    const auto m36_install_zip = make_trophy_context_archive(
+        synthetic_trophy_context, synthetic_trophy_communication_id);
+    const auto null_trophy_context_install_zip = make_trophy_context_archive(
+        0, synthetic_trophy_communication_id);
+    const auto invalid_trophy_context_install_zip = make_trophy_context_archive(
+        0x70000000u, synthetic_trophy_communication_id);
+    const auto invalid_trophy_communication_id_install_zip =
+        make_trophy_context_archive(
+            synthetic_trophy_context, 0x810000F0u, true);
+    const auto uninitialized_trophy_context_install_zip = make_cpp_allocation_archive(
+        np_trophy_create_context_nid, synthetic_trophy_context);
+    const auto trophy_create_handle_install_zip = make_cpp_allocation_archive(
+        np_trophy_create_handle_nid, synthetic_trophy_context);
+    const auto null_trophy_handle_install_zip = make_cpp_allocation_archive(
+        np_trophy_create_handle_nid, 0);
+    const auto invalid_trophy_destroy_context_install_zip =
+        make_cpp_allocation_archive(np_trophy_destroy_context_nid, 99);
+    const auto trophy_destroy_handle_install_zip = make_cpp_allocation_archive(
+        np_trophy_destroy_handle_nid, 1);
+    const auto trophy_abort_handle_install_zip = make_cpp_allocation_archive(
+        np_trophy_abort_handle_nid, 1);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -1069,6 +1146,18 @@ int main(int argc, char **argv) {
         || np_lifecycle_install_zip.empty() || trophy_lifecycle_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 35 NP lifecycle fixtures.\n";
         return 144;
+    }
+    if (m36_install_zip.empty() || null_trophy_context_install_zip.empty()
+        || invalid_trophy_context_install_zip.empty()
+        || invalid_trophy_communication_id_install_zip.empty()
+        || uninitialized_trophy_context_install_zip.empty()
+        || trophy_create_handle_install_zip.empty()
+        || null_trophy_handle_install_zip.empty()
+        || invalid_trophy_destroy_context_install_zip.empty()
+        || trophy_destroy_handle_install_zip.empty()
+        || trophy_abort_handle_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 36 Trophy object fixtures.\n";
+        return 154;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -1327,6 +1416,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 35 NP lifecycle fixture.\n";
             return 145;
+        }
+    }
+    if (!emitted_m36_install_zip_fixture.empty()) {
+        if (!emitted_m36_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m36_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m36_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m36_install_zip.data()),
+            static_cast<std::streamsize>(m36_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 36 Trophy object fixture.\n";
+            return 155;
         }
     }
 
@@ -2224,6 +2326,134 @@ int main(int argc, char **argv) {
         std::cerr << trophy_lifecycle_boot.detail << '\n';
         return 153;
     }
+    const auto trophy_context_boot = run_guard_fixture(
+        m36_install_zip, "milestone36-trophy-context.zip");
+    if (!trophy_context_boot.returned || trophy_context_boot.hle_dispatch_count != 2
+        || trophy_context_boot.last_hle_nid != np_trophy_create_context_nid
+        || !trophy_context_boot.np_trophy_initialized
+        || trophy_context_boot.np_trophy_init_call_count != 1
+        || trophy_context_boot.np_trophy_context_create_call_count != 1
+        || trophy_context_boot.np_trophy_context_count != 1
+        || trophy_context_boot.last_np_trophy_context != 1
+        || trophy_context_boot.last_np_trophy_context_address
+            != synthetic_trophy_context
+        || trophy_context_boot.last_np_trophy_communication_id_address
+            != synthetic_trophy_communication_id
+        || trophy_context_boot.last_np_trophy_communication_signature_address
+            != synthetic_trophy_communication_signature
+        || trophy_context_boot.last_np_trophy_communication_number != 0
+        || trophy_context_boot.last_np_trophy_result != 0
+        || trophy_context_boot.return_value != 0
+        || trophy_context_boot.detail.find(
+            "Trophy objects: contexts=1 (create=1, destroy=0)")
+            == std::string::npos) {
+        std::cerr << trophy_context_boot.detail << '\n';
+        return 156;
+    }
+    const auto null_trophy_context_boot = run_guard_fixture(
+        null_trophy_context_install_zip, "milestone36-trophy-null-context.zip");
+    if (!null_trophy_context_boot.returned
+        || null_trophy_context_boot.np_trophy_context_count != 0
+        || static_cast<std::uint32_t>(null_trophy_context_boot.last_np_trophy_result)
+            != np_trophy_error_invalid_argument
+        || null_trophy_context_boot.return_value != np_trophy_error_invalid_argument) {
+        std::cerr << null_trophy_context_boot.detail << '\n';
+        return 157;
+    }
+    const auto invalid_trophy_context_boot = run_guard_fixture(
+        invalid_trophy_context_install_zip,
+        "milestone36-trophy-invalid-context-output.zip");
+    if (!invalid_trophy_context_boot.started || invalid_trophy_context_boot.returned
+        || invalid_trophy_context_boot.np_trophy_context_count != 0
+        || invalid_trophy_context_boot.detail.find(
+            "NP boundary: sceNpTrophyCreateContext output guest-memory validation failed")
+            == std::string::npos) {
+        std::cerr << invalid_trophy_context_boot.detail << '\n';
+        return 158;
+    }
+    const auto invalid_trophy_communication_id_boot = run_guard_fixture(
+        invalid_trophy_communication_id_install_zip,
+        "milestone36-trophy-invalid-communication-id.zip");
+    if (!invalid_trophy_communication_id_boot.returned
+        || invalid_trophy_communication_id_boot.np_trophy_context_count != 0
+        || invalid_trophy_communication_id_boot.last_np_trophy_communication_number
+            != 100
+        || static_cast<std::uint32_t>(
+            invalid_trophy_communication_id_boot.last_np_trophy_result)
+            != np_trophy_error_invalid_np_comm_id
+        || invalid_trophy_communication_id_boot.return_value
+            != np_trophy_error_invalid_np_comm_id) {
+        std::cerr << invalid_trophy_communication_id_boot.detail << '\n';
+        return 159;
+    }
+    const auto uninitialized_trophy_context_boot = run_guard_fixture(
+        uninitialized_trophy_context_install_zip,
+        "milestone36-trophy-uninitialized-context.zip");
+    if (!uninitialized_trophy_context_boot.returned
+        || uninitialized_trophy_context_boot.np_trophy_context_count != 0
+        || static_cast<std::uint32_t>(
+            uninitialized_trophy_context_boot.last_np_trophy_result)
+            != np_trophy_error_not_initialized
+        || uninitialized_trophy_context_boot.return_value
+            != np_trophy_error_not_initialized) {
+        std::cerr << uninitialized_trophy_context_boot.detail << '\n';
+        return 160;
+    }
+    const auto trophy_create_handle_boot = run_guard_fixture(
+        trophy_create_handle_install_zip, "milestone36-trophy-create-handle.zip");
+    if (!trophy_create_handle_boot.returned
+        || trophy_create_handle_boot.np_trophy_handle_create_call_count != 1
+        || trophy_create_handle_boot.np_trophy_handle_count != 1
+        || trophy_create_handle_boot.last_np_trophy_handle != 1
+        || trophy_create_handle_boot.last_np_trophy_result != 0
+        || trophy_create_handle_boot.return_value != 0) {
+        std::cerr << trophy_create_handle_boot.detail << '\n';
+        return 161;
+    }
+    const auto null_trophy_handle_boot = run_guard_fixture(
+        null_trophy_handle_install_zip, "milestone36-trophy-null-handle.zip");
+    if (!null_trophy_handle_boot.returned
+        || null_trophy_handle_boot.np_trophy_handle_count != 0
+        || static_cast<std::uint32_t>(null_trophy_handle_boot.last_np_trophy_result)
+            != np_trophy_error_invalid_argument
+        || null_trophy_handle_boot.return_value != np_trophy_error_invalid_argument) {
+        std::cerr << null_trophy_handle_boot.detail << '\n';
+        return 162;
+    }
+    const auto invalid_trophy_destroy_context_boot = run_guard_fixture(
+        invalid_trophy_destroy_context_install_zip,
+        "milestone36-trophy-invalid-destroy-context.zip");
+    if (!invalid_trophy_destroy_context_boot.returned
+        || invalid_trophy_destroy_context_boot.np_trophy_context_destroy_call_count != 1
+        || static_cast<std::uint32_t>(
+            invalid_trophy_destroy_context_boot.last_np_trophy_result)
+            != np_trophy_error_invalid_context
+        || invalid_trophy_destroy_context_boot.return_value
+            != np_trophy_error_invalid_context) {
+        std::cerr << invalid_trophy_destroy_context_boot.detail << '\n';
+        return 163;
+    }
+    const auto trophy_destroy_handle_boot = run_guard_fixture(
+        trophy_destroy_handle_install_zip,
+        "milestone36-trophy-destroy-handle.zip");
+    if (!trophy_destroy_handle_boot.returned
+        || trophy_destroy_handle_boot.np_trophy_handle_destroy_call_count != 1
+        || trophy_destroy_handle_boot.last_np_trophy_handle != 1
+        || trophy_destroy_handle_boot.last_np_trophy_result != 0
+        || trophy_destroy_handle_boot.return_value != 0) {
+        std::cerr << trophy_destroy_handle_boot.detail << '\n';
+        return 164;
+    }
+    const auto trophy_abort_handle_boot = run_guard_fixture(
+        trophy_abort_handle_install_zip, "milestone36-trophy-abort-handle.zip");
+    if (!trophy_abort_handle_boot.returned
+        || trophy_abort_handle_boot.np_trophy_handle_abort_call_count != 1
+        || trophy_abort_handle_boot.last_np_trophy_handle != 1
+        || trophy_abort_handle_boot.last_np_trophy_result != 0
+        || trophy_abort_handle_boot.return_value != 0) {
+        std::cerr << trophy_abort_handle_boot.detail << '\n';
+        return 165;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -2367,6 +2597,10 @@ int main(int argc, char **argv) {
     if (!emitted_m35_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 35 NP lifecycle fixture: "
                   << emitted_m35_install_zip_fixture << '\n';
+    }
+    if (!emitted_m36_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 36 Trophy object fixture: "
+                  << emitted_m36_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

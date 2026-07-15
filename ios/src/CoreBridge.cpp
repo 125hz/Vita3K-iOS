@@ -1820,6 +1820,13 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.np_service_state_call_count = thread.np_service_state_call_count;
         result.np_trophy_init_call_count = thread.np_trophy_init_call_count;
         result.np_trophy_term_call_count = thread.np_trophy_term_call_count;
+        result.np_trophy_context_create_call_count = thread.np_trophy_context_create_call_count;
+        result.np_trophy_context_destroy_call_count = thread.np_trophy_context_destroy_call_count;
+        result.np_trophy_handle_create_call_count = thread.np_trophy_handle_create_call_count;
+        result.np_trophy_handle_destroy_call_count = thread.np_trophy_handle_destroy_call_count;
+        result.np_trophy_handle_abort_call_count = thread.np_trophy_handle_abort_call_count;
+        result.np_trophy_context_count = thread.np_trophy_context_count;
+        result.np_trophy_handle_count = thread.np_trophy_handle_count;
         result.libc_heap_live_bytes = thread.libc_heap_live_bytes;
         result.libc_heap_peak_bytes = thread.libc_heap_peak_bytes;
         result.last_libc_atexit_object = thread.last_libc_atexit_object;
@@ -1846,6 +1853,12 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.last_np_service_state = thread.last_np_service_state;
         result.last_np_result = thread.last_np_result;
         result.last_np_trophy_result = thread.last_np_trophy_result;
+        result.last_np_trophy_context_address = thread.last_np_trophy_context_address;
+        result.last_np_trophy_communication_id_address = thread.last_np_trophy_communication_id_address;
+        result.last_np_trophy_communication_signature_address = thread.last_np_trophy_communication_signature_address;
+        result.last_np_trophy_communication_number = thread.last_np_trophy_communication_number;
+        result.last_np_trophy_context = thread.last_np_trophy_context;
+        result.last_np_trophy_handle = thread.last_np_trophy_handle;
         result.exit_status = thread.exit_status;
         result.return_value = thread.return_value;
         result.detail = thread.detail;

@@ -89,6 +89,13 @@ struct TitleBootResult {
     std::size_t np_service_state_call_count{};
     std::size_t np_trophy_init_call_count{};
     std::size_t np_trophy_term_call_count{};
+    std::size_t np_trophy_context_create_call_count{};
+    std::size_t np_trophy_context_destroy_call_count{};
+    std::size_t np_trophy_handle_create_call_count{};
+    std::size_t np_trophy_handle_destroy_call_count{};
+    std::size_t np_trophy_handle_abort_call_count{};
+    std::size_t np_trophy_context_count{};
+    std::size_t np_trophy_handle_count{};
     std::uint64_t libc_heap_live_bytes{};
     std::uint64_t libc_heap_peak_bytes{};
     std::uint32_t last_libc_atexit_object{};
@@ -115,6 +122,12 @@ struct TitleBootResult {
     std::uint32_t last_np_service_state{};
     std::int32_t last_np_result{};
     std::int32_t last_np_trophy_result{};
+    std::uint32_t last_np_trophy_context_address{};
+    std::uint32_t last_np_trophy_communication_id_address{};
+    std::uint32_t last_np_trophy_communication_signature_address{};
+    std::uint32_t last_np_trophy_communication_number{};
+    std::int32_t last_np_trophy_context{-1};
+    std::int32_t last_np_trophy_handle{-1};
     std::int32_t exit_status{};
     std::uint32_t return_value{};
     std::string title_id;

@@ -100,6 +100,10 @@ The accepted Milestone 33 device run reported successful AppUtil initialization,
 
 The accepted Milestone 34 run loaded NP and NP Trophy and reached `sceNpInit(nullptr, nullptr)` at 5692 instructions/34 HLE calls. Milestone 35 implements stateful NP init/term, checked offline service-state output, and the paired Trophy init/term lifecycle. Communication config/ID pointers are bounded guest reads when present; service state is a bounded guest write. Duplicate and invalid-state calls return upstream errors, and NP termination also clears Trophy state. Network callbacks, online identity, trophy contexts, and TRP access remain unbound rather than being faked. CI emits `milestone35-np-lifecycle.zip` with portable lifecycle, memory-boundary, and state-error coverage.
 
+## Milestone 36 NP Trophy objects
+
+The accepted Milestone 35 run initialized NP and Trophy, then reached `sceNpTrophyCreateContext` at 5712 instructions/36 HLE calls with all three pointers mapped. Milestone 36 implements the coherent context/handle object family: create/destroy context and create/destroy/abort handle. Context creation validates guest output and the 12-byte Communication ID, returns a checked guest-visible ID, and records the opaque startup object. Object registries are cleared by Trophy or NP termination. This remains deliberately separate from TRP parsing and trophy data queries, which require the real guest VFS. CI emits `milestone36-trophy-objects.zip` with nine portable success, state, validation, and memory-boundary paths.
+
 ## Firmware packages
 
 Do not commit firmware PUP files to this public repository or upload them as Actions artifacts. The future iOS installer should select user-owned files locally and write only extracted virtual-filesystem content inside the app sandbox. Upstream `install_pup` currently depends on the packages/crypto layers, OpenSSL, vita-toolchain key handling, FAT/exFAT extraction, miniz, and psvpfsparser; those dependencies are not part of the current iOS core slice. `fontpkg.pup`, `preinstall.pup`, and the system update PUP should therefore remain local until that bounded installer milestone is implemented.

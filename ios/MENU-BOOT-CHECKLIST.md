@@ -14,6 +14,7 @@ This checklist tracks the shortest honest path to a first guest-produced Amagami
 - [x] Provide validated, stateful AppUtil initialization/shutdown lifecycle calls.
 - [x] Provide public Sysmodule load/status/unload bookkeeping for reached HLE modules.
 - [x] Provide offline NP Manager and NP Trophy startup lifecycle state.
+- [x] Provide bounded NP Trophy context and asynchronous-handle object bookkeeping.
 - [x] Attach a Metal view and present host-owned diagnostic frames.
 
 ## Must happen before the title can reach its menu logic
