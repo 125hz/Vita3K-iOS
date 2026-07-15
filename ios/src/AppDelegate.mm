@@ -155,7 +155,7 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"Vita3K iOS - Core Milestone 30";
+    title.text = @"Vita3K iOS - Core Milestone 31";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
     title.textAlignment = NSTextAlignmentCenter;
@@ -169,7 +169,7 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
 
     self.addGameButton = [self buttonWithTitle:@"Add Game ZIP/VPK" action:@selector(addGame)];
     self.libraryButton = [self buttonWithTitle:@"Game Library" action:@selector(openLibrary)];
-    self.bootButton = [self buttonWithTitle:@"Attempt Boot (4096 Instructions)"
+    self.bootButton = [self buttonWithTitle:@"Attempt Boot (65536 Instructions)"
                                     action:@selector(attemptBoot)];
     self.bootButton.enabled = NO;
     UIButton *settingsButton = [self buttonWithTitle:@"Settings" action:@selector(openSettings)];
@@ -313,7 +313,7 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
 - (void)attemptBoot {
     UIAlertController *confirmation = [UIAlertController
         alertControllerWithTitle:@"Controlled Interpreter Attempt"
-                         message:@"Run the prepared module once with a hard ceiling of 4096 interpreted instructions? JIT is not used, and execution stops at the first unsupported instruction, memory fault, or unimplemented HLE call."
+                         message:@"Run the prepared module once with a hard ceiling of 65536 interpreted instructions? JIT is not used, and execution stops at the first unsupported instruction, memory fault, unimplemented HLE call, or detected diagnostic boundary."
                   preferredStyle:UIAlertControllerStyleAlert];
     [confirmation addAction:[UIAlertAction actionWithTitle:@"Cancel"
                                                       style:UIAlertActionStyleCancel handler:nil]];
@@ -330,10 +330,10 @@ static NSString *const VitaShowDiagnosticsKey = @"VitaShowDiagnostics";
 - (void)runPreparedTitle {
     self.bootButton.enabled = NO;
     self.detailsLabel.hidden = NO;
-    self.detailsLabel.text = @"Running the bounded interpreter (maximum 4096 instructions)...";
+    self.detailsLabel.text = @"Running the bounded interpreter (maximum 65536 instructions)...";
     __weak VitaViewController *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        const auto result = vita3k::ios::attempt_prepared_title_boot(4096);
+        const auto result = vita3k::ios::attempt_prepared_title_boot(65536);
         dispatch_async(dispatch_get_main_queue(), ^{
             VitaViewController *strongSelf = weakSelf;
             if (strongSelf == nil)

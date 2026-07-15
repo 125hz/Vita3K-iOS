@@ -60,6 +60,10 @@ struct ArmExecutionResult {
     std::uint32_t final_pc = 0;
     std::uint32_t last_instruction = 0;
     std::uint32_t last_hle_nid = 0;
+    std::size_t unique_pc_count = 0;
+    std::uint32_t hottest_pc = 0;
+    std::uint64_t hottest_pc_hits = 0;
+    std::uint64_t non_forward_pc_count = 0;
     std::string detail;
 
     [[nodiscard]] bool halted() const { return reason == ArmStopReason::halted; }

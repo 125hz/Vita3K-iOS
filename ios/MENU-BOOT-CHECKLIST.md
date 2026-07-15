@@ -8,13 +8,13 @@ This checklist tracks the shortest honest path to a first guest-produced Amagami
 - [x] Install app and patch archives transactionally and select `patch/eboot.bin`.
 - [x] Map the title's SELF segments, apply relocations, parse imports/exports, and resolve the lifecycle `module_start`.
 - [x] Rebind imported function stubs and cross ARM/Thumb import trampolines.
-- [x] Execute the first 138 real Amagami instructions with explicit CPU/HLE boundaries.
+- [x] Execute 4096 consecutive real Amagami instructions and 14 HLE calls without an unsupported CPU/HLE boundary.
 - [x] Provide startup libc state for DSO handling, termination registration, C++ guards, and a writable guest heap.
 - [x] Attach a Metal view and present host-owned diagnostic frames.
 
 ## Must happen before the title can reach its menu logic
 
-- [ ] **CPU coverage:** continue from the current boundary until startup enters the game's sustained main loop. Remaining likely families include more Thumb-2/ARM data processing, IT blocks, multiplication/division, atomics, VFP/NEON, exceptions, and complete flag/interworking behavior.
+- [ ] **CPU coverage or loop classification:** use the 65536-instruction coverage/hot-PC diagnostic to determine whether startup is still advancing or waiting in a guest loop. Remaining likely CPU families include more Thumb-2/ARM data processing, IT blocks, multiplication/division, atomics, VFP/NEON, exceptions, and complete flag/interworking behavior.
 - [ ] **Kernel execution model:** replace the single bounded startup thread with guest processes, multiple threads, scheduling, waits, mutexes/semaphores, callbacks, timers, and TLS.
 - [ ] **HLE coverage:** implement every imported kernel/libc/service NID actually reached. Unknown NIDs must remain hard diagnostic boundaries rather than synthetic successes.
 - [ ] **Guest virtual filesystem:** mount app, patch, savedata, and system-device paths and connect guest `SceIo` calls so the title can read its scripts, textures, configuration, and other menu assets.

@@ -169,6 +169,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m28_install_zip_fixture;
     std::filesystem::path emitted_m29_install_zip_fixture;
     std::filesystem::path emitted_m30_install_zip_fixture;
+    std::filesystem::path emitted_m31_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -210,6 +211,8 @@ int main(int argc, char **argv) {
             emitted_m29_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m30-install-zip-fixture" && index + 1 < argc) {
             emitted_m30_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m31-install-zip-fixture" && index + 1 < argc) {
+            emitted_m31_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -232,6 +235,7 @@ int main(int argc, char **argv) {
                          "[--emit-m28-install-zip-fixture <path>] "
                          "[--emit-m29-install-zip-fixture <path>] "
                          "[--emit-m30-install-zip-fixture <path>] "
+                         "[--emit-m31-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -700,6 +704,15 @@ int main(int argc, char **argv) {
     const auto lr_shift_self = make_plain_self(lr_shift_elf);
     const auto m30_install_zip = vita3k::ios::make_synthetic_install_zip(
         lr_shift_self, lr_shift_self);
+    auto execution_progress_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 1> execution_progress_program{
+        0xE7FEu // B . -> deterministic hot-loop diagnostic
+    };
+    std::memcpy(execution_progress_elf.data() + 244,
+        execution_progress_program.data(), sizeof(execution_progress_program));
+    const auto execution_progress_self = make_plain_self(execution_progress_elf);
+    const auto m31_install_zip = vita3k::ios::make_synthetic_install_zip(
+        execution_progress_self, execution_progress_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -758,6 +771,10 @@ int main(int argc, char **argv) {
     if (m30_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 30 LR shifted-register fixture.\n";
         return 118;
+    }
+    if (m31_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 31 execution-progress fixture.\n";
+        return 121;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -951,6 +968,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 30 LR shifted-register fixture.\n";
             return 119;
+        }
+    }
+    if (!emitted_m31_install_zip_fixture.empty()) {
+        if (!emitted_m31_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m31_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m31_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m31_install_zip.data()),
+            static_cast<std::streamsize>(m31_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 31 execution-progress fixture.\n";
+            return 122;
         }
     }
 
@@ -1515,6 +1545,20 @@ int main(int argc, char **argv) {
         std::cerr << lr_shift_boot.detail << '\n';
         return 120;
     }
+    const auto execution_progress_boot = run_guard_fixture(
+        m31_install_zip, "milestone31-execution-progress.zip");
+    if (!execution_progress_boot.started || execution_progress_boot.returned
+        || execution_progress_boot.exited
+        || execution_progress_boot.instruction_count != 256
+        || execution_progress_boot.unique_pc_count != 1
+        || execution_progress_boot.hottest_pc != 0x81000060u
+        || execution_progress_boot.hottest_pc_hits != 256
+        || execution_progress_boot.non_forward_pc_count != 256
+        || execution_progress_boot.detail.find("Hot-loop candidate detected") == std::string::npos
+        || execution_progress_boot.detail.find("Registers:") == std::string::npos) {
+        std::cerr << execution_progress_boot.detail << '\n';
+        return 123;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -1638,6 +1682,10 @@ int main(int argc, char **argv) {
     if (!emitted_m30_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 30 LR shifted-register fixture: "
                   << emitted_m30_install_zip_fixture << '\n';
+    }
+    if (!emitted_m31_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 31 execution-progress fixture: "
+                  << emitted_m31_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

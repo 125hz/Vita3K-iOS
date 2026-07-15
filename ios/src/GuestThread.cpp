@@ -477,6 +477,10 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     result.instruction_count = execution.instructions_executed;
     result.last_hle_nid = execution.last_hle_nid;
     result.last_guest_pc = execution.final_pc;
+    result.unique_pc_count = execution.unique_pc_count;
+    result.hottest_pc = execution.hottest_pc;
+    result.hottest_pc_hits = execution.hottest_pc_hits;
+    result.non_forward_pc_count = execution.non_forward_pc_count;
     result.observed_thread_id = state.registers[2];
     result.exited = execution.halted() && exit_requested && state.stop_requested;
     result.returned = execution.halted() && !exit_requested && !state.stop_requested;

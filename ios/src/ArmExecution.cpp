@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <limits>
 #include <sstream>
+#include <unordered_map>
 #include <utility>
 
 namespace vita3k::ios {
@@ -313,8 +314,31 @@ ArmExecutionResult ArmInterpreter::run(std::size_t instruction_limit) {
         };
     }
 
+    std::unordered_map<std::uint32_t, std::uint64_t> pc_hits;
+    pc_hits.reserve(std::min<std::size_t>(instruction_limit, 65536));
+    std::array<std::uint32_t, 8> recent_pcs{};
+    std::size_t recent_pc_count = 0;
+    std::size_t recent_pc_next = 0;
+    std::uint32_t hottest_pc = state_.registers[register_pc];
+    std::uint64_t hottest_pc_hits = 0;
+    std::uint64_t non_forward_pc_count = 0;
     std::uint32_t last_hle_nid = 0;
+    const auto attach_metrics = [&](ArmExecutionResult &result) {
+        result.unique_pc_count = pc_hits.size();
+        result.hottest_pc = hottest_pc;
+        result.hottest_pc_hits = hottest_pc_hits;
+        result.non_forward_pc_count = non_forward_pc_count;
+    };
     for (std::size_t index = 0; index < instruction_limit; ++index) {
+        const auto current_pc = state_.registers[register_pc];
+        const auto hits = ++pc_hits[current_pc];
+        if (hits > hottest_pc_hits) {
+            hottest_pc = current_pc;
+            hottest_pc_hits = hits;
+        }
+        recent_pcs[recent_pc_next] = current_pc;
+        recent_pc_next = (recent_pc_next + 1) % recent_pcs.size();
+        recent_pc_count = std::min(recent_pc_count + 1, recent_pcs.size());
         auto result = step();
         if (result.last_hle_nid != 0) {
             last_hle_nid = result.last_hle_nid;
@@ -322,16 +346,52 @@ ArmExecutionResult ArmInterpreter::run(std::size_t instruction_limit) {
             result.last_hle_nid = last_hle_nid;
         }
         if (result.reason != ArmStopReason::instruction_limit) {
+            attach_metrics(result);
             return result;
         }
+        if (state_.registers[register_pc] <= current_pc) {
+            ++non_forward_pc_count;
+        }
     }
-    return {
+    const bool hot_loop_candidate = instruction_limit >= 64
+        && (hottest_pc_hits >= (instruction_limit + 7) / 8
+            || (pc_hits.size() <= 64 && non_forward_pc_count != 0));
+    std::ostringstream detail;
+    detail << "The ARM instruction budget was exhausted at "
+           << hexadecimal(state_.registers[register_pc])
+           << "; execution progress: unique PCs=" << pc_hits.size()
+           << ", hottest PC=" << hexadecimal(hottest_pc)
+           << " (" << hottest_pc_hits << " hits), non-forward transfers="
+           << non_forward_pc_count << ".";
+    if (hot_loop_candidate) {
+        detail << " Hot-loop candidate detected; this may require guest scheduling,"
+                  " synchronization, or a changing service value rather than more CPU opcodes.";
+    }
+    detail << " Recent PCs:";
+    const auto recent_start = recent_pc_count == recent_pcs.size() ? recent_pc_next : 0;
+    for (std::size_t index = 0; index < recent_pc_count; ++index) {
+        detail << ' ' << hexadecimal(recent_pcs[(recent_start + index) % recent_pcs.size()]);
+    }
+    detail << ". Registers:";
+    for (std::size_t index = 0; index < register_sp; ++index) {
+        detail << " r" << index << '=' << hexadecimal(state_.registers[index]);
+    }
+    detail << " sp=" << hexadecimal(state_.registers[register_sp])
+           << " lr=" << hexadecimal(state_.registers[register_lr])
+           << " pc=" << hexadecimal(state_.registers[register_pc])
+           << " cpsr=" << hexadecimal(state_.cpsr) << ".";
+    if (state_.thumb) {
+        detail << thumb_lookahead(memory_, state_.registers[register_pc]);
+    }
+    ArmExecutionResult exhausted{
         .reason = ArmStopReason::instruction_limit,
         .instructions_executed = state_.instruction_count,
         .final_pc = state_.registers[register_pc],
         .last_hle_nid = last_hle_nid,
-        .detail = "The ARM instruction budget was exhausted."
+        .detail = detail.str()
     };
+    attach_metrics(exhausted);
+    return exhausted;
 }
 
 ArmExecutionResult ArmInterpreter::step() {

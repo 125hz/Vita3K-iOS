@@ -1,6 +1,6 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 30. Read `MENU-BOOT-CHECKLIST.md` for the full first-menu critical path.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 31. Read `MENU-BOOT-CHECKLIST.md` for the full first-menu critical path.
 
 ## Copy-paste prompt
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 30 boundary
+## Known Milestone 31 boundary
 
-Milestone 29 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It advanced to 138 instructions and six HLE calls, retained DSO handle `0x812C7690`, three termination registrations, and the acquired guard `0x812C75D8`. `memalign(0x10, 0x180)` succeeded with guest address `0x90000000`, zero failures, and 384 live/peak bytes. Execution then stopped at `0x81001F82` on `EB00 00CE`, the legal `ADD.W r0, r0, lr, LSL #3` encoding.
+Milestone 30 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It executed all 4096 permitted instructions and 14 HLE calls without another unknown instruction, memory fault, or unbound import. DSO remained `0x812C7690`; termination registrations increased to five; guards reached acquire=3, release=2, initializers=3, recursive=0; the heap reached three allocations, zero failures, and 11904 live/peak bytes, with the latest 10240-byte allocation at `0x90000680`.
 
-Milestone 30 corrects high-register validation across the complete Thumb-2 shifted-register ALU/test family: LR is legal as a source, shifted source, or destination, while SP and PC misuse remains an explicit boundary. It also raises the safe one-shot interpreter ceiling from 256 to 4096 instructions. Install the Milestone 30 artifact, prepare `PCSG00291`, and run the attempt once. It should advance past 138 instructions while preserving all six HLE calls and heap/runtime diagnostics. Return the complete next CPU, memory, HLE, return, or instruction-limit boundary; never skip unknown behavior.
+Milestone 31 raises the safe one-shot interpreter ceiling to 65536 instructions and adds deterministic progress/hot-loop telemetry at budget exhaustion: unique PCs, hottest PC/hits, non-forward transfers, recent PCs, registers/CPSR, and lookahead. Install the Milestone 31 artifact, prepare `PCSG00291`, and run the attempt once. Return the complete next boundary. If it exhausts the budget, preserve every execution-progress field so the next milestone can distinguish ongoing startup from a scheduler/synchronization loop; never skip unknown behavior.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m30-install-zip-fixture artifacts/milestone30-thumb2-lr-shifted-register.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m31-install-zip-fixture artifacts/milestone31-execution-progress.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 

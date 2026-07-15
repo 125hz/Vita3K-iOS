@@ -53,6 +53,10 @@ struct TitleBootResult {
     std::size_t hle_dispatch_count{};
     std::uint32_t last_hle_nid{};
     std::uint32_t last_guest_pc{};
+    std::size_t unique_pc_count{};
+    std::uint32_t hottest_pc{};
+    std::uint64_t hottest_pc_hits{};
+    std::uint64_t non_forward_pc_count{};
     std::uint32_t libc_dso_handle_main{};
     std::size_t libc_atexit_registration_count{};
     std::size_t libc_finalize_call_count{};
@@ -191,7 +195,7 @@ CoreStatus query_core_status();
 CoreStatus rescan_imports();
 GameInstallResult install_game_archive(const std::filesystem::path &archive_path);
 TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer_patch);
-TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit = 4096);
+TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit = 65536);
 bool attach_host_display(std::uint32_t width, std::uint32_t height, std::string &error);
 std::optional<HostDisplayFrame> acquire_host_display_frame(std::uint32_t width,
     std::uint32_t height, std::string &error);

@@ -214,6 +214,10 @@ The accepted Milestone 28 device run advanced to 133 instructions and five HLE c
 
 The accepted Milestone 29 device run advanced to 138 instructions and six HLE calls with one successful 384-byte aligned heap allocation. Its next instruction is `EB00 00CE`, decoded as `ADD.W r0, r0, lr, LSL #3`. Milestone 30 corrects the Thumb-2 shifted-register validation to treat LR as a legal general operand across the full logical/arithmetic/test family while SP and PC remain rejected except for their architecturally defined aliases. CI emits `milestone30-thumb2-lr-shifted-register.zip`, which executes the exact opcode and returns 44. The physical-device one-shot budget is now 4096 interpreted instructions, still without JIT and still stopping at the first unsupported instruction, guest-memory fault, or unknown HLE call.
 
+## Milestone 31 instrumented execution runway
+
+The accepted Milestone 30 device run crossed the former CPU boundary and then consumed the entire 4096-instruction budget with 14 successful HLE calls and zero heap failures. Milestone 31 raises the hard one-shot ceiling to 65536 while retaining interpreter-only, stop-on-first-unknown behavior. At exhaustion it reports unique and hottest PC counts, non-forward transfers, an eight-PC history, all general registers/CPSR, and Thumb lookahead. A deterministic self-branch regression proves hot-loop candidate classification, while a sequential NOP regression proves normal forward execution is not mislabeled. CI emits `milestone31-execution-progress.zip` for the same bounded loop diagnostic.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

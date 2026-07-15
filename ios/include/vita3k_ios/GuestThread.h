@@ -21,6 +21,10 @@ struct GuestThreadRunResult {
     std::size_t hle_dispatch_count = 0;
     std::uint32_t last_hle_nid = 0;
     std::uint32_t last_guest_pc = 0;
+    std::size_t unique_pc_count = 0;
+    std::uint32_t hottest_pc = 0;
+    std::uint64_t hottest_pc_hits = 0;
+    std::uint64_t non_forward_pc_count = 0;
     std::uint32_t libc_dso_handle_main = 0;
     std::size_t libc_atexit_registration_count = 0;
     std::size_t libc_finalize_call_count = 0;
@@ -54,6 +58,6 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     std::uint32_t stack_pointer,
     std::span<const std::uint32_t> imported_nids,
     std::string thread_name,
-    std::size_t instruction_limit = 4096);
+    std::size_t instruction_limit = 65536);
 
 } // namespace vita3k::ios

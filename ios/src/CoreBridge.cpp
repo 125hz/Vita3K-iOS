@@ -53,7 +53,7 @@ struct PreparedExecutableState {
 };
 
 PreparedExecutableState prepared_executable;
-constexpr std::size_t maximum_controlled_boot_instructions = 4096;
+constexpr std::size_t maximum_controlled_boot_instructions = 65536;
 constexpr std::uint32_t flag_negative = 1u << 31;
 constexpr std::uint32_t flag_zero = 1u << 30;
 constexpr std::uint32_t flag_carry = 1u << 29;
@@ -1276,6 +1276,63 @@ bool run_thumb2_multiple_transfer_test(GuestMemory &memory, std::string &error) 
     return true;
 }
 
+bool run_execution_progress_test(GuestMemory &memory, std::string &error) {
+    constexpr std::uint32_t test_address = 0xA0000;
+    std::array<std::uint8_t, 0x100> program{};
+    write_value(program, 0x00, static_cast<std::uint16_t>(0xE7FE)); // B .
+    for (std::size_t offset = 0x20; offset < 0x30; offset += 2) {
+        write_value(program, offset, static_cast<std::uint16_t>(0xBF00)); // NOP
+    }
+
+    const auto memory_size_64 = static_cast<std::uint64_t>(memory.host_page_size());
+    if (memory_size_64 < program.size()
+        || memory_size_64 > std::numeric_limits<std::uint32_t>::max()) {
+        error = "The host page size is invalid for the execution-progress diagnostic.";
+        return false;
+    }
+    if (!memory.map_segment(test_address, program,
+            static_cast<std::uint32_t>(memory_size_64), 7, error)) {
+        return false;
+    }
+
+    HLEDispatcher dispatcher;
+    ArmInterpreter interpreter(memory, dispatcher);
+    interpreter.reset(test_address | 1u, test_address + 0xF0u);
+    const auto loop = interpreter.run(64);
+    interpreter.reset((test_address + 0x20u) | 1u, test_address + 0xF0u);
+    const auto sequential = interpreter.run(8);
+
+    const bool valid = loop.reason == ArmStopReason::instruction_limit
+        && loop.instructions_executed == 64
+        && loop.unique_pc_count == 1
+        && loop.hottest_pc == test_address
+        && loop.hottest_pc_hits == 64
+        && loop.non_forward_pc_count == 64
+        && loop.detail.find("Hot-loop candidate detected") != std::string::npos
+        && loop.detail.find("Recent PCs:") != std::string::npos
+        && loop.detail.find("Registers:") != std::string::npos
+        && loop.detail.find("Lookahead:") != std::string::npos
+        && sequential.reason == ArmStopReason::instruction_limit
+        && sequential.instructions_executed == 8
+        && sequential.unique_pc_count == 8
+        && sequential.hottest_pc_hits == 1
+        && sequential.non_forward_pc_count == 0
+        && sequential.detail.find("Hot-loop candidate detected") == std::string::npos;
+
+    std::string unmap_error;
+    const bool unmapped = memory.unmap_all_segments(unmap_error);
+    if (!valid) {
+        error = "The bounded execution-progress diagnostic produced unexpected coverage or hot-loop metrics: "
+            + loop.detail;
+        return false;
+    }
+    if (!unmapped) {
+        error = unmap_error;
+        return false;
+    }
+    return true;
+}
+
 void append_storage_error(std::string message) {
     if (!host_storage.error.empty()) {
         host_storage.error += " | ";
@@ -1540,7 +1597,7 @@ CoreStatus initialize_core(const std::filesystem::path &documents_root) {
     ImportBindingResult binding_test;
     const bool loader_pipeline_passed = segment_mapping_passed && run_loader_pipeline_test(*guest_memory, binding_test, thread_test, memory_error);
     std::string execution_error;
-    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_inline_hle_nid_diagnostic_test(*guest_memory, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error) && run_thumb2_runtime_family_test(*guest_memory, execution_error) && run_thumb2_register_family_test(*guest_memory, execution_error) && run_thumb2_multiple_transfer_test(*guest_memory, execution_error);
+    const bool arm_execution_passed = loader_pipeline_passed && run_arm_execution_test(*guest_memory, core_status.arm_test_instruction_count, core_status.hle_test_dispatch_count, execution_error) && run_inline_hle_nid_diagnostic_test(*guest_memory, execution_error) && run_thumb2_wide_push_test(*guest_memory, execution_error) && run_thumb_compiler_baseline_test(*guest_memory, execution_error) && run_thumb2_compiler_batch_test(*guest_memory, execution_error) && run_thumb2_runtime_family_test(*guest_memory, execution_error) && run_thumb2_register_family_test(*guest_memory, execution_error) && run_thumb2_multiple_transfer_test(*guest_memory, execution_error) && run_execution_progress_test(*guest_memory, execution_error);
     core_status.guest_memory_ready = reserved && protection_test_passed;
     core_status.segment_mapping_ready = segment_mapping_passed;
     core_status.loader_pipeline_ready = loader_pipeline_passed;
@@ -1710,7 +1767,7 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         .title_id = prepared_executable.title_id
     };
     if (instruction_limit == 0 || instruction_limit > maximum_controlled_boot_instructions) {
-        result.detail = "The controlled boot budget must be between 1 and 4096 instructions.";
+        result.detail = "The controlled boot budget must be between 1 and 65536 instructions.";
     } else if (!prepared_executable.ready || !guest_memory) {
         result.detail = "No prepared executable is available. Select the title again first.";
     } else {
@@ -1727,6 +1784,10 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.hle_dispatch_count = thread.hle_dispatch_count;
         result.last_hle_nid = thread.last_hle_nid;
         result.last_guest_pc = thread.last_guest_pc;
+        result.unique_pc_count = thread.unique_pc_count;
+        result.hottest_pc = thread.hottest_pc;
+        result.hottest_pc_hits = thread.hottest_pc_hits;
+        result.non_forward_pc_count = thread.non_forward_pc_count;
         result.libc_dso_handle_main = thread.libc_dso_handle_main;
         result.libc_atexit_registration_count = thread.libc_atexit_registration_count;
         result.libc_finalize_call_count = thread.libc_finalize_call_count;
