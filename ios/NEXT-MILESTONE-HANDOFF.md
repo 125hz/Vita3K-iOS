@@ -54,10 +54,10 @@ Portable Windows tests (all in `CoreSmokeTests.cpp`, run via `ctest`) cover: the
 ## Current verified build
 
 ```text
-Milestone 38 source commit:  6186b7fa1f13b3ecaf2a686ec1637592eb747f2c
+Milestone 38 source commit:  6186b7fa00e79e4a2620ee25c4ed672978d750a8
 Actions run:                 29406563073 (success)
 Workflow:                    Build unsigned iOS IPA
-Artifact:                    Vita3K-iOS-6186b7fa1f13b3ecaf2a686ec1637592eb747f2c-unsigned
+Artifact:                    Vita3K-iOS-6186b7fa00e79e4a2620ee25c4ed672978d750a8-unsigned
 Local IPA:                   test-artifacts/milestone38/Vita3K-iOS-unsigned.ipa
 Bundle ID:                   org.vita3k.experimental.ios
 Version:                     0.38.0 (build 38)
