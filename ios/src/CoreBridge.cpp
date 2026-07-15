@@ -1827,6 +1827,10 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.np_trophy_handle_abort_call_count = thread.np_trophy_handle_abort_call_count;
         result.np_trophy_context_count = thread.np_trophy_context_count;
         result.np_trophy_handle_count = thread.np_trophy_handle_count;
+        result.ctrl_sampling_mode_set_call_count = thread.ctrl_sampling_mode_set_call_count;
+        result.ctrl_sampling_mode_get_call_count = thread.ctrl_sampling_mode_get_call_count;
+        result.ctrl_buffer_call_count = thread.ctrl_buffer_call_count;
+        result.ctrl_sample_count = thread.ctrl_sample_count;
         result.libc_heap_live_bytes = thread.libc_heap_live_bytes;
         result.libc_heap_peak_bytes = thread.libc_heap_peak_bytes;
         result.last_libc_atexit_object = thread.last_libc_atexit_object;
@@ -1859,6 +1863,12 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.last_np_trophy_communication_number = thread.last_np_trophy_communication_number;
         result.last_np_trophy_context = thread.last_np_trophy_context;
         result.last_np_trophy_handle = thread.last_np_trophy_handle;
+        result.ctrl_sampling_mode = thread.ctrl_sampling_mode;
+        result.ctrl_sampling_mode_ext = thread.ctrl_sampling_mode_ext;
+        result.last_ctrl_port = thread.last_ctrl_port;
+        result.last_ctrl_buffer_address = thread.last_ctrl_buffer_address;
+        result.last_ctrl_requested_count = thread.last_ctrl_requested_count;
+        result.last_ctrl_result = thread.last_ctrl_result;
         result.exit_status = thread.exit_status;
         result.return_value = thread.return_value;
         result.detail = thread.detail;

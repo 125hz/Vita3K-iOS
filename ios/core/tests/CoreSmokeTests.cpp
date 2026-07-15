@@ -175,6 +175,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m34_install_zip_fixture;
     std::filesystem::path emitted_m35_install_zip_fixture;
     std::filesystem::path emitted_m36_install_zip_fixture;
+    std::filesystem::path emitted_m37_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -228,6 +229,8 @@ int main(int argc, char **argv) {
             emitted_m35_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m36-install-zip-fixture" && index + 1 < argc) {
             emitted_m36_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m37-install-zip-fixture" && index + 1 < argc) {
+            emitted_m37_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -256,6 +259,7 @@ int main(int argc, char **argv) {
                          "[--emit-m34-install-zip-fixture <path>] "
                          "[--emit-m35-install-zip-fixture <path>] "
                          "[--emit-m36-install-zip-fixture <path>] "
+                         "[--emit-m37-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -1053,6 +1057,62 @@ int main(int argc, char **argv) {
         np_trophy_destroy_handle_nid, 1);
     const auto trophy_abort_handle_install_zip = make_cpp_allocation_archive(
         np_trophy_abort_handle_nid, 1);
+    constexpr std::uint32_t ctrl_set_sampling_mode_nid = 0xA497B150u;
+    constexpr std::uint32_t ctrl_get_sampling_mode_nid = 0xEC752AAFu;
+    constexpr std::uint32_t ctrl_peek_buffer_positive_nid = 0xA9C3CED6u;
+    constexpr std::uint32_t ctrl_error_invalid_arg = 0x80340001u;
+    constexpr std::uint32_t synthetic_ctrl_mode_output = 0x81000240u;
+    constexpr std::uint32_t synthetic_ctrl_buffer = 0x81000250u;
+    auto ctrl_startup_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 10> ctrl_startup_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2002u, // MOVS r0, #2 (SCE_CTRL_MODE_ANALOG_WIDE)
+        0x4B03u, // LDR r3, [pc, #12] -> set-sampling stub
+        0x4798u, // BLX r3
+        0x4803u, // LDR r0, [pc, #12] -> mode output
+        0x3310u, // ADDS r3, #16 -> get-sampling stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc}
+        0xBF00u, 0xBF00u
+    };
+    std::memcpy(ctrl_startup_elf.data() + 244, ctrl_startup_program.data(),
+        sizeof(ctrl_startup_program));
+    write_value(ctrl_startup_elf, 264, static_cast<std::uint32_t>(0x81000030));
+    write_value(ctrl_startup_elf, 268, synthetic_ctrl_mode_output);
+    write_value(ctrl_startup_elf, 314, static_cast<std::uint16_t>(3));
+    write_value(ctrl_startup_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(ctrl_startup_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(ctrl_startup_elf, 348, static_cast<std::uint32_t>(0x81000030));
+    write_value(ctrl_startup_elf, 352, static_cast<std::uint32_t>(0x81000040));
+    write_value(ctrl_startup_elf, 368, get_thread_id_nid);
+    write_value(ctrl_startup_elf, 372, ctrl_set_sampling_mode_nid);
+    write_value(ctrl_startup_elf, 376, ctrl_get_sampling_mode_nid);
+    const auto ctrl_startup_self = make_plain_self(ctrl_startup_elf);
+    const auto m37_install_zip = vita3k::ios::make_synthetic_install_zip(
+        ctrl_startup_self, ctrl_startup_self);
+    const auto invalid_ctrl_mode_install_zip = make_cpp_allocation_archive(
+        ctrl_set_sampling_mode_nid, 3);
+    auto ctrl_buffer_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 10> ctrl_buffer_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2001u, // MOVS r0, #1 (handheld port)
+        0x4903u, // LDR r1, [pc, #12] -> sample buffer
+        0x2202u, // MOVS r2, #2
+        0x4B03u, // LDR r3, [pc, #12] -> peek-positive stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc}
+        0xBF00u, 0xBF00u, 0xBF00u
+    };
+    std::memcpy(ctrl_buffer_elf.data() + 244, ctrl_buffer_program.data(),
+        sizeof(ctrl_buffer_program));
+    write_value(ctrl_buffer_elf, 264, synthetic_ctrl_buffer);
+    write_value(ctrl_buffer_elf, 268, static_cast<std::uint32_t>(0x81000050));
+    write_value(ctrl_buffer_elf, 372, ctrl_peek_buffer_positive_nid);
+    const auto ctrl_buffer_self = make_plain_self(ctrl_buffer_elf);
+    const auto ctrl_buffer_install_zip = vita3k::ios::make_synthetic_install_zip(
+        ctrl_buffer_self, ctrl_buffer_self);
+    const auto invalid_ctrl_buffer_install_zip = make_cpp_allocation_archive(
+        ctrl_peek_buffer_positive_nid, 1);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -1158,6 +1218,12 @@ int main(int argc, char **argv) {
         || trophy_abort_handle_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 36 Trophy object fixtures.\n";
         return 154;
+    }
+    if (m37_install_zip.empty() || ctrl_buffer_install_zip.empty()
+        || invalid_ctrl_mode_install_zip.empty()
+        || invalid_ctrl_buffer_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 37 controller HLE fixtures.\n";
+        return 166;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -1429,6 +1495,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 36 Trophy object fixture.\n";
             return 155;
+        }
+    }
+    if (!emitted_m37_install_zip_fixture.empty()) {
+        if (!emitted_m37_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m37_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m37_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m37_install_zip.data()),
+            static_cast<std::streamsize>(m37_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 37 controller HLE fixture.\n";
+            return 167;
         }
     }
 
@@ -2454,6 +2533,58 @@ int main(int argc, char **argv) {
         std::cerr << trophy_abort_handle_boot.detail << '\n';
         return 165;
     }
+    const auto ctrl_startup_boot = run_guard_fixture(
+        m37_install_zip, "milestone37-controller-startup.zip");
+    if (!ctrl_startup_boot.returned || ctrl_startup_boot.hle_dispatch_count != 2
+        || ctrl_startup_boot.last_hle_nid != ctrl_get_sampling_mode_nid
+        || ctrl_startup_boot.ctrl_sampling_mode != 2
+        || ctrl_startup_boot.ctrl_sampling_mode_set_call_count != 1
+        || ctrl_startup_boot.ctrl_sampling_mode_get_call_count != 1
+        || ctrl_startup_boot.ctrl_buffer_call_count != 0
+        || ctrl_startup_boot.last_ctrl_result != 0
+        || ctrl_startup_boot.return_value != 0
+        || ctrl_startup_boot.detail.find(
+            "Controller HLE: sampling mode=2, ext=0 (set=1, get=1); buffers=0, samples=0")
+            == std::string::npos) {
+        std::cerr << ctrl_startup_boot.detail << '\n';
+        return 168;
+    }
+    const auto ctrl_buffer_boot = run_guard_fixture(
+        ctrl_buffer_install_zip, "milestone37-controller-buffer.zip");
+    if (!ctrl_buffer_boot.returned || ctrl_buffer_boot.hle_dispatch_count != 1
+        || ctrl_buffer_boot.last_hle_nid != ctrl_peek_buffer_positive_nid
+        || ctrl_buffer_boot.ctrl_buffer_call_count != 1
+        || ctrl_buffer_boot.ctrl_sample_count != 2
+        || ctrl_buffer_boot.last_ctrl_port != 1
+        || ctrl_buffer_boot.last_ctrl_buffer_address != synthetic_ctrl_buffer
+        || ctrl_buffer_boot.last_ctrl_requested_count != 2
+        || ctrl_buffer_boot.last_ctrl_result != 2
+        || ctrl_buffer_boot.return_value != 2) {
+        std::cerr << ctrl_buffer_boot.detail << '\n';
+        return 171;
+    }
+    const auto invalid_ctrl_mode_boot = run_guard_fixture(
+        invalid_ctrl_mode_install_zip, "milestone37-controller-invalid-mode.zip");
+    if (!invalid_ctrl_mode_boot.returned
+        || invalid_ctrl_mode_boot.ctrl_sampling_mode != 0
+        || invalid_ctrl_mode_boot.ctrl_sampling_mode_set_call_count != 1
+        || static_cast<std::uint32_t>(invalid_ctrl_mode_boot.last_ctrl_result)
+            != ctrl_error_invalid_arg
+        || invalid_ctrl_mode_boot.return_value != ctrl_error_invalid_arg) {
+        std::cerr << invalid_ctrl_mode_boot.detail << '\n';
+        return 169;
+    }
+    const auto invalid_ctrl_buffer_boot = run_guard_fixture(
+        invalid_ctrl_buffer_install_zip, "milestone37-controller-null-buffer.zip");
+    if (!invalid_ctrl_buffer_boot.returned
+        || invalid_ctrl_buffer_boot.ctrl_buffer_call_count != 1
+        || invalid_ctrl_buffer_boot.ctrl_sample_count != 0
+        || static_cast<std::uint32_t>(invalid_ctrl_buffer_boot.last_ctrl_result)
+            != ctrl_error_invalid_arg
+        || invalid_ctrl_buffer_boot.return_value != ctrl_error_invalid_arg) {
+        std::cerr << invalid_ctrl_buffer_boot.detail << '\n';
+        return 170;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -2601,6 +2732,10 @@ int main(int argc, char **argv) {
     if (!emitted_m36_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 36 Trophy object fixture: "
                   << emitted_m36_install_zip_fixture << '\n';
+    }
+    if (!emitted_m37_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 37 controller HLE fixture: "
+                  << emitted_m37_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

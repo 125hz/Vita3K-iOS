@@ -59,6 +59,25 @@ constexpr std::uint32_t nid_sce_np_trophy_create_context = 0xC49FD33F;
 constexpr std::uint32_t nid_sce_np_trophy_create_handle = 0x4EBC6977;
 constexpr std::uint32_t nid_sce_np_trophy_destroy_context = 0x56F5CBA5;
 constexpr std::uint32_t nid_sce_np_trophy_destroy_handle = 0xFF142071;
+constexpr std::uint32_t nid_sce_ctrl_get_controller_port_info = 0x324F1B66;
+constexpr std::uint32_t nid_sce_ctrl_get_sampling_mode = 0xEC752AAF;
+constexpr std::uint32_t nid_sce_ctrl_get_sampling_mode_ext = 0xBD27F830;
+constexpr std::uint32_t nid_sce_ctrl_get_wireless_controller_info = 0xB8844141;
+constexpr std::uint32_t nid_sce_ctrl_is_multi_controller_supported = 0x1FFFD965;
+constexpr std::uint32_t nid_sce_ctrl_peek_buffer_negative = 0x104ED1A7;
+constexpr std::uint32_t nid_sce_ctrl_peek_buffer_negative2 = 0x81A89660;
+constexpr std::uint32_t nid_sce_ctrl_peek_buffer_positive = 0xA9C3CED6;
+constexpr std::uint32_t nid_sce_ctrl_peek_buffer_positive2 = 0x15F81E8C;
+constexpr std::uint32_t nid_sce_ctrl_peek_buffer_positive_ext = 0xA59454D3;
+constexpr std::uint32_t nid_sce_ctrl_peek_buffer_positive_ext2 = 0x860BF292;
+constexpr std::uint32_t nid_sce_ctrl_read_buffer_negative = 0x15F96FB0;
+constexpr std::uint32_t nid_sce_ctrl_read_buffer_negative2 = 0x27A0C5FB;
+constexpr std::uint32_t nid_sce_ctrl_read_buffer_positive = 0x67E7AB83;
+constexpr std::uint32_t nid_sce_ctrl_read_buffer_positive2 = 0xC4226A3E;
+constexpr std::uint32_t nid_sce_ctrl_read_buffer_positive_ext = 0xE2D99296;
+constexpr std::uint32_t nid_sce_ctrl_read_buffer_positive_ext2 = 0xA7178860;
+constexpr std::uint32_t nid_sce_ctrl_set_sampling_mode = 0xA497B150;
+constexpr std::uint32_t nid_sce_ctrl_set_sampling_mode_ext = 0xB1DC4378;
 constexpr std::uint32_t sce_app_util_error_parameter = 0x80100600;
 constexpr std::uint32_t sce_app_util_error_not_initialized = 0x80100601;
 constexpr std::uint32_t sce_app_util_error_busy = 0x80100603;
@@ -72,6 +91,11 @@ constexpr std::uint32_t sce_np_error_invalid_argument = 0x80550003;
 constexpr std::uint32_t sce_np_trophy_error_not_initialized = 0x80551601;
 constexpr std::uint32_t sce_np_trophy_error_already_initialized = 0x80551602;
 constexpr std::uint32_t sce_np_trophy_error_invalid_argument = 0x80551604;
+constexpr std::uint32_t sce_ctrl_error_invalid_arg = 0x80340001;
+constexpr std::uint32_t sce_ctrl_error_no_device = 0x80340020;
+constexpr std::uint32_t sce_ctrl_mode_analog_wide = 2;
+constexpr std::size_t sce_ctrl_data_size = 32;
+constexpr std::uint32_t sce_ctrl_max_samples = 64;
 constexpr std::uint32_t sce_np_trophy_error_invalid_context = 0x80551609;
 constexpr std::uint32_t sce_np_trophy_error_invalid_np_comm_id = 0x8055160A;
 constexpr std::uint32_t sce_np_trophy_error_context_already_exists = 0x80551616;
@@ -87,6 +111,33 @@ struct LibcAtexitRegistration {
     std::uint32_t destructor = 0;
     std::uint32_t dso = 0;
 };
+
+struct CtrlImport {
+    std::uint32_t nid;
+    std::string_view name;
+};
+
+constexpr std::array<CtrlImport, 19> ctrl_imports{{
+    { nid_sce_ctrl_get_controller_port_info, "sceCtrlGetControllerPortInfo" },
+    { nid_sce_ctrl_get_sampling_mode, "sceCtrlGetSamplingMode" },
+    { nid_sce_ctrl_get_sampling_mode_ext, "sceCtrlGetSamplingModeExt" },
+    { nid_sce_ctrl_get_wireless_controller_info, "sceCtrlGetWirelessControllerInfo" },
+    { nid_sce_ctrl_is_multi_controller_supported, "sceCtrlIsMultiControllerSupported" },
+    { nid_sce_ctrl_peek_buffer_negative, "sceCtrlPeekBufferNegative" },
+    { nid_sce_ctrl_peek_buffer_negative2, "sceCtrlPeekBufferNegative2" },
+    { nid_sce_ctrl_peek_buffer_positive, "sceCtrlPeekBufferPositive" },
+    { nid_sce_ctrl_peek_buffer_positive2, "sceCtrlPeekBufferPositive2" },
+    { nid_sce_ctrl_peek_buffer_positive_ext, "sceCtrlPeekBufferPositiveExt" },
+    { nid_sce_ctrl_peek_buffer_positive_ext2, "sceCtrlPeekBufferPositiveExt2" },
+    { nid_sce_ctrl_read_buffer_negative, "sceCtrlReadBufferNegative" },
+    { nid_sce_ctrl_read_buffer_negative2, "sceCtrlReadBufferNegative2" },
+    { nid_sce_ctrl_read_buffer_positive, "sceCtrlReadBufferPositive" },
+    { nid_sce_ctrl_read_buffer_positive2, "sceCtrlReadBufferPositive2" },
+    { nid_sce_ctrl_read_buffer_positive_ext, "sceCtrlReadBufferPositiveExt" },
+    { nid_sce_ctrl_read_buffer_positive_ext2, "sceCtrlReadBufferPositiveExt2" },
+    { nid_sce_ctrl_set_sampling_mode, "sceCtrlSetSamplingMode" },
+    { nid_sce_ctrl_set_sampling_mode_ext, "sceCtrlSetSamplingModeExt" },
+}};
 
 bool contains_nid(std::span<const std::uint32_t> nids, std::uint32_t expected) {
     return std::ranges::find(nids, expected) != nids.end();
@@ -283,6 +334,17 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         result.detail = "The upstream Vita NID database did not match the NP lifecycle bindings.";
         return result;
     }
+    std::size_t imported_ctrl_count = 0;
+    for (const auto &ctrl_import : ctrl_imports) {
+        if (!contains_nid(imported_nids, ctrl_import.nid)) {
+            continue;
+        }
+        ++imported_ctrl_count;
+        if (std::string_view(import_name(ctrl_import.nid)) != ctrl_import.name) {
+            result.detail = "The upstream Vita NID database did not match the controller bindings.";
+            return result;
+        }
+    }
 
     HLEDispatcher dispatcher;
     bool exit_requested = false;
@@ -297,6 +359,8 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     std::vector<std::int32_t> np_trophy_contexts;
     std::vector<std::int32_t> np_trophy_handles;
     std::string np_error;
+    std::string ctrl_error;
+    std::uint64_t ctrl_timestamp = 0;
     GuestHeap heap;
     std::string heap_error;
     const bool imports_heap = imports_calloc || imports_free || imports_malloc
@@ -711,6 +775,128 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                 return set_np_trophy_result(0);
             });
     }
+    const auto set_ctrl_result = [&](std::uint32_t value) -> std::int32_t {
+        result.last_ctrl_result = static_cast<std::int32_t>(value);
+        return result.last_ctrl_result;
+    };
+    const auto fail_ctrl_memory = [&](ArmCpuState &state, std::string operation,
+                                      std::string error) -> std::int32_t {
+        ctrl_error = std::move(operation) + " guest-memory validation failed: "
+            + std::move(error);
+        state.stop_requested = true;
+        state.stop_code = -1;
+        return set_ctrl_result(sce_ctrl_error_invalid_arg);
+    };
+    bool ctrl_bindings_bound = true;
+    for (const auto &ctrl_import : ctrl_imports) {
+        if (!contains_nid(imported_nids, ctrl_import.nid)) {
+            continue;
+        }
+        ctrl_bindings_bound = ctrl_bindings_bound && dispatcher.bind(
+            ctrl_import.nid, std::string(ctrl_import.name),
+            [&, ctrl_import](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                const auto nid = ctrl_import.nid;
+                if (nid == nid_sce_ctrl_set_sampling_mode
+                    || nid == nid_sce_ctrl_set_sampling_mode_ext) {
+                    ++result.ctrl_sampling_mode_set_call_count;
+                    const auto mode = state.registers[0];
+                    if (mode > sce_ctrl_mode_analog_wide) {
+                        return set_ctrl_result(sce_ctrl_error_invalid_arg);
+                    }
+                    auto &current_mode = nid == nid_sce_ctrl_set_sampling_mode
+                        ? result.ctrl_sampling_mode : result.ctrl_sampling_mode_ext;
+                    const auto previous_mode = current_mode;
+                    current_mode = mode;
+                    return set_ctrl_result(previous_mode);
+                }
+                if (nid == nid_sce_ctrl_get_sampling_mode
+                    || nid == nid_sce_ctrl_get_sampling_mode_ext) {
+                    ++result.ctrl_sampling_mode_get_call_count;
+                    if (state.registers[0] == 0) {
+                        return set_ctrl_result(sce_ctrl_error_invalid_arg);
+                    }
+                    const auto mode = nid == nid_sce_ctrl_get_sampling_mode
+                        ? result.ctrl_sampling_mode : result.ctrl_sampling_mode_ext;
+                    std::string error;
+                    if (!write_guest_u32(memory, state.registers[0], mode, error)) {
+                        return fail_ctrl_memory(state, std::string(ctrl_import.name),
+                            std::move(error));
+                    }
+                    return set_ctrl_result(0);
+                }
+                if (nid == nid_sce_ctrl_get_controller_port_info
+                    || nid == nid_sce_ctrl_get_wireless_controller_info) {
+                    if (state.registers[0] == 0) {
+                        return set_ctrl_result(sce_ctrl_error_invalid_arg);
+                    }
+                    std::array<std::uint8_t, 16> info{};
+                    if (nid == nid_sce_ctrl_get_controller_port_info) {
+                        info[0] = 1; // SCE_CTRL_TYPE_PHY on a handheld Vita.
+                    }
+                    std::string error;
+                    if (!memory.write(state.registers[0], info, error)) {
+                        return fail_ctrl_memory(state, std::string(ctrl_import.name),
+                            std::move(error));
+                    }
+                    return set_ctrl_result(0);
+                }
+                if (nid == nid_sce_ctrl_is_multi_controller_supported) {
+                    return set_ctrl_result(0); // Handheld Vita mode, not PSTV.
+                }
+
+                ++result.ctrl_buffer_call_count;
+                auto port = state.registers[0];
+                if (port == 0) {
+                    port = 1;
+                }
+                result.last_ctrl_port = port;
+                result.last_ctrl_buffer_address = state.registers[1];
+                result.last_ctrl_requested_count = state.registers[2];
+                if (port > 1) {
+                    return set_ctrl_result(sce_ctrl_error_no_device);
+                }
+                const auto count = state.registers[2];
+                if (state.registers[1] == 0 || count == 0
+                    || count > sce_ctrl_max_samples) {
+                    return set_ctrl_result(sce_ctrl_error_invalid_arg);
+                }
+                const bool peek = nid == nid_sce_ctrl_peek_buffer_negative
+                    || nid == nid_sce_ctrl_peek_buffer_negative2
+                    || nid == nid_sce_ctrl_peek_buffer_positive
+                    || nid == nid_sce_ctrl_peek_buffer_positive2
+                    || nid == nid_sce_ctrl_peek_buffer_positive_ext
+                    || nid == nid_sce_ctrl_peek_buffer_positive_ext2;
+                const bool negative = nid == nid_sce_ctrl_peek_buffer_negative
+                    || nid == nid_sce_ctrl_peek_buffer_negative2
+                    || nid == nid_sce_ctrl_read_buffer_negative
+                    || nid == nid_sce_ctrl_read_buffer_negative2;
+                const auto returned_count = peek ? count : 1u;
+                std::vector<std::uint8_t> samples(
+                    static_cast<std::size_t>(returned_count) * sce_ctrl_data_size);
+                ctrl_timestamp += static_cast<std::uint64_t>(returned_count) * 16667u;
+                for (std::uint32_t index = 0; index < returned_count; ++index) {
+                    const auto offset = static_cast<std::size_t>(index)
+                        * sce_ctrl_data_size;
+                    const auto timestamp = ctrl_timestamp
+                        - static_cast<std::uint64_t>(index) * 16667u;
+                    std::memcpy(samples.data() + offset, &timestamp,
+                        sizeof(timestamp));
+                    const std::uint32_t buttons = negative ? 0xFFFFFFFFu : 0u;
+                    std::memcpy(samples.data() + offset + 8, &buttons,
+                        sizeof(buttons));
+                    std::fill_n(samples.data() + offset + 12, 4,
+                        static_cast<std::uint8_t>(0x80));
+                }
+                std::string error;
+                if (!memory.write(state.registers[1], samples, error)) {
+                    return fail_ctrl_memory(state, std::string(ctrl_import.name),
+                        std::move(error));
+                }
+                result.ctrl_sample_count += returned_count;
+                return set_ctrl_result(returned_count);
+            });
+    }
     const auto record_atexit_registration = [&](std::uint32_t object,
                                                 std::uint32_t destructor,
                                                 std::uint32_t dso) -> std::int32_t {
@@ -1096,7 +1282,8 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         + static_cast<std::size_t>(imports_sce_np_trophy_create_context)
         + static_cast<std::size_t>(imports_sce_np_trophy_create_handle)
         + static_cast<std::size_t>(imports_sce_np_trophy_destroy_context)
-        + static_cast<std::size_t>(imports_sce_np_trophy_destroy_handle);
+        + static_cast<std::size_t>(imports_sce_np_trophy_destroy_handle)
+        + imported_ctrl_count;
     if (!get_id_bound || !exit_bound || !dso_handle_bound || !aeabi_atexit_bound
         || !cxa_atexit_bound || !cxa_finalize_bound || !cxa_guard_abort_bound
         || !cxa_guard_acquire_bound || !cxa_guard_release_bound
@@ -1113,6 +1300,7 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         || !np_trophy_abort_handle_bound || !np_trophy_create_context_bound
         || !np_trophy_create_handle_bound || !np_trophy_destroy_context_bound
         || !np_trophy_destroy_handle_bound
+        || !ctrl_bindings_bound
         || dispatcher.binding_count() != expected_binding_count) {
         result.detail = "The minimal kernel/runtime HLE bindings could not be registered.";
         return result;
@@ -1283,6 +1471,24 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     }
     if (!np_error.empty()) {
         detail << " NP boundary: " << np_error << ".";
+    }
+    const auto ctrl_call_count = result.ctrl_sampling_mode_set_call_count
+        + result.ctrl_sampling_mode_get_call_count + result.ctrl_buffer_call_count;
+    if (ctrl_call_count != 0) {
+        detail << " Controller HLE: sampling mode=" << result.ctrl_sampling_mode
+               << ", ext=" << result.ctrl_sampling_mode_ext
+               << " (set=" << result.ctrl_sampling_mode_set_call_count
+               << ", get=" << result.ctrl_sampling_mode_get_call_count
+               << "); buffers=" << result.ctrl_buffer_call_count
+               << ", samples=" << result.ctrl_sample_count
+               << "; last port=" << result.last_ctrl_port
+               << ", buffer=" << nid_hex(result.last_ctrl_buffer_address)
+               << ", count=" << result.last_ctrl_requested_count
+               << ", result=" << nid_hex(
+                    static_cast<std::uint32_t>(result.last_ctrl_result)) << ".";
+    }
+    if (!ctrl_error.empty()) {
+        detail << " Controller boundary: " << ctrl_error << ".";
     }
     result.detail = detail.str();
     return result;

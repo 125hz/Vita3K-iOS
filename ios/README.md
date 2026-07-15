@@ -399,3 +399,16 @@ The accepted Milestone 35 device run initialized NP Manager and NP Trophy, advan
 4. Share the complete next boundary and the `Trophy objects:` diagnostic.
 
 The Actions artifact includes `milestone36-trophy-objects.zip`, which initializes Trophy and creates a context using mapped guest structures. Portable companions cover null/unmapped outputs, invalid Communication IDs, initialization state, context errors, and create/destroy/abort handle behavior.
+
+## Milestone 37 controller startup HLE
+
+The accepted Milestone 36 run created Trophy context 1, then advanced to 5722 instructions and 37 HLE calls before reaching `sceCtrlSetSamplingMode(2)` (NID `0xA497B150`). Milestone 37 batches the 19 upstream-implemented controller startup/read exports: standard and extended sampling-mode get/set, handheld port and wireless discovery, multi-controller support reporting, and all positive/negative read/peek buffer variants. Mode 2 is retained as `SCE_CTRL_MODE_ANALOG_WIDE`; getters and information structures use checked guest writes; port/count/pointer validation preserves controller errors.
+
+Until the host-input adapter is connected to guest controller state, buffer calls deliberately return bounded neutral samples: centered analog sticks, no positive buttons, and inverted buttons for negative APIs. Peek returns the requested bounded count; the single-thread diagnostic read returns one sample instead of pretending a guest scheduler/vblank wait exists. This clears startup input probing without claiming the menu is controllable yet.
+
+1. Install the Milestone 37 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (65536 Instructions)** once.
+4. Share the complete next boundary and the `Controller HLE:` diagnostic.
+
+The Actions artifact includes `milestone37-controller-hle.zip`. Its legal synthetic title sets analog-wide mode and reads it back through mapped guest memory. Portable companions exercise a two-sample neutral buffer and invalid mode/null-buffer paths.

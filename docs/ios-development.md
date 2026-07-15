@@ -238,6 +238,10 @@ The accepted Milestone 34 device run loaded NP plus NP Trophy and reached `sceNp
 
 The accepted Milestone 35 run advanced to `sceNpTrophyCreateContext` at 5712 instructions and 36 HLE calls after both NP lifecycles initialized. Milestone 36 binds create/destroy context and create/destroy/abort handle as one stateful family. It uses bounded Communication ID reads, checked context/handle output writes, guest-visible IDs, upstream state/error values, and termination cleanup. It intentionally does not return invented TRP-derived trophy data. CI emits `milestone36-trophy-objects.zip`; nine portable paths cover the captured success case, invalid state/arguments/IDs, unmapped memory, and handle operations.
 
+## Milestone 37 controller startup HLE
+
+The accepted Milestone 36 device run crossed Trophy context creation and stopped at `sceCtrlSetSamplingMode(2)` after 5722 instructions and 37 HLE calls. Milestone 37 adds the 19-function upstream controller startup/read cluster in one batch. Standard/extended sampling state, handheld port discovery, wireless information, multi-controller support, and every positive/negative read/peek buffer import now use bounded state and guest writes. Neutral samples keep both sticks centered until `HostInput` is connected to guest HLE; read blocking remains a scheduler/display-vblank task rather than a fabricated wait. CI emits `milestone37-controller-hle.zip`, and deterministic tests cover set/get state, two-sample output, invalid modes, and invalid buffers.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

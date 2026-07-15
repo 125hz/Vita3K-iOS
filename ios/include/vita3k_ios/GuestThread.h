@@ -64,6 +64,10 @@ struct GuestThreadRunResult {
     std::size_t np_trophy_handle_abort_call_count = 0;
     std::size_t np_trophy_context_count = 0;
     std::size_t np_trophy_handle_count = 0;
+    std::size_t ctrl_sampling_mode_set_call_count = 0;
+    std::size_t ctrl_sampling_mode_get_call_count = 0;
+    std::size_t ctrl_buffer_call_count = 0;
+    std::size_t ctrl_sample_count = 0;
     std::uint64_t libc_heap_live_bytes = 0;
     std::uint64_t libc_heap_peak_bytes = 0;
     std::uint32_t last_libc_atexit_object = 0;
@@ -96,6 +100,12 @@ struct GuestThreadRunResult {
     std::uint32_t last_np_trophy_communication_number = 0;
     std::int32_t last_np_trophy_context = -1;
     std::int32_t last_np_trophy_handle = -1;
+    std::uint32_t ctrl_sampling_mode = 0;
+    std::uint32_t ctrl_sampling_mode_ext = 0;
+    std::uint32_t last_ctrl_port = 0;
+    std::uint32_t last_ctrl_buffer_address = 0;
+    std::uint32_t last_ctrl_requested_count = 0;
+    std::int32_t last_ctrl_result = 0;
     std::uint32_t return_value = 0;
     std::string detail;
 };

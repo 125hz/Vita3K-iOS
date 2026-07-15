@@ -96,6 +96,10 @@ struct TitleBootResult {
     std::size_t np_trophy_handle_abort_call_count{};
     std::size_t np_trophy_context_count{};
     std::size_t np_trophy_handle_count{};
+    std::size_t ctrl_sampling_mode_set_call_count{};
+    std::size_t ctrl_sampling_mode_get_call_count{};
+    std::size_t ctrl_buffer_call_count{};
+    std::size_t ctrl_sample_count{};
     std::uint64_t libc_heap_live_bytes{};
     std::uint64_t libc_heap_peak_bytes{};
     std::uint32_t last_libc_atexit_object{};
@@ -128,6 +132,12 @@ struct TitleBootResult {
     std::uint32_t last_np_trophy_communication_number{};
     std::int32_t last_np_trophy_context{-1};
     std::int32_t last_np_trophy_handle{-1};
+    std::uint32_t ctrl_sampling_mode{};
+    std::uint32_t ctrl_sampling_mode_ext{};
+    std::uint32_t last_ctrl_port{};
+    std::uint32_t last_ctrl_buffer_address{};
+    std::uint32_t last_ctrl_requested_count{};
+    std::int32_t last_ctrl_result{};
     std::int32_t exit_status{};
     std::uint32_t return_value{};
     std::string title_id;
