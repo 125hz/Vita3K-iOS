@@ -17,7 +17,9 @@
 
 #include "macos_net_helper.h"
 
+#if !defined(VITA3K_PLATFORM_IOS)
 #include <SystemConfiguration/SystemConfiguration.h>
+#endif
 #include <cstring>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -30,6 +32,13 @@ bool is_physical_interface(const char *name) {
 
 // Get the primary network interface name using SystemConfiguration
 bool get_primary_interface_name(char *dest, size_t bufferSize) {
+#if defined(VITA3K_PLATFORM_IOS)
+    // SCDynamicStore is macOS-only. Returning false makes get_mac_address
+    // scan for the first active physical interface (en0 on iPhone).
+    (void)dest;
+    (void)bufferSize;
+    return false;
+#else
     bool success = false;
     auto size = static_cast<CFIndex>(bufferSize);
 
@@ -64,6 +73,7 @@ bool get_primary_interface_name(char *dest, size_t bufferSize) {
 
     CFRelease(store);
     return success;
+#endif
 }
 
 // Get MAC address from a physical interface
