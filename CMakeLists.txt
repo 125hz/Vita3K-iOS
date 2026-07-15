@@ -44,7 +44,13 @@ include("external/dynarmic/CMakeModules/DetectArchitecture.cmake")
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_OSX_DEPLOYMENT_TARGET 13.3)
+# iPhoneOS needs at least 16.3 for complete C++17 <charconv>/std::format
+# support in libc++; the iOS application targets 17.0. macOS keeps 13.3.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+	set(CMAKE_OSX_DEPLOYMENT_TARGET 17.0)
+else()
+	set(CMAKE_OSX_DEPLOYMENT_TARGET 13.3)
+endif()
 
 # workaround for SDL due to cmake bug
 # https://github.com/libsdl-org/SDL/issues/6454
