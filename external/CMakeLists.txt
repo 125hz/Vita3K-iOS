@@ -98,15 +98,17 @@ if(NOT VITA3K_BUILD_IOS_UPSTREAM_CORE)
 	add_subdirectory(cubeb EXCLUDE_FROM_ALL)
 endif()
 
-if (ARCHITECTURE STREQUAL "arm64")
-	target_compile_definitions(speex PUBLIC
-		#_USE_NEON
-	)
-elseif (ARCHITECTURE STREQUAL "x86_64")
-	target_compile_definitions(speex PUBLIC
-		_USE_SSE
-		_USE_SSE2
-	)
+if (TARGET speex)
+	if (ARCHITECTURE STREQUAL "arm64")
+		target_compile_definitions(speex PUBLIC
+			#_USE_NEON
+		)
+	elseif (ARCHITECTURE STREQUAL "x86_64")
+		target_compile_definitions(speex PUBLIC
+			_USE_SSE
+			_USE_SSE2
+		)
+	endif ()
 endif ()
 
 if(ANDROID)

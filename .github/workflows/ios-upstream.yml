@@ -58,7 +58,8 @@ jobs:
           echo "VCPKG_ROOT=$PWD/build-deps/vcpkg" >> "$GITHUB_ENV"
 
       - name: Restore iOS vcpkg binary archive
-        uses: actions/cache@v4
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/vcpkg/archives
           key: vcpkg-arm64-ios-77df67c-${{ hashFiles('vcpkg.json') }}
@@ -101,6 +102,15 @@ jobs:
             -DUSE_DISCORD_RICH_PRESENCE=OFF \
             -DUSE_VITA3K_UPDATE=OFF \
             -DUSE_LTO=NEVER
+
+      - name: Save iOS vcpkg binary archive
+        # vcpkg populates its archives during configure; save them even when a
+        # later configure/build step fails so iteration runs stay fast.
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-arm64-ios-77df67c-${{ hashFiles('vcpkg.json') }}
 
       - name: Build unsigned upstream-core device application
         run: |
