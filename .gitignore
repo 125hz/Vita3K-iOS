@@ -84,3 +84,6 @@ fastlane/readme.md
 
 # Copilot local config
 .github/copilot-instructions.md
+
+# Local continuation notes stay out of the public repo
+/ios/NEXT-MILESTONE-HANDOFF.md
