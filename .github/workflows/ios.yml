@@ -119,6 +119,7 @@ jobs:
             --emit-m29-install-zip-fixture artifacts/milestone29-libc-heap.zip \
             --emit-m30-install-zip-fixture artifacts/milestone30-thumb2-lr-shifted-register.zip \
             --emit-m31-install-zip-fixture artifacts/milestone31-execution-progress.zip \
+            --emit-m32-install-zip-fixture artifacts/milestone32-cxx-allocation.zip \
             --verify-vitasdk artifacts/milestone10-vitasdk-homebrew.velf
 
       - name: Configure iOS application and core target
@@ -177,5 +178,6 @@ jobs:
             artifacts/milestone29-libc-heap.zip
             artifacts/milestone30-thumb2-lr-shifted-register.zip
             artifacts/milestone31-execution-progress.zip
+            artifacts/milestone32-cxx-allocation.zip
           if-no-files-found: error
           retention-days: 14

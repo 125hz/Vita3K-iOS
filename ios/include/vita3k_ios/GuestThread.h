@@ -37,6 +37,12 @@ struct GuestThreadRunResult {
     std::size_t libc_heap_free_count = 0;
     std::size_t libc_heap_realloc_count = 0;
     std::size_t libc_heap_failure_count = 0;
+    std::size_t cxx_new_call_count = 0;
+    std::size_t cxx_new_array_call_count = 0;
+    std::size_t cxx_delete_call_count = 0;
+    std::size_t cxx_delete_array_call_count = 0;
+    std::size_t cxx_nothrow_failure_count = 0;
+    std::size_t cxx_placement_delete_call_count = 0;
     std::uint64_t libc_heap_live_bytes = 0;
     std::uint64_t libc_heap_peak_bytes = 0;
     std::uint32_t last_libc_atexit_object = 0;

@@ -340,3 +340,16 @@ Milestone 31 raises the one-shot ceiling to 65536 instructions and instruments e
 4. Share the entire boundary, especially `execution progress`, `Recent PCs`, `Registers`, and `Lookahead`.
 
 The Actions artifact includes `milestone31-execution-progress.zip`. Its legal synthetic title deliberately executes `B .`; portable tests prove the diagnostic reports one unique/hottest PC, 256 hits, 256 non-forward transfers, and a hot-loop candidate without fabricating forward progress.
+
+## Milestone 32 C++ allocation ABI
+
+The accepted Milestone 31 Amagami run proved startup was still advancing: it crossed the old 4096-instruction ceiling, executed 5637 instructions and 30 HLE calls, completed six static initializers, and then reached `_Znwj` (32-bit `operator new`, NID `0xF99ED5AC`) with size 8. This was an unbound runtime import, not a hot loop or CPU failure.
+
+Milestone 32 binds the complete ten-export 32-bit C++ allocation family from the Vita NID database: scalar and array `new`, their nothrow overloads, scalar and array `delete`, matching nothrow deletes, and placement-delete cleanup overloads. Successful allocations use the existing checked guest heap; regular deletion validates and releases a live guest block; null deletion and placement deletion are ABI-correct no-ops. Nothrow exhaustion returns null and records a failure. A throwing allocation failure remains an explicit boundary because guest exception/new-handler unwinding is not implemented.
+
+1. Install the Milestone 32 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (65536 Instructions)** once.
+4. Share the entire next boundary. It should exceed 5637 instructions and 30 HLE calls, and the detail should include `C++ allocation ABI: new=1` unless later startup performs more allocation calls first.
+
+The Actions artifact includes `milestone32-cxx-allocation.zip`. Its legal synthetic title calls the exact captured `_Znwj(8)` import and returns writable guest address `0x90000000`. Portable regressions cover all ten exports, both successful nothrow variants, null and placement deletion, nothrow exhaustion, and the explicit throwing-allocation boundary.

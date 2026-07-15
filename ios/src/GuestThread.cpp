@@ -34,6 +34,16 @@ constexpr std::uint32_t nid_malloc = 0x775A0CB2;
 constexpr std::uint32_t nid_malloc_usable_size = 0x54A54EB1;
 constexpr std::uint32_t nid_memalign = 0xA9363E6B;
 constexpr std::uint32_t nid_realloc = 0x006B54BA;
+constexpr std::uint32_t nid_delete_array = 0x91B0DC47;
+constexpr std::uint32_t nid_delete_array_nothrow = 0xA7241F09;
+constexpr std::uint32_t nid_delete_array_placement = 0x3688FFDA;
+constexpr std::uint32_t nid_delete = 0x72293931;
+constexpr std::uint32_t nid_delete_nothrow = 0x87EF85FF;
+constexpr std::uint32_t nid_delete_placement = 0x1EB89099;
+constexpr std::uint32_t nid_new_array = 0xE7FB2BF4;
+constexpr std::uint32_t nid_new_array_nothrow = 0x31C62481;
+constexpr std::uint32_t nid_new = 0xF99ED5AC;
+constexpr std::uint32_t nid_new_nothrow = 0x0AE71DC3;
 constexpr std::int32_t first_diagnostic_thread_id = 0x10001;
 constexpr std::uint32_t diagnostic_heap_base = 0x90000000;
 constexpr std::uint32_t diagnostic_heap_size = 16 * 1024 * 1024;
@@ -111,6 +121,16 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     const bool imports_malloc_usable_size = contains_nid(imported_nids, nid_malloc_usable_size);
     const bool imports_memalign = contains_nid(imported_nids, nid_memalign);
     const bool imports_realloc = contains_nid(imported_nids, nid_realloc);
+    const bool imports_delete_array = contains_nid(imported_nids, nid_delete_array);
+    const bool imports_delete_array_nothrow = contains_nid(imported_nids, nid_delete_array_nothrow);
+    const bool imports_delete_array_placement = contains_nid(imported_nids, nid_delete_array_placement);
+    const bool imports_delete = contains_nid(imported_nids, nid_delete);
+    const bool imports_delete_nothrow = contains_nid(imported_nids, nid_delete_nothrow);
+    const bool imports_delete_placement = contains_nid(imported_nids, nid_delete_placement);
+    const bool imports_new_array = contains_nid(imported_nids, nid_new_array);
+    const bool imports_new_array_nothrow = contains_nid(imported_nids, nid_new_array_nothrow);
+    const bool imports_new = contains_nid(imported_nids, nid_new);
+    const bool imports_new_nothrow = contains_nid(imported_nids, nid_new_nothrow);
     if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" || (imports_exit_thread && std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
         return result;
@@ -140,6 +160,19 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         result.detail = "The upstream Vita NID database did not match the libc heap bindings.";
         return result;
     }
+    if ((imports_delete_array && std::string_view(import_name(nid_delete_array)) != "_ZdaPv")
+        || (imports_delete_array_nothrow && std::string_view(import_name(nid_delete_array_nothrow)) != "_ZdaPvRKSt9nothrow_t")
+        || (imports_delete_array_placement && std::string_view(import_name(nid_delete_array_placement)) != "_ZdaPvS_")
+        || (imports_delete && std::string_view(import_name(nid_delete)) != "_ZdlPv")
+        || (imports_delete_nothrow && std::string_view(import_name(nid_delete_nothrow)) != "_ZdlPvRKSt9nothrow_t")
+        || (imports_delete_placement && std::string_view(import_name(nid_delete_placement)) != "_ZdlPvS_")
+        || (imports_new_array && std::string_view(import_name(nid_new_array)) != "_Znaj")
+        || (imports_new_array_nothrow && std::string_view(import_name(nid_new_array_nothrow)) != "_ZnajRKSt9nothrow_t")
+        || (imports_new && std::string_view(import_name(nid_new)) != "_Znwj")
+        || (imports_new_nothrow && std::string_view(import_name(nid_new_nothrow)) != "_ZnwjRKSt9nothrow_t")) {
+        result.detail = "The upstream Vita NID database did not match the C++ allocation bindings.";
+        return result;
+    }
 
     HLEDispatcher dispatcher;
     bool exit_requested = false;
@@ -149,7 +182,11 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     GuestHeap heap;
     std::string heap_error;
     const bool imports_heap = imports_calloc || imports_free || imports_malloc
-        || imports_malloc_usable_size || imports_memalign || imports_realloc;
+        || imports_malloc_usable_size || imports_memalign || imports_realloc
+        || imports_delete_array || imports_delete_array_nothrow
+        || imports_delete || imports_delete_nothrow
+        || imports_new_array || imports_new_array_nothrow
+        || imports_new || imports_new_nothrow;
     if (imports_heap && !heap.initialize(memory,
             diagnostic_heap_base, diagnostic_heap_size, heap_error)) {
         result.detail = "The bounded libc heap could not be initialized: " + heap_error;
@@ -441,6 +478,93 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                 return static_cast<std::int32_t>(size);
             });
     }
+    const auto bind_cpp_new = [&](bool imported, std::uint32_t nid,
+                                  std::string_view name, bool array,
+                                  bool nothrow) {
+        if (!imported) {
+            return true;
+        }
+        return dispatcher.bind(nid, std::string(name),
+            [&, name, array, nothrow](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                if (array) {
+                    ++result.cxx_new_array_call_count;
+                } else {
+                    ++result.cxx_new_call_count;
+                }
+                result.last_libc_heap_size = state.registers[0];
+                result.last_libc_heap_alignment = 16;
+                std::string error;
+                const auto address = heap.allocate(state.registers[0], 16, false, error);
+                if (address == 0) {
+                    result.last_libc_heap_address = 0;
+                    if (nothrow) {
+                        ++result.libc_heap_failure_count;
+                        ++result.cxx_nothrow_failure_count;
+                        sync_heap_stats();
+                        return 0;
+                    }
+                    return fail_heap(state, std::string(name), std::move(error)
+                        + "; guest C++ allocation-failure unwinding is not implemented");
+                }
+                result.last_libc_heap_address = address;
+                sync_heap_stats();
+                return static_cast<std::int32_t>(address);
+            });
+    };
+    const auto bind_cpp_delete = [&](bool imported, std::uint32_t nid,
+                                     std::string_view name, bool array,
+                                     bool placement) {
+        if (!imported) {
+            return true;
+        }
+        return dispatcher.bind(nid, std::string(name),
+            [&, name, array, placement](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                if (array) {
+                    ++result.cxx_delete_array_call_count;
+                } else {
+                    ++result.cxx_delete_call_count;
+                }
+                result.last_libc_heap_address = state.registers[0];
+                result.last_libc_heap_size = 0;
+                result.last_libc_heap_alignment = 0;
+                if (placement) {
+                    ++result.cxx_placement_delete_call_count;
+                    return 0;
+                }
+                std::string error;
+                if (!heap.free(state.registers[0], error)) {
+                    return fail_heap(state, std::string(name), std::move(error));
+                }
+                sync_heap_stats();
+                return 0;
+            });
+    };
+    const bool new_bound = bind_cpp_new(
+        imports_new, nid_new, "_Znwj", false, false);
+    const bool new_nothrow_bound = bind_cpp_new(
+        imports_new_nothrow, nid_new_nothrow, "_ZnwjRKSt9nothrow_t", false, true);
+    const bool new_array_bound = bind_cpp_new(
+        imports_new_array, nid_new_array, "_Znaj", true, false);
+    const bool new_array_nothrow_bound = bind_cpp_new(
+        imports_new_array_nothrow, nid_new_array_nothrow,
+        "_ZnajRKSt9nothrow_t", true, true);
+    const bool delete_bound = bind_cpp_delete(
+        imports_delete, nid_delete, "_ZdlPv", false, false);
+    const bool delete_nothrow_bound = bind_cpp_delete(
+        imports_delete_nothrow, nid_delete_nothrow,
+        "_ZdlPvRKSt9nothrow_t", false, false);
+    const bool delete_placement_bound = bind_cpp_delete(
+        imports_delete_placement, nid_delete_placement, "_ZdlPvS_", false, true);
+    const bool delete_array_bound = bind_cpp_delete(
+        imports_delete_array, nid_delete_array, "_ZdaPv", true, false);
+    const bool delete_array_nothrow_bound = bind_cpp_delete(
+        imports_delete_array_nothrow, nid_delete_array_nothrow,
+        "_ZdaPvRKSt9nothrow_t", true, false);
+    const bool delete_array_placement_bound = bind_cpp_delete(
+        imports_delete_array_placement, nid_delete_array_placement,
+        "_ZdaPvS_", true, true);
     const auto expected_binding_count = 1u
         + static_cast<std::size_t>(imports_exit_thread)
         + static_cast<std::size_t>(imports_cxa_set_dso_handle_main)
@@ -455,12 +579,26 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         + static_cast<std::size_t>(imports_malloc)
         + static_cast<std::size_t>(imports_malloc_usable_size)
         + static_cast<std::size_t>(imports_memalign)
-        + static_cast<std::size_t>(imports_realloc);
+        + static_cast<std::size_t>(imports_realloc)
+        + static_cast<std::size_t>(imports_delete_array)
+        + static_cast<std::size_t>(imports_delete_array_nothrow)
+        + static_cast<std::size_t>(imports_delete_array_placement)
+        + static_cast<std::size_t>(imports_delete)
+        + static_cast<std::size_t>(imports_delete_nothrow)
+        + static_cast<std::size_t>(imports_delete_placement)
+        + static_cast<std::size_t>(imports_new_array)
+        + static_cast<std::size_t>(imports_new_array_nothrow)
+        + static_cast<std::size_t>(imports_new)
+        + static_cast<std::size_t>(imports_new_nothrow);
     if (!get_id_bound || !exit_bound || !dso_handle_bound || !aeabi_atexit_bound
         || !cxa_atexit_bound || !cxa_finalize_bound || !cxa_guard_abort_bound
         || !cxa_guard_acquire_bound || !cxa_guard_release_bound
         || !calloc_bound || !free_bound || !malloc_bound || !malloc_usable_size_bound
         || !memalign_bound || !realloc_bound
+        || !new_bound || !new_nothrow_bound || !new_array_bound || !new_array_nothrow_bound
+        || !delete_bound || !delete_nothrow_bound || !delete_placement_bound
+        || !delete_array_bound || !delete_array_nothrow_bound
+        || !delete_array_placement_bound
         || dispatcher.binding_count() != expected_binding_count) {
         result.detail = "The minimal kernel/runtime HLE bindings could not be registered.";
         return result;
@@ -547,6 +685,19 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     }
     if (!heap_error.empty()) {
         detail << " Heap boundary: " << heap_error << ".";
+    }
+    const auto cxx_allocation_call_count = result.cxx_new_call_count
+        + result.cxx_new_array_call_count;
+    const auto cxx_delete_call_count = result.cxx_delete_call_count
+        + result.cxx_delete_array_call_count;
+    if (cxx_allocation_call_count != 0 || cxx_delete_call_count != 0) {
+        detail << " C++ allocation ABI: new=" << result.cxx_new_call_count
+               << ", new[]=" << result.cxx_new_array_call_count
+               << ", delete=" << result.cxx_delete_call_count
+               << ", delete[]=" << result.cxx_delete_array_call_count
+               << ", nothrow failures=" << result.cxx_nothrow_failure_count
+               << ", placement deletes=" << result.cxx_placement_delete_call_count
+               << ".";
     }
     result.detail = detail.str();
     return result;

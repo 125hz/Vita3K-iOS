@@ -1,6 +1,6 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 31. Read `MENU-BOOT-CHECKLIST.md` for the full first-menu critical path.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 32. Read `MENU-BOOT-CHECKLIST.md` for the full first-menu critical path.
 
 ## Copy-paste prompt
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 31 boundary
+## Known Milestone 32 boundary
 
-Milestone 30 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It executed all 4096 permitted instructions and 14 HLE calls without another unknown instruction, memory fault, or unbound import. DSO remained `0x812C7690`; termination registrations increased to five; guards reached acquire=3, release=2, initializers=3, recursive=0; the heap reached three allocations, zero failures, and 11904 live/peak bytes, with the latest 10240-byte allocation at `0x90000680`.
+Milestone 31 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. The 65536-instruction telemetry ceiling was not reached: startup advanced to 5637 instructions and 30 HLE calls, then stopped on unbound NID `0xF99ED5AC`, upstream name `_Znwj`, with `r0=8`. DSO remained `0x812C7690`; termination registrations reached 11; C++ guards reached acquire=6, release=6, initializers=6; the heap reached six allocations, zero failures, and 12736 live/peak bytes. This proves continued forward initialization rather than a hot loop.
 
-Milestone 31 raises the safe one-shot interpreter ceiling to 65536 instructions and adds deterministic progress/hot-loop telemetry at budget exhaustion: unique PCs, hottest PC/hits, non-forward transfers, recent PCs, registers/CPSR, and lookahead. Install the Milestone 31 artifact, prepare `PCSG00291`, and run the attempt once. Return the complete next boundary. If it exhausts the budget, preserve every execution-progress field so the next milestone can distinguish ongoing startup from a scheduler/synchronization loop; never skip unknown behavior.
+Milestone 32 binds all ten adjacent 32-bit C++ allocation/deallocation exports: scalar/array `new`, nothrow variants, scalar/array `delete`, nothrow deletes, and placement deletes. They reuse the checked guest heap; nothrow failure returns null, while throwing allocation failure stops until guest exception unwinding exists. Install the Milestone 32 artifact, prepare `PCSG00291`, and run the attempt once. Return the complete next CPU, memory, HLE, normal-return, or budget boundary; never skip unknown behavior.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m31-install-zip-fixture artifacts/milestone31-execution-progress.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m32-install-zip-fixture artifacts/milestone32-cxx-allocation.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 

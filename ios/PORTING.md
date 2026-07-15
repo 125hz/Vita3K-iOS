@@ -84,6 +84,10 @@ The accepted Milestone 29 run completed `memalign`, reached 138 instructions and
 
 The accepted Milestone 30 run exhausted all 4096 instructions without another unknown opcode or HLE call. It completed 14 HLE calls, five termination registrations, three guard acquisitions/two releases, and three heap allocations totaling 11904 live bytes. Milestone 31 expands the one-shot ceiling to 65536 and records unique/hottest PC counts, non-forward transfers, recent PCs, registers, CPSR, and lookahead. Concentrated execution is reported as a hot-loop candidate rather than skipped; the next device result can therefore distinguish useful initialization progress from the first scheduler/synchronization requirement.
 
+## Milestone 32 C++ allocation ABI
+
+The Milestone 31 device run advanced to 5637 instructions and 30 HLE calls before reaching `_Znwj` (NID `0xF99ED5AC`) for an 8-byte scalar allocation. The bounded runtime now binds the coherent Itanium C++ ABI family exported by Vita libc: scalar/array `new`, nothrow `new`, scalar/array `delete`, nothrow deletes, and placement deletes. Allocations and real deletions share the checked guest heap; null and placement deletion are no-ops; nothrow exhaustion returns zero. Throwing exhaustion remains a hard boundary until guest exception and new-handler unwinding exist. The legal `milestone32-cxx-allocation.zip` reproduces the exact captured call, and portable companion cases exercise every export and failure mode.
+
 ## Firmware packages
 
 Do not commit firmware PUP files to this public repository or upload them as Actions artifacts. The future iOS installer should select user-owned files locally and write only extracted virtual-filesystem content inside the app sandbox. Upstream `install_pup` currently depends on the packages/crypto layers, OpenSSL, vita-toolchain key handling, FAT/exFAT extraction, miniz, and psvpfsparser; those dependencies are not part of the current iOS core slice. `fontpkg.pup`, `preinstall.pup`, and the system update PUP should therefore remain local until that bounded installer milestone is implemented.

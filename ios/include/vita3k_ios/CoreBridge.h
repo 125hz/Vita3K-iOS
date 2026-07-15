@@ -69,6 +69,12 @@ struct TitleBootResult {
     std::size_t libc_heap_free_count{};
     std::size_t libc_heap_realloc_count{};
     std::size_t libc_heap_failure_count{};
+    std::size_t cxx_new_call_count{};
+    std::size_t cxx_new_array_call_count{};
+    std::size_t cxx_delete_call_count{};
+    std::size_t cxx_delete_array_call_count{};
+    std::size_t cxx_nothrow_failure_count{};
+    std::size_t cxx_placement_delete_call_count{};
     std::uint64_t libc_heap_live_bytes{};
     std::uint64_t libc_heap_peak_bytes{};
     std::uint32_t last_libc_atexit_object{};

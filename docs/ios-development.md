@@ -218,6 +218,10 @@ The accepted Milestone 29 device run advanced to 138 instructions and six HLE ca
 
 The accepted Milestone 30 device run crossed the former CPU boundary and then consumed the entire 4096-instruction budget with 14 successful HLE calls and zero heap failures. Milestone 31 raises the hard one-shot ceiling to 65536 while retaining interpreter-only, stop-on-first-unknown behavior. At exhaustion it reports unique and hottest PC counts, non-forward transfers, an eight-PC history, all general registers/CPSR, and Thumb lookahead. A deterministic self-branch regression proves hot-loop candidate classification, while a sequential NOP regression proves normal forward execution is not mislabeled. CI emits `milestone31-execution-progress.zip` for the same bounded loop diagnostic.
 
+## Milestone 32 C++ allocation ABI
+
+The accepted Milestone 31 device run continued forward to 5637 instructions and 30 HLE calls, then stopped at `_Znwj` (NID `0xF99ED5AC`) with an 8-byte request. Milestone 32 implements all ten adjacent 32-bit C++ allocation/deallocation exports in the Vita NID database. They reuse the bounded guest heap, preserve regular, array, nothrow, null-delete, and placement-delete semantics, and expose per-run call diagnostics. Throwing allocation exhaustion stops because exception unwinding is not yet present; nothrow exhaustion returns null. CI emits `milestone32-cxx-allocation.zip`, and portable tests execute every handler plus both exhaustion paths.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

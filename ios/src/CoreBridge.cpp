@@ -1800,6 +1800,12 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.libc_heap_free_count = thread.libc_heap_free_count;
         result.libc_heap_realloc_count = thread.libc_heap_realloc_count;
         result.libc_heap_failure_count = thread.libc_heap_failure_count;
+        result.cxx_new_call_count = thread.cxx_new_call_count;
+        result.cxx_new_array_call_count = thread.cxx_new_array_call_count;
+        result.cxx_delete_call_count = thread.cxx_delete_call_count;
+        result.cxx_delete_array_call_count = thread.cxx_delete_array_call_count;
+        result.cxx_nothrow_failure_count = thread.cxx_nothrow_failure_count;
+        result.cxx_placement_delete_call_count = thread.cxx_placement_delete_call_count;
         result.libc_heap_live_bytes = thread.libc_heap_live_bytes;
         result.libc_heap_peak_bytes = thread.libc_heap_peak_bytes;
         result.last_libc_atexit_object = thread.last_libc_atexit_object;

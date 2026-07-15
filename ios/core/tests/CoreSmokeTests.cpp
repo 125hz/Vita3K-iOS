@@ -170,6 +170,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m29_install_zip_fixture;
     std::filesystem::path emitted_m30_install_zip_fixture;
     std::filesystem::path emitted_m31_install_zip_fixture;
+    std::filesystem::path emitted_m32_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -213,6 +214,8 @@ int main(int argc, char **argv) {
             emitted_m30_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m31-install-zip-fixture" && index + 1 < argc) {
             emitted_m31_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m32-install-zip-fixture" && index + 1 < argc) {
+            emitted_m32_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -236,6 +239,7 @@ int main(int argc, char **argv) {
                          "[--emit-m29-install-zip-fixture <path>] "
                          "[--emit-m30-install-zip-fixture <path>] "
                          "[--emit-m31-install-zip-fixture <path>] "
+                         "[--emit-m32-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -713,6 +717,53 @@ int main(int argc, char **argv) {
     const auto execution_progress_self = make_plain_self(execution_progress_elf);
     const auto m31_install_zip = vita3k::ios::make_synthetic_install_zip(
         execution_progress_self, execution_progress_self);
+    constexpr std::uint32_t delete_array_nid = 0x91B0DC47u;
+    constexpr std::uint32_t delete_array_nothrow_nid = 0xA7241F09u;
+    constexpr std::uint32_t delete_array_placement_nid = 0x3688FFDAu;
+    constexpr std::uint32_t delete_nid = 0x72293931u;
+    constexpr std::uint32_t delete_nothrow_nid = 0x87EF85FFu;
+    constexpr std::uint32_t delete_placement_nid = 0x1EB89099u;
+    constexpr std::uint32_t new_array_nid = 0xE7FB2BF4u;
+    constexpr std::uint32_t new_array_nothrow_nid = 0x31C62481u;
+    constexpr std::uint32_t new_nid = 0xF99ED5ACu;
+    constexpr std::uint32_t new_nothrow_nid = 0x0AE71DC3u;
+    const auto make_cpp_allocation_archive = [&](std::uint32_t nid,
+                                                  std::uint32_t argument) {
+        auto elf = lifecycle_elf;
+        const std::array<std::uint16_t, 8> program{
+            0xB510u, // PUSH {r4, lr}
+            0x4803u, // LDR r0, [pc, #12] -> allocation size/delete pointer
+            0x4B04u, // LDR r3, [pc, #16] -> C++ runtime import stub
+            0x4798u, // BLX r3
+            0xBD10u, // POP {r4, pc}
+            0xBF00u, 0xBF00u, 0xBF00u
+        };
+        std::memcpy(elf.data() + 244, program.data(), sizeof(program));
+        write_value(elf, 260, argument);
+        write_value(elf, 268, static_cast<std::uint32_t>(0x81000050));
+        write_value(elf, 372, nid);
+        const auto self = make_plain_self(elf);
+        return vita3k::ios::make_synthetic_install_zip(self, self);
+    };
+    const auto m32_install_zip = make_cpp_allocation_archive(new_nid, 8);
+    const auto new_array_install_zip = make_cpp_allocation_archive(new_array_nid, 24);
+    const auto new_nothrow_install_zip = make_cpp_allocation_archive(new_nothrow_nid, 32);
+    const auto new_array_nothrow_install_zip = make_cpp_allocation_archive(
+        new_array_nothrow_nid, 40);
+    const auto new_throw_failure_install_zip = make_cpp_allocation_archive(
+        new_nid, 32 * 1024 * 1024);
+    const auto new_nothrow_failure_install_zip = make_cpp_allocation_archive(
+        new_nothrow_nid, 32 * 1024 * 1024);
+    const auto delete_install_zip = make_cpp_allocation_archive(delete_nid, 0);
+    const auto delete_nothrow_install_zip = make_cpp_allocation_archive(
+        delete_nothrow_nid, 0);
+    const auto delete_placement_install_zip = make_cpp_allocation_archive(
+        delete_placement_nid, 8);
+    const auto delete_array_install_zip = make_cpp_allocation_archive(delete_array_nid, 0);
+    const auto delete_array_nothrow_install_zip = make_cpp_allocation_archive(
+        delete_array_nothrow_nid, 0);
+    const auto delete_array_placement_install_zip = make_cpp_allocation_archive(
+        delete_array_placement_nid, 8);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -775,6 +826,16 @@ int main(int argc, char **argv) {
     if (m31_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 31 execution-progress fixture.\n";
         return 121;
+    }
+    if (m32_install_zip.empty() || new_array_install_zip.empty()
+        || new_nothrow_install_zip.empty() || new_array_nothrow_install_zip.empty()
+        || new_throw_failure_install_zip.empty() || new_nothrow_failure_install_zip.empty()
+        || delete_install_zip.empty() || delete_nothrow_install_zip.empty()
+        || delete_placement_install_zip.empty() || delete_array_install_zip.empty()
+        || delete_array_nothrow_install_zip.empty()
+        || delete_array_placement_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 32 C++ allocation fixtures.\n";
+        return 124;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -981,6 +1042,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 31 execution-progress fixture.\n";
             return 122;
+        }
+    }
+    if (!emitted_m32_install_zip_fixture.empty()) {
+        if (!emitted_m32_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m32_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m32_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m32_install_zip.data()),
+            static_cast<std::streamsize>(m32_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 32 C++ allocation fixture.\n";
+            return 125;
         }
     }
 
@@ -1559,6 +1633,106 @@ int main(int argc, char **argv) {
         std::cerr << execution_progress_boot.detail << '\n';
         return 123;
     }
+    const auto cpp_new_boot = run_guard_fixture(
+        m32_install_zip, "milestone32-cxx-new.zip");
+    if (!cpp_new_boot.returned || cpp_new_boot.instruction_count != 7
+        || cpp_new_boot.hle_dispatch_count != 1
+        || cpp_new_boot.last_hle_nid != new_nid
+        || cpp_new_boot.cxx_new_call_count != 1
+        || cpp_new_boot.cxx_new_array_call_count != 0
+        || cpp_new_boot.libc_heap_allocation_count != 1
+        || cpp_new_boot.libc_heap_live_bytes != 8
+        || cpp_new_boot.return_value != synthetic_heap_base
+        || cpp_new_boot.detail.find("C++ allocation ABI: new=1") == std::string::npos) {
+        std::cerr << cpp_new_boot.detail << '\n';
+        return 126;
+    }
+    const auto cpp_new_array_boot = run_guard_fixture(
+        new_array_install_zip, "milestone32-cxx-new-array.zip");
+    if (!cpp_new_array_boot.returned || cpp_new_array_boot.last_hle_nid != new_array_nid
+        || cpp_new_array_boot.cxx_new_call_count != 0
+        || cpp_new_array_boot.cxx_new_array_call_count != 1
+        || cpp_new_array_boot.libc_heap_live_bytes != 24
+        || cpp_new_array_boot.return_value != synthetic_heap_base) {
+        std::cerr << cpp_new_array_boot.detail << '\n';
+        return 127;
+    }
+    const auto cpp_new_nothrow_boot = run_guard_fixture(
+        new_nothrow_install_zip, "milestone32-cxx-new-nothrow.zip");
+    const auto cpp_new_array_nothrow_boot = run_guard_fixture(
+        new_array_nothrow_install_zip, "milestone32-cxx-new-array-nothrow.zip");
+    if (!cpp_new_nothrow_boot.returned || cpp_new_nothrow_boot.last_hle_nid != new_nothrow_nid
+        || cpp_new_nothrow_boot.cxx_new_call_count != 1
+        || cpp_new_nothrow_boot.cxx_nothrow_failure_count != 0
+        || cpp_new_nothrow_boot.return_value != synthetic_heap_base
+        || !cpp_new_array_nothrow_boot.returned
+        || cpp_new_array_nothrow_boot.last_hle_nid != new_array_nothrow_nid
+        || cpp_new_array_nothrow_boot.cxx_new_array_call_count != 1
+        || cpp_new_array_nothrow_boot.cxx_nothrow_failure_count != 0
+        || cpp_new_array_nothrow_boot.return_value != synthetic_heap_base) {
+        std::cerr << cpp_new_nothrow_boot.detail << '\n'
+                  << cpp_new_array_nothrow_boot.detail << '\n';
+        return 128;
+    }
+    const auto cpp_new_throw_failure_boot = run_guard_fixture(
+        new_throw_failure_install_zip, "milestone32-cxx-new-throw-failure.zip");
+    const auto cpp_new_nothrow_failure_boot = run_guard_fixture(
+        new_nothrow_failure_install_zip, "milestone32-cxx-new-nothrow-failure.zip");
+    if (!cpp_new_throw_failure_boot.started || cpp_new_throw_failure_boot.returned
+        || cpp_new_throw_failure_boot.libc_heap_failure_count != 1
+        || cpp_new_throw_failure_boot.detail.find(
+            "guest C++ allocation-failure unwinding is not implemented") == std::string::npos
+        || !cpp_new_nothrow_failure_boot.returned
+        || cpp_new_nothrow_failure_boot.libc_heap_failure_count != 1
+        || cpp_new_nothrow_failure_boot.cxx_nothrow_failure_count != 1
+        || cpp_new_nothrow_failure_boot.return_value != 0) {
+        std::cerr << cpp_new_throw_failure_boot.detail << '\n'
+                  << cpp_new_nothrow_failure_boot.detail << '\n';
+        return 129;
+    }
+    const auto cpp_delete_boot = run_guard_fixture(
+        delete_install_zip, "milestone32-cxx-delete.zip");
+    const auto cpp_delete_nothrow_boot = run_guard_fixture(
+        delete_nothrow_install_zip, "milestone32-cxx-delete-nothrow.zip");
+    const auto cpp_delete_placement_boot = run_guard_fixture(
+        delete_placement_install_zip, "milestone32-cxx-delete-placement.zip");
+    if (!cpp_delete_boot.returned || cpp_delete_boot.last_hle_nid != delete_nid
+        || cpp_delete_boot.cxx_delete_call_count != 1
+        || cpp_delete_boot.cxx_placement_delete_call_count != 0
+        || !cpp_delete_nothrow_boot.returned
+        || cpp_delete_nothrow_boot.last_hle_nid != delete_nothrow_nid
+        || cpp_delete_nothrow_boot.cxx_delete_call_count != 1
+        || !cpp_delete_placement_boot.returned
+        || cpp_delete_placement_boot.last_hle_nid != delete_placement_nid
+        || cpp_delete_placement_boot.cxx_delete_call_count != 1
+        || cpp_delete_placement_boot.cxx_placement_delete_call_count != 1) {
+        std::cerr << cpp_delete_boot.detail << '\n'
+                  << cpp_delete_nothrow_boot.detail << '\n'
+                  << cpp_delete_placement_boot.detail << '\n';
+        return 130;
+    }
+    const auto cpp_delete_array_boot = run_guard_fixture(
+        delete_array_install_zip, "milestone32-cxx-delete-array.zip");
+    const auto cpp_delete_array_nothrow_boot = run_guard_fixture(
+        delete_array_nothrow_install_zip, "milestone32-cxx-delete-array-nothrow.zip");
+    const auto cpp_delete_array_placement_boot = run_guard_fixture(
+        delete_array_placement_install_zip, "milestone32-cxx-delete-array-placement.zip");
+    if (!cpp_delete_array_boot.returned
+        || cpp_delete_array_boot.last_hle_nid != delete_array_nid
+        || cpp_delete_array_boot.cxx_delete_array_call_count != 1
+        || cpp_delete_array_boot.cxx_placement_delete_call_count != 0
+        || !cpp_delete_array_nothrow_boot.returned
+        || cpp_delete_array_nothrow_boot.last_hle_nid != delete_array_nothrow_nid
+        || cpp_delete_array_nothrow_boot.cxx_delete_array_call_count != 1
+        || !cpp_delete_array_placement_boot.returned
+        || cpp_delete_array_placement_boot.last_hle_nid != delete_array_placement_nid
+        || cpp_delete_array_placement_boot.cxx_delete_array_call_count != 1
+        || cpp_delete_array_placement_boot.cxx_placement_delete_call_count != 1) {
+        std::cerr << cpp_delete_array_boot.detail << '\n'
+                  << cpp_delete_array_nothrow_boot.detail << '\n'
+                  << cpp_delete_array_placement_boot.detail << '\n';
+        return 131;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -1686,6 +1860,10 @@ int main(int argc, char **argv) {
     if (!emitted_m31_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 31 execution-progress fixture: "
                   << emitted_m31_install_zip_fixture << '\n';
+    }
+    if (!emitted_m32_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 32 C++ allocation fixture: "
+                  << emitted_m32_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;
