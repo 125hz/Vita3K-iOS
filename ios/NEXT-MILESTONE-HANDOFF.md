@@ -54,18 +54,18 @@ Portable Windows tests (all in `CoreSmokeTests.cpp`, run via `ctest`) cover: the
 ## Current verified build
 
 ```text
-Milestone 38 source commit:  PENDING - recorded by the finishing docs commit
-Actions run:                 PENDING
+Milestone 38 source commit:  6186b7fa1f13b3ecaf2a686ec1637592eb747f2c
+Actions run:                 29406563073 (success)
 Workflow:                    Build unsigned iOS IPA
-Artifact:                    PENDING (Vita3K-iOS-<commit>-unsigned)
+Artifact:                    Vita3K-iOS-6186b7fa1f13b3ecaf2a686ec1637592eb747f2c-unsigned
 Local IPA:                   test-artifacts/milestone38/Vita3K-iOS-unsigned.ipa
 Bundle ID:                   org.vita3k.experimental.ios
 Version:                     0.38.0 (build 38)
 Signing files:               0
-IPA SHA-256:                 PENDING
+IPA SHA-256:                 8041650E9E8AADF18336C7E757A41BA49961443005479A37FF9057546EA79F61
 ```
 
-(If any field above still reads PENDING, the implementation commit was pushed but the finishing documentation commit was not; re-derive the values with `gh run list --repo 125hz/Vita3K-iOS --branch ios-port` and artifact verification before trusting a build.)
+The IPA was extracted and verified: `Payload/Vita3K-iOS.app/Vita3K-iOS` is a Mach-O arm64 iPhoneOS binary, the binary `Info.plist` carries the bundle ID/version/build above, and no `_CodeSignature`, provisioning profile, certificate, or key material exists anywhere in the archive. The artifact also contains every legal synthetic fixture through `milestone38-startup-services.zip`.
 
 The last physically accepted build remains Milestone 37:
 
