@@ -57,6 +57,12 @@ jobs:
           ./build-deps/vcpkg/bootstrap-vcpkg.sh -disableMetrics
           echo "VCPKG_ROOT=$PWD/build-deps/vcpkg" >> "$GITHUB_ENV"
 
+      - name: Restore iOS vcpkg binary archive
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-arm64-ios-77df67c-${{ hashFiles('vcpkg.json') }}
+
       - name: Install pinned MoltenVK iOS package
         run: |
           mkdir -p build-deps/moltenvk
