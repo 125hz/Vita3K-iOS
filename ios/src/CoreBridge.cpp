@@ -53,11 +53,12 @@ struct PreparedExecutableState {
 };
 
 PreparedExecutableState prepared_executable;
-constexpr std::size_t maximum_controlled_boot_instructions = 256;
+constexpr std::size_t maximum_controlled_boot_instructions = 4096;
 constexpr std::uint32_t flag_negative = 1u << 31;
 constexpr std::uint32_t flag_zero = 1u << 30;
 constexpr std::uint32_t flag_carry = 1u << 29;
 constexpr std::uint32_t flag_overflow = 1u << 28;
+constexpr std::size_t register_lr = 14;
 
 bool run_upstream_self_tests() {
     const bool arm_encoder_ok = encode_arm_inst(INSTRUCTION_MOVW, 0x1234, 0) == 0xE3010234u;
@@ -872,6 +873,14 @@ bool run_thumb2_register_family_test(GuestMemory &memory, std::string &error) {
     write_value(program, 0x26, static_cast<std::uint16_t>(0x0201));
     write_value(program, 0x28, static_cast<std::uint16_t>(0xEBAA)); // invalid PC shift source
     write_value(program, 0x2A, static_cast<std::uint16_t>(0x020F));
+    write_value(program, 0x2C, static_cast<std::uint16_t>(0xEB00)); // ADD.W r0, r0, lr, LSL #3
+    write_value(program, 0x2E, static_cast<std::uint16_t>(0x00CE));
+    write_value(program, 0x30, static_cast<std::uint16_t>(0xEB0E)); // ADD.W r1, lr, r0
+    write_value(program, 0x32, static_cast<std::uint16_t>(0x0100));
+    write_value(program, 0x34, static_cast<std::uint16_t>(0xEB00)); // ADD.W lr, r0, r1
+    write_value(program, 0x36, static_cast<std::uint16_t>(0x0E01));
+    write_value(program, 0x38, static_cast<std::uint16_t>(0xEB00)); // invalid SP shifted source
+    write_value(program, 0x3A, static_cast<std::uint16_t>(0x000D));
 
     write_value(program, 0x40, static_cast<std::uint16_t>(0xF841)); // STR.W r0, [r1, r2, LSL #2]
     write_value(program, 0x42, static_cast<std::uint16_t>(0x0022));
@@ -973,6 +982,27 @@ bool run_thumb2_register_family_test(GuestMemory &memory, std::string &error) {
     run_at(0x28);
     const auto invalid_shift_register = interpreter.run(1);
 
+    run_at(0x2C);
+    interpreter.state().registers[0] = 4;
+    interpreter.state().registers[register_lr] = 5;
+    const auto captured_lr_shift = interpreter.run(1);
+    const auto captured_lr_shift_state = interpreter.state();
+
+    run_at(0x30);
+    interpreter.state().registers[0] = 2;
+    interpreter.state().registers[register_lr] = 7;
+    const auto lr_source = interpreter.run(1);
+    const auto lr_source_state = interpreter.state();
+
+    run_at(0x34);
+    interpreter.state().registers[0] = 11;
+    interpreter.state().registers[1] = 13;
+    const auto lr_destination = interpreter.run(1);
+    const auto lr_destination_state = interpreter.state();
+
+    run_at(0x38);
+    const auto invalid_sp_shift_register = interpreter.run(1);
+
     run_at(0x40);
     interpreter.state().registers[0] = 0xAABBCCDDu;
     interpreter.state().registers[1] = data_address;
@@ -1010,7 +1040,7 @@ bool run_thumb2_register_family_test(GuestMemory &memory, std::string &error) {
     const auto stopped_at_limit = [](const ArmExecutionResult &result) {
         return result.reason == ArmStopReason::instruction_limit;
     };
-    const bool alu_valid = stopped_at_limit(captured) && captured_state.registers[2] == 60 && captured_state.cpsr == 0xF0000000u && stopped_at_limit(logical) && logical_state.registers[3] == 4 && (logical_state.cpsr & flag_carry) != 0 && (logical_state.cpsr & flag_overflow) != 0 && stopped_at_limit(rotate) && rotate_state.registers[4] == 0x01800000u && (rotate_state.cpsr & flag_carry) == 0 && stopped_at_limit(invert) && invert_state.registers[5] == 0xFFFFFFFFu && (invert_state.cpsr & flag_negative) != 0 && (invert_state.cpsr & flag_carry) != 0 && (invert_state.cpsr & flag_overflow) != 0 && stopped_at_limit(test) && (test_state.cpsr & flag_zero) == 0 && stopped_at_limit(add) && add_state.registers[6] == 0 && (add_state.cpsr & flag_zero) != 0 && (add_state.cpsr & flag_carry) != 0 && stopped_at_limit(subtract_carry) && subtract_carry_state.registers[7] == 0xFFFFFFFFu && (subtract_carry_state.cpsr & flag_negative) != 0 && (subtract_carry_state.cpsr & flag_carry) == 0 && stopped_at_limit(reverse_subtract) && reverse_subtract_state.registers[8] == 4 && (reverse_subtract_state.cpsr & flag_carry) != 0 && stopped_at_limit(rotate_extend) && rotate_extend_state.registers[4] == 0x80000001u && (rotate_extend_state.cpsr & flag_carry) == 0 && unsupported_pack.reason == ArmStopReason::unsupported_instruction && invalid_shift_register.reason == ArmStopReason::unsupported_instruction;
+    const bool alu_valid = stopped_at_limit(captured) && captured_state.registers[2] == 60 && captured_state.cpsr == 0xF0000000u && stopped_at_limit(logical) && logical_state.registers[3] == 4 && (logical_state.cpsr & flag_carry) != 0 && (logical_state.cpsr & flag_overflow) != 0 && stopped_at_limit(rotate) && rotate_state.registers[4] == 0x01800000u && (rotate_state.cpsr & flag_carry) == 0 && stopped_at_limit(invert) && invert_state.registers[5] == 0xFFFFFFFFu && (invert_state.cpsr & flag_negative) != 0 && (invert_state.cpsr & flag_carry) != 0 && (invert_state.cpsr & flag_overflow) != 0 && stopped_at_limit(test) && (test_state.cpsr & flag_zero) == 0 && stopped_at_limit(add) && add_state.registers[6] == 0 && (add_state.cpsr & flag_zero) != 0 && (add_state.cpsr & flag_carry) != 0 && stopped_at_limit(subtract_carry) && subtract_carry_state.registers[7] == 0xFFFFFFFFu && (subtract_carry_state.cpsr & flag_negative) != 0 && (subtract_carry_state.cpsr & flag_carry) == 0 && stopped_at_limit(reverse_subtract) && reverse_subtract_state.registers[8] == 4 && (reverse_subtract_state.cpsr & flag_carry) != 0 && stopped_at_limit(rotate_extend) && rotate_extend_state.registers[4] == 0x80000001u && (rotate_extend_state.cpsr & flag_carry) == 0 && stopped_at_limit(captured_lr_shift) && captured_lr_shift_state.registers[0] == 44 && stopped_at_limit(lr_source) && lr_source_state.registers[1] == 9 && stopped_at_limit(lr_destination) && lr_destination_state.registers[register_lr] == 24 && unsupported_pack.reason == ArmStopReason::unsupported_instruction && invalid_shift_register.reason == ArmStopReason::unsupported_instruction && invalid_sp_shift_register.reason == ArmStopReason::unsupported_instruction;
     const bool memory_valid = stopped_at_limit(word_memory) && word_memory_state.registers[3] == 0xAABBCCDDu && stopped_at_limit(byte_memory) && byte_memory_state.registers[5] == 0xFFFFFF80u && stopped_at_limit(halfword_memory) && halfword_memory_state.registers[7] == 0xFFFF8001u && invalid_offset_register.reason == ArmStopReason::unsupported_instruction && offset_overflow.reason == ArmStopReason::memory_fault && reserved_memory_suffix.reason == ArmStopReason::unsupported_instruction && unmapped_memory.reason == ArmStopReason::memory_fault;
 
     std::string unmap_error;
@@ -1680,7 +1710,7 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         .title_id = prepared_executable.title_id
     };
     if (instruction_limit == 0 || instruction_limit > maximum_controlled_boot_instructions) {
-        result.detail = "The controlled boot budget must be between 1 and 256 instructions.";
+        result.detail = "The controlled boot budget must be between 1 and 4096 instructions.";
     } else if (!prepared_executable.ready || !guest_memory) {
         result.detail = "No prepared executable is available. Select the title again first.";
     } else {

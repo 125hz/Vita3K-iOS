@@ -1,6 +1,6 @@
 # Vita3K iOS bootstrap
 
-This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It can transactionally install user-selected app/patch ZIPs, list installed titles, prefer a patch `eboot.bin`, safely prepare a selected Vita SELF, and make one explicitly confirmed interpreter attempt with a hard 256-instruction ceiling. It also loads and completes the `module_start` of a deliberately tiny legal fixture, executes a tested baseline of compiler-generated Thumb arithmetic, memory, stack, and branch instructions, presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet execute general installed games, render Vita graphics, route input to guest services, or provide a production CPU/HLE implementation.
+This directory is an experimental, device-only iOS application for a future Vita3K port. It builds an unsigned IPA containing a UIKit/Metal host, file-backed logging, sandbox storage, and the first cross-compiled slices of upstream Vita3K code. It can transactionally install user-selected app/patch ZIPs, list installed titles, prefer a patch `eboot.bin`, safely prepare a selected Vita SELF, and make one explicitly confirmed interpreter attempt with a hard 4096-instruction ceiling. It also loads and completes the `module_start` of a deliberately tiny legal fixture, executes a tested baseline of compiler-generated Thumb arithmetic, memory, stack, and branch instructions, presents one core-owned Metal diagnostic frame, and captures normalized UIKit/GameController input. It does **not** yet execute general installed games, render Vita graphics, route input to guest services, or provide a production CPU/HLE implementation. See [MENU-BOOT-CHECKLIST.md](MENU-BOOT-CHECKLIST.md) for the remaining first-menu gates.
 
 The separation is intentional: upstream's current Apple target is a macOS desktop application using Qt, Cocoa, SDL, MoltenVK, and desktop-oriented dependency builds. Those pieces cannot simply be linked into an iOS application.
 
@@ -163,11 +163,11 @@ Keep Amagami, firmware PUPs, keys, and other proprietary content on your device.
 ## Milestone 17 controlled boot-boundary test
 
 1. Open **Game Library** and select the installed title again so its executable is freshly prepared.
-2. Tap **Attempt Boot (256 Instructions)**.
+2. Tap **Attempt Boot (4096 Instructions)**.
 3. Read the safety prompt, then choose **Run Once**.
 4. Capture the **Boot Boundary Captured** alert and the `Controlled boot attempt:` line.
 
-This is interpreter-only and does not enable JIT. The executable can be attempted only once per preparation, and the interpreter stops on the first unsupported instruction, memory fault, unimplemented HLE call, normal return/exit, or the 256-instruction ceiling. For a commercial game, an early diagnostic stop is expected and is not a crash or a playable boot. Re-select the title before each later attempt so guest memory is reloaded cleanly.
+This is interpreter-only and does not enable JIT. The executable can be attempted only once per preparation, and the interpreter stops on the first unsupported instruction, memory fault, unimplemented HLE call, normal return/exit, or the 4096-instruction ceiling. For a commercial game, an early diagnostic stop is expected and is not a crash or a playable boot. Re-select the title before each later attempt so guest memory is reloaded cleanly.
 
 ## Milestone 18 lifecycle-entry resolution test
 
@@ -176,7 +176,7 @@ Milestone 17 exposed `0xF62F7FFF` at `0x810176B8` before executing an instructio
 1. Install the Milestone 18 IPA and open **Game Library**.
 2. Select `PCSG00291` with **Prefer Installed Patch** enabled.
 3. Confirm **Executable Prepared** includes `module_start ... via lifecycle export`.
-4. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
+4. Tap **Attempt Boot (4096 Instructions)** and choose **Run Once**.
 5. Share the new diagnostic text or screenshot. A new unsupported instruction or HLE boundary is expected; a playable frame is not.
 
 The Actions artifact also includes `milestone18-lifecycle-export.zip`. Its module header deliberately points at the wrong executable location while its lifecycle export points at a legal synthetic Thumb program. Installing, preparing, and attempting `M15TEST01` from that archive must complete 12 instructions, two HLE calls, and exit with status 42. This fixture contains no game or firmware data.
@@ -187,7 +187,7 @@ The accepted Milestone 18 Amagami attempt entered the lifecycle export at `0x810
 
 1. Install the Milestone 19 IPA and open **Game Library**.
 2. Select `PCSG00291` with **Prefer Installed Patch** enabled and confirm preparation still says `via lifecycle export`.
-3. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
+3. Tap **Attempt Boot (4096 Instructions)** and choose **Run Once**.
 4. Share the complete new diagnostic. It should advance past `0xE92D` at `0x81017580`; another CPU, memory, or HLE boundary is expected.
 
 The Actions artifact includes `milestone19-thumb2-wide-push.zip`. Installing and attempting its synthetic `M15TEST01` title must complete 12 instructions and two HLE calls, including `PUSH.W {r8, lr}`, then exit with status 42. This fixture contains no game or firmware data.
@@ -198,8 +198,8 @@ The accepted Milestone 19 Amagami attempt executed the wide stack save and stopp
 
 1. Install the Milestone 20 IPA and open **Game Library**.
 2. Select `PCSG00291` with **Prefer Installed Patch** enabled and confirm `via lifecycle export`.
-3. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
-4. Share the complete new diagnostic, including its `Lookahead:` values. It should advance past `0xB082` at `0x81017584`; an unsupported CPU instruction, memory fault, unbound HLE NID, or the 256-instruction ceiling is expected.
+3. Tap **Attempt Boot (4096 Instructions)** and choose **Run Once**.
+4. Share the complete new diagnostic, including its `Lookahead:` values. It should advance past `0xB082` at `0x81017584`; an unsupported CPU instruction, memory fault, unbound HLE NID, or the instruction ceiling is expected.
 
 The Actions artifact includes `milestone20-thumb-compiler-baseline.zip`. Installing and attempting its synthetic `M15TEST01` title must complete 13 instructions and two HLE calls, including wide `PUSH.W` and `SUB sp, #8`, then exit with status 42. Portable self-tests additionally validate the other batched instruction families and exact CPU/memory state.
 
@@ -209,7 +209,7 @@ The accepted Milestone 20 Amagami attempt advanced through the stack allocation 
 
 1. Install the Milestone 21 IPA and open **Game Library**.
 2. Select `PCSG00291` with **Prefer Installed Patch** enabled and confirm `via lifecycle export`.
-3. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
+3. Tap **Attempt Boot (4096 Instructions)** and choose **Run Once**.
 4. Share the complete new diagnostic, including `Lookahead:` if present. It should advance past the three captured 32-bit instructions at `0x81017586` through `0x81017592`; the next honest CPU, memory, HLE, return, or instruction-limit boundary is expected.
 
 The Actions artifact includes `milestone21-thumb2-compiler-batch.zip`. Its synthetic `M15TEST01` runs the exact captured `MOVW`/`STRD`/`MOVT` opcodes after the existing wide prologue, reaches the exit-thread import, and completes nine instructions with one HLE call and exit status 42. Portable CPU-state tests additionally cover `LDRD`, pre-indexed store writeback, and post-indexed load writeback.
@@ -219,7 +219,7 @@ The Actions artifact includes `milestone21-thumb2-compiler-batch.zip`. Its synth
 The accepted Milestone 21 Amagami attempt executed ten instructions and reached the first imported HLE trampoline, but reported NID `0x00000000`. The import binder stores each real NID after the canonical ARM `SVC; MOV pc,lr` pair; the interpreter previously trusted that inline word only when an HLE handler was already registered, so an unimplemented import incorrectly fell back to zero in `r12`. Milestone 22 validates the canonical trampoline independently of handler availability and reports the real inline NID, upstream NID name, SVC address, LR return address, arguments `r0`–`r3`, original `r12`, and whether the NID appears in the module import inventory. It still stops before executing unknown HLE behavior.
 
 1. Install the Milestone 22 IPA and open **Game Library**.
-2. Select `PCSG00291`, confirm `via lifecycle export`, and run **Attempt Boot (256 Instructions)** once.
+2. Select `PCSG00291`, confirm `via lifecycle export`, and run **Attempt Boot (4096 Instructions)** once.
 3. Share the entire **Boot Boundary Captured** message or background diagnostic.
 4. The result should no longer say only NID `0x00000000`; return the real NID, function name, SVC/LR addresses, and all four argument values so the next milestone can implement the correct HLE family.
 
@@ -231,7 +231,7 @@ The accepted Milestone 22 Amagami attempt identified the first real call as `__c
 
 1. Install the Milestone 23 IPA and open **Game Library**.
 2. Select `PCSG00291`, keep **Prefer Installed Patch** enabled, and confirm `via lifecycle export`.
-3. Tap **Attempt Boot (256 Instructions)** and choose **Run Once**.
+3. Tap **Attempt Boot (4096 Instructions)** and choose **Run Once**.
 4. Share the entire next alert or background diagnostic. A later CPU instruction, memory fault, unbound HLE, module return, or instruction ceiling is expected; the previous `0xBFE02B3A` boundary should now count as one dispatched HLE call and execution should continue past it.
 
 The Actions artifact includes `milestone23-libc-dso-runtime.zip`. Its legal synthetic title imports `__cxa_set_dso_handle_main`, passes handle `0x81000200`, dispatches exactly one HLE call, records the handle, and returns through the module's zero-link sentinel after seven instructions. See `ios/VION-ANALYSIS.md` for the verified Vion architecture comparison and the larger full-core migration path.
@@ -247,7 +247,7 @@ Unpredictable register combinations, invalid replicated-zero encodings, writebac
 
 1. Install the Milestone 24 IPA and open **Game Library**.
 2. Select `PCSG00291`, keep **Prefer Installed Patch** enabled, and confirm `via lifecycle export`.
-3. Run **Attempt Boot (256 Instructions)** once.
+3. Run **Attempt Boot (4096 Instructions)** once.
 4. Share the complete next boundary. It must advance beyond both `0x810175BE` and `0x810175C2`, retain one successful libc HLE call and the DSO handle, then stop honestly at the next unsupported CPU, memory, HLE, return, or budget boundary.
 
 The Actions artifact includes `milestone24-thumb2-runtime-families.zip`. Its legal synthetic title dispatches the Milestone 23 libc HLE, executes the exact captured `MOVS.W` and `LDR.W`, and returns after nine instructions. Portable tests cover the wider ALU, flags, signed/unsigned memory, indexed writeback, invalid-encoding, and overflow behavior.
@@ -260,7 +260,7 @@ This milestone also adds scaled register-offset byte, halfword, signed-byte, sig
 
 1. Install the Milestone 25 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
 2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
-3. Run **Attempt Boot (256 Instructions)** once.
+3. Run **Attempt Boot (4096 Instructions)** once.
 4. Share the complete next boundary and all sixteen look-ahead halfwords. Execution must advance through `SUB.W` at `0x810175EA`, preserve the libc HLE/DSO state, and then stop honestly at the next CPU, memory, HLE, return, or instruction-ceiling boundary.
 
 The Actions artifact includes `milestone25-thumb2-register-families.zip`. Its legal synthetic title crosses the libc call and Milestone 24 sequence, executes the exact captured `SUB.W`, and returns after ten instructions. Portable tests additionally cover shifted flags, rotate/`RRX`, arithmetic carry/overflow behavior, scaled register memory, sign extension, invalid encodings, and overflow.
@@ -273,7 +273,7 @@ Milestone 26 binds the complete closely related `__aeabi_atexit`, `__cxa_atexit`
 
 1. Install the Milestone 26 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
 2. Confirm preparation reports `module_start 0x810176B9 via lifecycle export`.
-3. Run **Attempt Boot (256 Instructions)** once.
+3. Run **Attempt Boot (4096 Instructions)** once.
 4. Share the complete next boundary. It should exceed 72 instructions, report two successful HLE calls and `Libc termination registrations=1` with the three captured values, then stop honestly at the next CPU, memory, HLE, return, or instruction-ceiling boundary.
 
 The Actions artifact includes `milestone26-libc-termination.zip`. Its legal synthetic title dispatches `__aeabi_atexit`, records object `0x81000240`, destructor `0x81000301`, and DSO `0x81000200`, then returns after nine instructions. Portable regressions separately exercise the `__cxa_atexit` argument order and `__cxa_finalize` diagnostic state.
@@ -286,7 +286,7 @@ Milestone 27 replaces the earlier one-off wide-push decoder with the complete sa
 
 1. Install the Milestone 27 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
 2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
-3. Run **Attempt Boot (256 Instructions)** once.
+3. Run **Attempt Boot (4096 Instructions)** once.
 4. Share the complete next boundary and all look-ahead halfwords. It should advance beyond 106 instructions while retaining four HLE calls, DSO `0x812C7690`, and three termination registrations.
 
 The Actions artifact includes `milestone27-thumb2-multiple-transfer.zip`. Its legal synthetic title executes `PUSH.W {r4-r8, lr}` followed by Amagami's exact `POP.W {r4-r8, pc}` and returns after two instructions. Portable tests additionally cover all four transfer modes, writeback, high registers, PC interworking, zero-link return, invalid lists, range overflow, and guest faults.
@@ -297,7 +297,7 @@ The accepted Milestone 27 Amagami attempt advanced to 122 instructions and four 
 
 1. Install the Milestone 28 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
 2. Confirm preparation reports `module_start 0x810176B9 via lifecycle export`.
-3. Run **Attempt Boot (256 Instructions)** once.
+3. Run **Attempt Boot (4096 Instructions)** once.
 4. Share the complete next boundary. It should exceed 122 instructions, report at least five successful HLE calls, preserve the DSO and termination-registration state, and include a `C++ guards:` summary.
 
 The Actions artifact includes `milestone28-cxa-guards.zip`. Its legal synthetic title exercises first acquisition and returns one. Portable regressions also validate the already-initialized zero result, release bit-setting, abort behavior, and an honest recursive-initialization boundary.
@@ -310,7 +310,20 @@ Milestone 29 adds a host-page-aligned 16 MiB guest heap arena at `0x90000000` an
 
 1. Install the Milestone 29 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
 2. Confirm preparation reports `module_start 0x810176B9 via lifecycle export`.
-3. Run **Attempt Boot (256 Instructions)** once.
+3. Run **Attempt Boot (4096 Instructions)** once.
 4. Share the complete next boundary. It should exceed 133 instructions, report at least six successful HLE calls, preserve the DSO/termination/guard state, and include `Libc heap: allocations=1` with address `0x90000000`, size `384`, and alignment `16`.
 
 The Actions artifact includes `milestone29-libc-heap.zip`. Its legal synthetic title reproduces `memalign(0x10, 0x180)`, receives aligned writable guest address `0x90000000`, and returns cleanly. Portable regressions cover alignment, resize preservation, usable size, free/coalescing, zeroed reuse, and invalid alignment.
+
+## Milestone 30 LR shifted-register execution runway
+
+The accepted Milestone 29 device run proved the first real heap allocation, advanced to 138 instructions and six HLE calls, then stopped at `EB00 00CE`: `ADD.W r0, r0, lr, LSL #3`. The shifted-register family was already implemented, but its architectural register validation incorrectly classified `lr` as a bad general register. Milestone 30 permits `lr` as source, shifted source, and destination across the complete logical/arithmetic/test family while continuing to reject `sp` and `pc` outside their defined aliases. Portable tests cover all three legal LR positions plus the preserved invalid cases.
+
+The physical-device ceiling is also raised from 256 to 4096 interpreted instructions. This remains a one-shot, non-JIT, stop-on-first-unknown diagnostic; it only reduces the chance that a long run of already-supported startup code ends at an artificial budget boundary.
+
+1. Install the Milestone 30 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (4096 Instructions)** once.
+4. Share the complete next boundary. It should exceed 138 instructions and retain six HLE calls, the DSO/termination/guard summaries, and the successful 384-byte heap allocation.
+
+The Actions artifact includes `milestone30-thumb2-lr-shifted-register.zip`. Its legal synthetic title executes the exact captured wide add using `lr`, returns 44, and preserves explicit rejection of invalid `sp`/`pc` encodings.

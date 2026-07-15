@@ -54,6 +54,6 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     std::uint32_t stack_pointer,
     std::span<const std::uint32_t> imported_nids,
     std::string thread_name,
-    std::size_t instruction_limit = 256);
+    std::size_t instruction_limit = 4096);
 
 } // namespace vita3k::ios

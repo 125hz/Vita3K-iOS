@@ -168,6 +168,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m27_install_zip_fixture;
     std::filesystem::path emitted_m28_install_zip_fixture;
     std::filesystem::path emitted_m29_install_zip_fixture;
+    std::filesystem::path emitted_m30_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -207,6 +208,8 @@ int main(int argc, char **argv) {
             emitted_m28_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m29-install-zip-fixture" && index + 1 < argc) {
             emitted_m29_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m30-install-zip-fixture" && index + 1 < argc) {
+            emitted_m30_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -228,6 +231,7 @@ int main(int argc, char **argv) {
                          "[--emit-m27-install-zip-fixture <path>] "
                          "[--emit-m28-install-zip-fixture <path>] "
                          "[--emit-m29-install-zip-fixture <path>] "
+                         "[--emit-m30-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -681,6 +685,21 @@ int main(int argc, char **argv) {
     const auto libc_heap_self = make_plain_self(libc_heap_elf);
     const auto m29_install_zip = vita3k::ios::make_synthetic_install_zip(
         libc_heap_self, libc_heap_self);
+    auto lr_shift_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 7> lr_shift_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2004u, // MOVS r0, #4
+        0x2105u, // MOVS r1, #5
+        0x468Eu, // MOV lr, r1
+        0xEB00u, // ADD.W r0, r0, lr, LSL #3 (captured Amagami instruction)
+        0x00CEu,
+        0xBD10u // POP {r4, pc} -> zero-link return sentinel
+    };
+    std::memcpy(lr_shift_elf.data() + 244, lr_shift_program.data(),
+        sizeof(lr_shift_program));
+    const auto lr_shift_self = make_plain_self(lr_shift_elf);
+    const auto m30_install_zip = vita3k::ios::make_synthetic_install_zip(
+        lr_shift_self, lr_shift_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -735,6 +754,10 @@ int main(int argc, char **argv) {
     if (m29_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 29 libc heap fixture.\n";
         return 115;
+    }
+    if (m30_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 30 LR shifted-register fixture.\n";
+        return 118;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -915,6 +938,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 29 libc heap fixture.\n";
             return 116;
+        }
+    }
+    if (!emitted_m30_install_zip_fixture.empty()) {
+        if (!emitted_m30_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m30_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m30_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m30_install_zip.data()),
+            static_cast<std::streamsize>(m30_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 30 LR shifted-register fixture.\n";
+            return 119;
         }
     }
 
@@ -1470,6 +1506,15 @@ int main(int argc, char **argv) {
         std::cerr << libc_heap_boot.detail << '\n';
         return 117;
     }
+    const auto lr_shift_boot = run_guard_fixture(
+        m30_install_zip, "milestone30-thumb2-lr-shifted-register.zip");
+    if (!lr_shift_boot.started || !lr_shift_boot.returned
+        || lr_shift_boot.instruction_count != 6
+        || lr_shift_boot.hle_dispatch_count != 0
+        || lr_shift_boot.return_value != 44) {
+        std::cerr << lr_shift_boot.detail << '\n';
+        return 120;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -1589,6 +1634,10 @@ int main(int argc, char **argv) {
     if (!emitted_m29_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 29 libc heap fixture: "
                   << emitted_m29_install_zip_fixture << '\n';
+    }
+    if (!emitted_m30_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 30 LR shifted-register fixture: "
+                  << emitted_m30_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

@@ -1,6 +1,6 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 29.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 30. Read `MENU-BOOT-CHECKLIST.md` for the full first-menu critical path.
 
 ## Copy-paste prompt
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 29 boundary
+## Known Milestone 30 boundary
 
-Milestone 28 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It advanced to 133 instructions and five HLE calls, retained DSO handle `0x812C7690`, recorded three termination registrations, and successfully acquired guard `0x812C75D8`. It then reached `memalign` (NID `0xA9363E6B`) at SVC `0x8109BD28`, called from LR `0x81001F79`, with alignment `r0=0x10` and size `r1=0x180`.
+Milestone 29 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. It advanced to 138 instructions and six HLE calls, retained DSO handle `0x812C7690`, three termination registrations, and the acquired guard `0x812C75D8`. `memalign(0x10, 0x180)` succeeded with guest address `0x90000000`, zero failures, and 384 live/peak bytes. Execution then stopped at `0x81001F82` on `EB00 00CE`, the legal `ADD.W r0, r0, lr, LSL #3` encoding.
 
-Milestone 29 implements a bounded 16 MiB guest heap plus `calloc`, `malloc`, `memalign`, `free`, `realloc`, and `malloc_usable_size`. Install the Milestone 29 artifact, prepare `PCSG00291`, and run the one-shot attempt once. It should advance past 133 instructions, count `memalign` as the sixth successful HLE call, return writable aligned guest address `0x90000000`, and include a `Libc heap:` diagnostic. Return the complete next CPU, memory, HLE, return, or instruction-limit boundary; never skip unknown behavior.
+Milestone 30 corrects high-register validation across the complete Thumb-2 shifted-register ALU/test family: LR is legal as a source, shifted source, or destination, while SP and PC misuse remains an explicit boundary. It also raises the safe one-shot interpreter ceiling from 256 to 4096 instructions. Install the Milestone 30 artifact, prepare `PCSG00291`, and run the attempt once. It should advance past 138 instructions while preserving all six HLE calls and heap/runtime diagnostics. Return the complete next CPU, memory, HLE, return, or instruction-limit boundary; never skip unknown behavior.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m29-install-zip-fixture artifacts/milestone29-libc-heap.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m30-install-zip-fixture artifacts/milestone30-thumb2-lr-shifted-register.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 

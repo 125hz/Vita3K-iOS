@@ -191,7 +191,7 @@ CoreStatus query_core_status();
 CoreStatus rescan_imports();
 GameInstallResult install_game_archive(const std::filesystem::path &archive_path);
 TitlePreparationResult prepare_installed_title(std::string title_id, bool prefer_patch);
-TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit = 256);
+TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit = 4096);
 bool attach_host_display(std::uint32_t width, std::uint32_t height, std::string &error);
 std::optional<HostDisplayFrame> acquire_host_display_frame(std::uint32_t width,
     std::uint32_t height, std::string &error);

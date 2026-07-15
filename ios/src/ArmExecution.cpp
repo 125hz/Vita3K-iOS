@@ -1487,7 +1487,17 @@ ArmExecutionResult ArmInterpreter::step_thumb() {
             const bool test_alias = destination == register_pc && set_flags && (operation == 0x0u || operation == 0x4u || operation == 0x8u || operation == 0xDu);
             const bool logical_operation = operation <= 0x4u;
             const bool arithmetic_operation = operation == 0x8u || operation == 0xAu || operation == 0xBu || operation == 0xDu || operation == 0xEu;
-            const bool invalid_registers = (!move_alias && source >= register_sp) || (!test_alias && destination >= register_sp) || shifted_register >= register_sp || (test_alias && source >= register_sp);
+            const auto bad_general_register = [](std::uint32_t register_index) {
+                // Armv7's BadReg() predicate rejects SP and PC, but not LR.
+                // LR is a normal source/destination for these wide ALU forms;
+                // compiler-generated address arithmetic commonly consumes it.
+                return register_index == register_sp || register_index == register_pc;
+            };
+            const bool invalid_registers =
+                (!move_alias && bad_general_register(source))
+                || (!test_alias && bad_general_register(destination))
+                || bad_general_register(shifted_register)
+                || (test_alias && bad_general_register(source));
             state_.registers[register_pc] = pc + 4u;
             if ((!logical_operation && !arithmetic_operation) || invalid_registers) {
                 return {

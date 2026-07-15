@@ -44,7 +44,7 @@ The CI target now proves that an unsigned, device-native UIKit/Metal application
 22. **Implemented pending device acceptance:** resolve inline NIDs from validated `SVC; MOV pc,lr; NID` import trampolines even when unimplemented, and capture the NID name, callsite, return address, arguments, `r12`, and import-inventory status without fabricating HLE results.
 23. After bounded interpreter boot is stable, integrate and validate the ARM64 JIT platform layer.
 
-Current loader limits are intentional: `ET_SCE_RELEXEC` segments are tried only at their preferred addresses, while SELF segments may require container-specific offset/decompression handling. Imported ARM function stubs are rewritten, but variable/TLS imports and Thumb import stubs are not bound. The loader resolves `NID_MODULE_START` from the export entry table before a valid module is attempted with a 256-instruction ceiling; unsupported code stops with a detailed reason and bounded look-ahead. The interpreter now covers common 16-bit Thumb compiler families, one 32-bit BL/BLX form, wide load/store multiple including `PUSH.W`/`POP.W`, `MOVW`/`MOVT`, and immediate `LDRD`/`STRD`. IT blocks, much of Thumb-2, floating point/NEON, exceptions, atomics, and production scheduling remain unsupported.
+Current loader limits are intentional: `ET_SCE_RELEXEC` segments are tried only at their preferred addresses, while SELF segments may require container-specific offset/decompression handling. Imported ARM function stubs are rewritten, but variable/TLS imports and Thumb import stubs are not bound. The loader resolves `NID_MODULE_START` from the export entry table before a valid module is attempted with a 4096-instruction ceiling; unsupported code stops with a detailed reason and bounded look-ahead. The interpreter now covers common 16-bit Thumb compiler families, one 32-bit BL/BLX form, wide load/store multiple including `PUSH.W`/`POP.W`, `MOVW`/`MOVT`, and immediate `LDRD`/`STRD`. IT blocks, much of Thumb-2, floating point/NEON, exceptions, atomics, and production scheduling remain unsupported. The concrete critical path to a guest-produced title screen is tracked in `MENU-BOOT-CHECKLIST.md`.
 
 The relocation parser implements upstream formats 0–9 and the common ARM/Thumb codes, but the current deterministic acceptance fixture exercises format 0 (`ABS32`). Other compact formats still require representative legal fixtures before they should be considered device-validated.
 
@@ -75,6 +75,10 @@ The bounded runtime now implements the complete Arm 32-bit `__cxa_guard_acquire`
 ## Milestone 29 bounded libc guest heap
 
 The bounded runtime now maps a separate 16 MiB read/write guest arena and services the standard `calloc`, `malloc`, `memalign`, `free`, `realloc`, and `malloc_usable_size` imports. This clears Amagami's captured `memalign(16, 384)` startup boundary with a real writable guest pointer rather than a host pointer or fabricated address. Block splitting, alignment padding, coalescing, zeroing, resize copying, pointer validation, and live/peak diagnostics are state-tested. Cross-thread allocation, arena growth, errno, mspaces, and integration with upstream Vita3K's process memory allocator remain future work.
+
+## Milestone 30 LR shifted-register execution runway
+
+The accepted Milestone 29 run completed `memalign`, reached 138 instructions and six HLE calls, then stopped on legal `EB00 00CE` (`ADD.W r0, r0, lr, LSL #3`). Armv7's bad-register rule excludes `sp` and `pc`, not `lr`; the local decoder had grouped all three high registers together. The complete Thumb-2 shifted-register ALU/test family now permits LR in source, shifted-source, and destination positions while retaining explicit rejection of SP/PC misuse. The one-shot UI budget increases to 4096 interpreted instructions so already-supported startup code can advance farther without removing the stop-on-first-unknown safety boundary.
 
 ## Firmware packages
 

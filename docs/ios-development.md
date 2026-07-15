@@ -4,7 +4,7 @@ This guide sets up a Vita3K fork so Windows is the primary editing and testing e
 
 ## 1. What this branch can and cannot do
 
-Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application host, a Metal view, lifecycle handling, persistent logs, sandbox storage, the first dependency-free upstream core slice, Vita3K's real package/SFO metadata parser, a 4 GiB guest address space, shared-page-aware segment mapping, preferred-address Vita VELF loading, checked relocation application, NID parsing, ARM import-stub rewriting, a bounded compiled-style module/thread diagnostic with common Thumb arithmetic, memory, stack, flag, and branch families, one core-owned Metal clear/present, normalized UIKit touch capture, and GameController polling. It does not yet contain a working Vita emulator because protected SELF extraction, complete Vita VFS mounting, general ARM/Thumb-2 execution, broader HLE, Vita graphics, guest input/audio services, and the wider dependency graph have not been ported to iOS. `VITA3K_IOS_LINK_CORE=ON` is required.
+Today the workflow builds a real `arm64` iPhone/iPad IPA containing the iOS application host, a Metal view, lifecycle handling, persistent logs, sandbox storage, the first dependency-free upstream core slice, Vita3K's real package/SFO metadata parser, a 4 GiB guest address space, shared-page-aware segment mapping, preferred-address Vita VELF loading, checked relocation application, NID parsing, ARM import-stub rewriting, a bounded compiled-style module/thread diagnostic with common Thumb arithmetic, memory, stack, flag, and branch families, one core-owned Metal clear/present, normalized UIKit touch capture, and GameController polling. It does not yet contain a working Vita emulator because protected SELF extraction, complete Vita VFS mounting, general ARM/Thumb-2 execution, broader HLE, Vita graphics, guest input/audio services, and the wider dependency graph have not been ported to iOS. `VITA3K_IOS_LINK_CORE=ON` is required. The first guest-menu critical path is maintained in `ios/MENU-BOOT-CHECKLIST.md`.
 
 Use the pipeline as a stable first milestone: every future porting change should keep the bootstrap IPA green while moving one subsystem across the `CoreBridge` boundary.
 
@@ -209,6 +209,10 @@ The accepted Milestone 27 device run advanced to 122 instructions and reached `_
 ## Milestone 29 bounded libc guest heap
 
 The accepted Milestone 28 device run advanced to 133 instructions and five HLE calls, then reached `memalign` (NID `0xA9363E6B`) with alignment 16 and size 384. Milestone 29 maps a bounded guest arena and implements `calloc`, `malloc`, `memalign`, `free`, `realloc`, and `malloc_usable_size` with block reuse, coalescing, alignment, zeroing, resize preservation, and diagnostics. CI emits `milestone29-libc-heap.zip`, whose synthetic title reproduces the captured allocation and returns aligned address `0x90000000`.
+
+## Milestone 30 LR shifted-register execution runway
+
+The accepted Milestone 29 device run advanced to 138 instructions and six HLE calls with one successful 384-byte aligned heap allocation. Its next instruction is `EB00 00CE`, decoded as `ADD.W r0, r0, lr, LSL #3`. Milestone 30 corrects the Thumb-2 shifted-register validation to treat LR as a legal general operand across the full logical/arithmetic/test family while SP and PC remain rejected except for their architecturally defined aliases. CI emits `milestone30-thumb2-lr-shifted-register.zip`, which executes the exact opcode and returns 44. The physical-device one-shot budget is now 4096 interpreted instructions, still without JIT and still stopping at the first unsupported instruction, guest-memory fault, or unknown HLE call.
 
 ## 10. Troubleshooting CI
 
