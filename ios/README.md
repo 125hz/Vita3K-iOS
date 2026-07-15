@@ -377,3 +377,14 @@ The accepted Milestone 33 device run initialized AppUtil successfully and advanc
 4. Share the complete next boundary and the `Sysmodule lifecycle:` diagnostic.
 
 The Actions artifact includes `milestone34-sysmodule-lifecycle.zip`. Its legal synthetic title proves load, loaded-status, unload, and unloaded-status ordering in one run. Portable companions cover unloaded status and invalid module IDs.
+
+## Milestone 35 NP and Trophy startup lifecycle
+
+The accepted Milestone 34 device run crossed two public sysmodule loads in one attempt: NP (`0x15`) and NP Trophy (`0x25`). It advanced to 5692 instructions and 34 HLE calls before reaching `sceNpInit(nullptr, nullptr)` (NID `0x04D9F484`). Milestone 35 batches five upstream-backed startup exports: `sceNpInit`, `sceNpGetServiceState`, `sceNpTerm`, `sceNpTrophyInit`, and `sceNpTrophyTerm`. NP tracks initialized state and optional mapped communication configuration, exposes deterministic offline `SIGNED_OUT` state through checked guest memory, and clears Trophy state on termination. Trophy initialization/termination preserve upstream state errors. Callback registration/checking remains unbound until guest callbacks and scheduling exist; context/file APIs remain unbound until trophy TRP data is connected through the VFS.
+
+1. Install the Milestone 35 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (65536 Instructions)** once.
+4. Share the complete next boundary and the `NP lifecycle:`/`Trophy lifecycle:` diagnostics.
+
+The Actions artifact includes `milestone35-np-lifecycle.zip`, reproducing the captured null-argument NP initialization. Portable companions cover duplicate initialization, signed-out service-state output, null/unmapped outputs, clean NP termination, Trophy initialization/termination, and their state errors.

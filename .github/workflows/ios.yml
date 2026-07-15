@@ -122,6 +122,7 @@ jobs:
             --emit-m32-install-zip-fixture artifacts/milestone32-cxx-allocation.zip \
             --emit-m33-install-zip-fixture artifacts/milestone33-app-util-lifecycle.zip \
             --emit-m34-install-zip-fixture artifacts/milestone34-sysmodule-lifecycle.zip \
+            --emit-m35-install-zip-fixture artifacts/milestone35-np-lifecycle.zip \
             --verify-vitasdk artifacts/milestone10-vitasdk-homebrew.velf
 
       - name: Configure iOS application and core target
@@ -183,5 +184,6 @@ jobs:
             artifacts/milestone32-cxx-allocation.zip
             artifacts/milestone33-app-util-lifecycle.zip
             artifacts/milestone34-sysmodule-lifecycle.zip
+            artifacts/milestone35-np-lifecycle.zip
           if-no-files-found: error
           retention-days: 14

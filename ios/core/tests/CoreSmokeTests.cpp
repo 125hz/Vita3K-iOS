@@ -173,6 +173,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m32_install_zip_fixture;
     std::filesystem::path emitted_m33_install_zip_fixture;
     std::filesystem::path emitted_m34_install_zip_fixture;
+    std::filesystem::path emitted_m35_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -222,6 +223,8 @@ int main(int argc, char **argv) {
             emitted_m33_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m34-install-zip-fixture" && index + 1 < argc) {
             emitted_m34_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m35-install-zip-fixture" && index + 1 < argc) {
+            emitted_m35_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -248,6 +251,7 @@ int main(int argc, char **argv) {
                          "[--emit-m32-install-zip-fixture <path>] "
                          "[--emit-m33-install-zip-fixture <path>] "
                          "[--emit-m34-install-zip-fixture <path>] "
+                         "[--emit-m35-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -878,6 +882,100 @@ int main(int argc, char **argv) {
     const auto sysmodule_lifecycle_self = make_plain_self(sysmodule_lifecycle_elf);
     const auto m34_install_zip = vita3k::ios::make_synthetic_install_zip(
         sysmodule_lifecycle_self, sysmodule_lifecycle_self);
+    constexpr std::uint32_t np_get_service_state_nid = 0x54060DF6u;
+    constexpr std::uint32_t np_init_nid = 0x04D9F484u;
+    constexpr std::uint32_t np_term_nid = 0x19E40AE1u;
+    constexpr std::uint32_t np_trophy_init_nid = 0x34516838u;
+    constexpr std::uint32_t np_trophy_term_nid = 0xBFE0F28Fu;
+    constexpr std::uint32_t np_error_already_initialized = 0x80550001u;
+    constexpr std::uint32_t np_error_invalid_argument = 0x80550003u;
+    constexpr std::uint32_t np_trophy_error_not_initialized = 0x80551601u;
+    constexpr std::uint32_t np_trophy_error_already_initialized = 0x80551602u;
+    constexpr std::uint32_t synthetic_np_service_state = 0x81000240u;
+    const auto m35_install_zip = make_cpp_allocation_archive(np_init_nid, 0);
+    const auto null_np_service_state_install_zip = make_cpp_allocation_archive(
+        np_get_service_state_nid, 0);
+    const auto invalid_np_service_state_install_zip = make_cpp_allocation_archive(
+        np_get_service_state_nid, 0x70000000u);
+    const auto uninitialized_trophy_term_install_zip = make_cpp_allocation_archive(
+        np_trophy_term_nid, 0);
+    const auto make_duplicate_lifecycle_call_archive = [&](std::uint32_t nid) {
+        auto elf = lifecycle_elf;
+        const std::array<std::uint16_t, 8> program{
+            0xB510u, // PUSH {r4, lr}
+            0x2000u, // MOVS r0, #0
+            0x4B02u, // LDR r3, [pc, #8] -> import stub
+            0x4798u, // BLX r3
+            0x2000u, // MOVS r0, #0
+            0x4798u, // BLX r3 again
+            0xBD10u, // POP {r4, pc}
+            0xBF00u
+        };
+        std::memcpy(elf.data() + 244, program.data(), sizeof(program));
+        write_value(elf, 260, static_cast<std::uint32_t>(0x81000050));
+        write_value(elf, 372, nid);
+        const auto self = make_plain_self(elf);
+        return vita3k::ios::make_synthetic_install_zip(self, self);
+    };
+    const auto duplicate_np_init_install_zip = make_duplicate_lifecycle_call_archive(
+        np_init_nid);
+    const auto duplicate_trophy_init_install_zip = make_duplicate_lifecycle_call_archive(
+        np_trophy_init_nid);
+    auto np_lifecycle_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 10> np_lifecycle_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2000u, // MOVS r0, #0 (null communication config)
+        0x4B03u, // LDR r3, [pc, #12] -> sceNpInit stub
+        0x4798u, // BLX r3
+        0x4803u, // LDR r0, [pc, #12] -> service-state output
+        0x3310u, // ADDS r3, #16 -> sceNpGetServiceState stub
+        0x4798u, // BLX r3
+        0x3310u, // ADDS r3, #16 -> sceNpTerm stub
+        0x4798u, // BLX r3
+        0xBD10u // POP {r4, pc}
+    };
+    std::memcpy(np_lifecycle_elf.data() + 244,
+        np_lifecycle_program.data(), sizeof(np_lifecycle_program));
+    write_value(np_lifecycle_elf, 264, static_cast<std::uint32_t>(0x81000030));
+    write_value(np_lifecycle_elf, 268, synthetic_np_service_state);
+    write_value(np_lifecycle_elf, 314, static_cast<std::uint16_t>(4));
+    write_value(np_lifecycle_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(np_lifecycle_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(np_lifecycle_elf, 348, static_cast<std::uint32_t>(0x81000030));
+    write_value(np_lifecycle_elf, 352, static_cast<std::uint32_t>(0x81000040));
+    write_value(np_lifecycle_elf, 356, static_cast<std::uint32_t>(0x81000050));
+    write_value(np_lifecycle_elf, 368, get_thread_id_nid);
+    write_value(np_lifecycle_elf, 372, np_init_nid);
+    write_value(np_lifecycle_elf, 376, np_get_service_state_nid);
+    write_value(np_lifecycle_elf, 380, np_term_nid);
+    const auto np_lifecycle_self = make_plain_self(np_lifecycle_elf);
+    const auto np_lifecycle_install_zip = vita3k::ios::make_synthetic_install_zip(
+        np_lifecycle_self, np_lifecycle_self);
+    auto trophy_lifecycle_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 8> trophy_lifecycle_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2000u, // MOVS r0, #0
+        0x4B02u, // LDR r3, [pc, #8] -> sceNpTrophyInit stub
+        0x4798u, // BLX r3
+        0x3310u, // ADDS r3, #16 -> sceNpTrophyTerm stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc}
+        0xBF00u
+    };
+    std::memcpy(trophy_lifecycle_elf.data() + 244,
+        trophy_lifecycle_program.data(), sizeof(trophy_lifecycle_program));
+    write_value(trophy_lifecycle_elf, 260, static_cast<std::uint32_t>(0x81000040));
+    write_value(trophy_lifecycle_elf, 314, static_cast<std::uint16_t>(3));
+    write_value(trophy_lifecycle_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(trophy_lifecycle_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(trophy_lifecycle_elf, 348, static_cast<std::uint32_t>(0x81000040));
+    write_value(trophy_lifecycle_elf, 352, static_cast<std::uint32_t>(0x81000050));
+    write_value(trophy_lifecycle_elf, 368, get_thread_id_nid);
+    write_value(trophy_lifecycle_elf, 372, np_trophy_init_nid);
+    write_value(trophy_lifecycle_elf, 376, np_trophy_term_nid);
+    const auto trophy_lifecycle_self = make_plain_self(trophy_lifecycle_elf);
+    const auto trophy_lifecycle_install_zip = vita3k::ios::make_synthetic_install_zip(
+        trophy_lifecycle_self, trophy_lifecycle_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -962,6 +1060,15 @@ int main(int argc, char **argv) {
         || invalid_sysmodule_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 34 Sysmodule lifecycle fixtures.\n";
         return 139;
+    }
+    if (m35_install_zip.empty() || null_np_service_state_install_zip.empty()
+        || invalid_np_service_state_install_zip.empty()
+        || uninitialized_trophy_term_install_zip.empty()
+        || duplicate_np_init_install_zip.empty()
+        || duplicate_trophy_init_install_zip.empty()
+        || np_lifecycle_install_zip.empty() || trophy_lifecycle_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 35 NP lifecycle fixtures.\n";
+        return 144;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -1207,6 +1314,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 34 Sysmodule lifecycle fixture.\n";
             return 140;
+        }
+    }
+    if (!emitted_m35_install_zip_fixture.empty()) {
+        if (!emitted_m35_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m35_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m35_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m35_install_zip.data()),
+            static_cast<std::streamsize>(m35_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 35 NP lifecycle fixture.\n";
+            return 145;
         }
     }
 
@@ -2003,6 +2123,107 @@ int main(int argc, char **argv) {
         std::cerr << sysmodule_lifecycle_boot.detail << '\n';
         return 143;
     }
+    const auto np_init_boot = run_guard_fixture(
+        m35_install_zip, "milestone35-np-init.zip");
+    if (!np_init_boot.returned || np_init_boot.hle_dispatch_count != 1
+        || np_init_boot.last_hle_nid != np_init_nid || !np_init_boot.np_initialized
+        || np_init_boot.np_init_call_count != 1 || np_init_boot.last_np_result != 0
+        || np_init_boot.return_value != 0
+        || np_init_boot.detail.find(
+            "NP lifecycle: initialized=yes, init calls=1") == std::string::npos) {
+        std::cerr << np_init_boot.detail << '\n';
+        return 146;
+    }
+    const auto null_np_service_state_boot = run_guard_fixture(
+        null_np_service_state_install_zip, "milestone35-np-null-service-state.zip");
+    if (!null_np_service_state_boot.returned
+        || null_np_service_state_boot.np_service_state_call_count != 1
+        || static_cast<std::uint32_t>(null_np_service_state_boot.last_np_result)
+            != np_error_invalid_argument
+        || null_np_service_state_boot.return_value != np_error_invalid_argument) {
+        std::cerr << null_np_service_state_boot.detail << '\n';
+        return 147;
+    }
+    const auto invalid_np_service_state_boot = run_guard_fixture(
+        invalid_np_service_state_install_zip,
+        "milestone35-np-invalid-service-state.zip");
+    if (!invalid_np_service_state_boot.started || invalid_np_service_state_boot.returned
+        || invalid_np_service_state_boot.np_service_state_call_count != 1
+        || invalid_np_service_state_boot.detail.find(
+            "NP boundary: sceNpGetServiceState output guest-memory validation failed")
+            == std::string::npos) {
+        std::cerr << invalid_np_service_state_boot.detail << '\n';
+        return 148;
+    }
+    const auto duplicate_np_init_boot = run_guard_fixture(
+        duplicate_np_init_install_zip, "milestone35-np-duplicate-init.zip");
+    if (!duplicate_np_init_boot.returned || !duplicate_np_init_boot.np_initialized
+        || duplicate_np_init_boot.np_init_call_count != 2
+        || static_cast<std::uint32_t>(duplicate_np_init_boot.last_np_result)
+            != np_error_already_initialized
+        || duplicate_np_init_boot.return_value != np_error_already_initialized) {
+        std::cerr << duplicate_np_init_boot.detail << '\n';
+        return 149;
+    }
+    const auto np_lifecycle_boot = run_guard_fixture(
+        np_lifecycle_install_zip, "milestone35-np-lifecycle.zip");
+    if (!np_lifecycle_boot.returned || np_lifecycle_boot.hle_dispatch_count != 3
+        || np_lifecycle_boot.last_hle_nid != np_term_nid
+        || np_lifecycle_boot.np_initialized || np_lifecycle_boot.np_trophy_initialized
+        || np_lifecycle_boot.np_init_call_count != 1
+        || np_lifecycle_boot.np_service_state_call_count != 1
+        || np_lifecycle_boot.np_term_call_count != 1
+        || np_lifecycle_boot.last_np_service_state_address != synthetic_np_service_state
+        || np_lifecycle_boot.last_np_service_state != 1
+        || np_lifecycle_boot.last_np_result != 0 || np_lifecycle_boot.return_value != 0
+        || np_lifecycle_boot.detail.find(
+            "initialized=no, init calls=1, service-state calls=1, term calls=1")
+            == std::string::npos) {
+        std::cerr << np_lifecycle_boot.detail << '\n';
+        return 150;
+    }
+    const auto uninitialized_trophy_term_boot = run_guard_fixture(
+        uninitialized_trophy_term_install_zip,
+        "milestone35-trophy-uninitialized-term.zip");
+    if (!uninitialized_trophy_term_boot.returned
+        || uninitialized_trophy_term_boot.np_trophy_initialized
+        || uninitialized_trophy_term_boot.np_trophy_term_call_count != 1
+        || static_cast<std::uint32_t>(
+            uninitialized_trophy_term_boot.last_np_trophy_result)
+            != np_trophy_error_not_initialized
+        || uninitialized_trophy_term_boot.return_value
+            != np_trophy_error_not_initialized) {
+        std::cerr << uninitialized_trophy_term_boot.detail << '\n';
+        return 151;
+    }
+    const auto duplicate_trophy_init_boot = run_guard_fixture(
+        duplicate_trophy_init_install_zip, "milestone35-trophy-duplicate-init.zip");
+    if (!duplicate_trophy_init_boot.returned
+        || !duplicate_trophy_init_boot.np_trophy_initialized
+        || duplicate_trophy_init_boot.np_trophy_init_call_count != 2
+        || static_cast<std::uint32_t>(
+            duplicate_trophy_init_boot.last_np_trophy_result)
+            != np_trophy_error_already_initialized
+        || duplicate_trophy_init_boot.return_value
+            != np_trophy_error_already_initialized) {
+        std::cerr << duplicate_trophy_init_boot.detail << '\n';
+        return 152;
+    }
+    const auto trophy_lifecycle_boot = run_guard_fixture(
+        trophy_lifecycle_install_zip, "milestone35-trophy-lifecycle.zip");
+    if (!trophy_lifecycle_boot.returned || trophy_lifecycle_boot.hle_dispatch_count != 2
+        || trophy_lifecycle_boot.last_hle_nid != np_trophy_term_nid
+        || trophy_lifecycle_boot.np_trophy_initialized
+        || trophy_lifecycle_boot.np_trophy_init_call_count != 1
+        || trophy_lifecycle_boot.np_trophy_term_call_count != 1
+        || trophy_lifecycle_boot.last_np_trophy_result != 0
+        || trophy_lifecycle_boot.return_value != 0
+        || trophy_lifecycle_boot.detail.find(
+            "Trophy lifecycle: initialized=no, init calls=1, term calls=1")
+            == std::string::npos) {
+        std::cerr << trophy_lifecycle_boot.detail << '\n';
+        return 153;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -2142,6 +2363,10 @@ int main(int argc, char **argv) {
     if (!emitted_m34_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 34 Sysmodule lifecycle fixture: "
                   << emitted_m34_install_zip_fixture << '\n';
+    }
+    if (!emitted_m35_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 35 NP lifecycle fixture: "
+                  << emitted_m35_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

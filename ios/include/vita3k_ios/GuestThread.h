@@ -50,6 +50,13 @@ struct GuestThreadRunResult {
     std::size_t sysmodule_is_loaded_call_count = 0;
     std::size_t sysmodule_unload_call_count = 0;
     std::size_t loaded_sysmodule_count = 0;
+    bool np_initialized = false;
+    bool np_trophy_initialized = false;
+    std::size_t np_init_call_count = 0;
+    std::size_t np_term_call_count = 0;
+    std::size_t np_service_state_call_count = 0;
+    std::size_t np_trophy_init_call_count = 0;
+    std::size_t np_trophy_term_call_count = 0;
     std::uint64_t libc_heap_live_bytes = 0;
     std::uint64_t libc_heap_peak_bytes = 0;
     std::uint32_t last_libc_atexit_object = 0;
@@ -70,6 +77,12 @@ struct GuestThreadRunResult {
     std::int32_t last_app_util_result = 0;
     std::uint32_t last_sysmodule_id = 0;
     std::int32_t last_sysmodule_result = 0;
+    std::uint32_t last_np_communication_config = 0;
+    std::uint32_t last_np_communication_id = 0;
+    std::uint32_t last_np_service_state_address = 0;
+    std::uint32_t last_np_service_state = 0;
+    std::int32_t last_np_result = 0;
+    std::int32_t last_np_trophy_result = 0;
     std::uint32_t return_value = 0;
     std::string detail;
 };

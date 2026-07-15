@@ -96,6 +96,10 @@ The accepted Milestone 32 device run completed the 8-byte C++ allocation and adv
 
 The accepted Milestone 33 device run reported successful AppUtil initialization, then reached `sceSysmoduleLoadModule(0x15)` at 5683 instructions/32 HLE calls. Milestone 34 implements the coherent public load/status/unload family with per-run loaded-module state and upstream `INVALID_VALUE`/`UNLOADED` results. The HLE path records module availability but does not execute or emulate proprietary sysmodule binaries. This allows initialization to advance through normal module bookkeeping while preserving the first actual NP service dependency as a hard boundary. CI emits `milestone34-sysmodule-lifecycle.zip`, and portable tests cover the complete state transition, an unloaded query, and invalid IDs.
 
+## Milestone 35 NP and Trophy startup lifecycle
+
+The accepted Milestone 34 run loaded NP and NP Trophy and reached `sceNpInit(nullptr, nullptr)` at 5692 instructions/34 HLE calls. Milestone 35 implements stateful NP init/term, checked offline service-state output, and the paired Trophy init/term lifecycle. Communication config/ID pointers are bounded guest reads when present; service state is a bounded guest write. Duplicate and invalid-state calls return upstream errors, and NP termination also clears Trophy state. Network callbacks, online identity, trophy contexts, and TRP access remain unbound rather than being faked. CI emits `milestone35-np-lifecycle.zip` with portable lifecycle, memory-boundary, and state-error coverage.
+
 ## Firmware packages
 
 Do not commit firmware PUP files to this public repository or upload them as Actions artifacts. The future iOS installer should select user-owned files locally and write only extracted virtual-filesystem content inside the app sandbox. Upstream `install_pup` currently depends on the packages/crypto layers, OpenSSL, vita-toolchain key handling, FAT/exFAT extraction, miniz, and psvpfsparser; those dependencies are not part of the current iOS core slice. `fontpkg.pup`, `preinstall.pup`, and the system update PUP should therefore remain local until that bounded installer milestone is implemented.

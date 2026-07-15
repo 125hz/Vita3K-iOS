@@ -230,6 +230,10 @@ The accepted Milestone 32 device run completed `_Znwj(8)`, then advanced to 5676
 
 The accepted Milestone 33 device run advanced through AppUtil to `sceSysmoduleLoadModule(0x15)` (`SCE_SYSMODULE_NP`) at 5683 instructions and 32 HLE calls. Milestone 34 binds `sceSysmoduleLoadModule`, `sceSysmoduleIsLoaded`, and `sceSysmoduleUnloadModule` as a stateful family matching upstream HLE bookkeeping and error values. Loading makes a module available to HLE dispatch but does not claim firmware execution. CI emits `milestone34-sysmodule-lifecycle.zip`; portable tests cover load/status/unload/status ordering, unloaded queries, and invalid IDs.
 
+## Milestone 35 NP and Trophy startup lifecycle
+
+The accepted Milestone 34 device run loaded NP plus NP Trophy and reached `sceNpInit(nullptr, nullptr)` at 5692 instructions and 34 HLE calls. Milestone 35 batches NP init/service-state/term with Trophy init/term. It validates optional communication guest pointers, reports deterministic offline signed-out state through checked guest writes, preserves upstream lifecycle errors, and cascades NP termination into Trophy shutdown. Callback and trophy-context APIs remain diagnostic boundaries pending scheduler and VFS support. CI emits `milestone35-np-lifecycle.zip`, and portable tests cover all state transitions and pointer boundaries.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

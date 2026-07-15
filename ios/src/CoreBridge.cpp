@@ -1813,6 +1813,13 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.sysmodule_is_loaded_call_count = thread.sysmodule_is_loaded_call_count;
         result.sysmodule_unload_call_count = thread.sysmodule_unload_call_count;
         result.loaded_sysmodule_count = thread.loaded_sysmodule_count;
+        result.np_initialized = thread.np_initialized;
+        result.np_trophy_initialized = thread.np_trophy_initialized;
+        result.np_init_call_count = thread.np_init_call_count;
+        result.np_term_call_count = thread.np_term_call_count;
+        result.np_service_state_call_count = thread.np_service_state_call_count;
+        result.np_trophy_init_call_count = thread.np_trophy_init_call_count;
+        result.np_trophy_term_call_count = thread.np_trophy_term_call_count;
         result.libc_heap_live_bytes = thread.libc_heap_live_bytes;
         result.libc_heap_peak_bytes = thread.libc_heap_peak_bytes;
         result.last_libc_atexit_object = thread.last_libc_atexit_object;
@@ -1833,6 +1840,12 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.last_app_util_result = thread.last_app_util_result;
         result.last_sysmodule_id = thread.last_sysmodule_id;
         result.last_sysmodule_result = thread.last_sysmodule_result;
+        result.last_np_communication_config = thread.last_np_communication_config;
+        result.last_np_communication_id = thread.last_np_communication_id;
+        result.last_np_service_state_address = thread.last_np_service_state_address;
+        result.last_np_service_state = thread.last_np_service_state;
+        result.last_np_result = thread.last_np_result;
+        result.last_np_trophy_result = thread.last_np_trophy_result;
         result.exit_status = thread.exit_status;
         result.return_value = thread.return_value;
         result.detail = thread.detail;

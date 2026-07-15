@@ -82,6 +82,13 @@ struct TitleBootResult {
     std::size_t sysmodule_is_loaded_call_count{};
     std::size_t sysmodule_unload_call_count{};
     std::size_t loaded_sysmodule_count{};
+    bool np_initialized{};
+    bool np_trophy_initialized{};
+    std::size_t np_init_call_count{};
+    std::size_t np_term_call_count{};
+    std::size_t np_service_state_call_count{};
+    std::size_t np_trophy_init_call_count{};
+    std::size_t np_trophy_term_call_count{};
     std::uint64_t libc_heap_live_bytes{};
     std::uint64_t libc_heap_peak_bytes{};
     std::uint32_t last_libc_atexit_object{};
@@ -102,6 +109,12 @@ struct TitleBootResult {
     std::int32_t last_app_util_result{};
     std::uint32_t last_sysmodule_id{};
     std::int32_t last_sysmodule_result{};
+    std::uint32_t last_np_communication_config{};
+    std::uint32_t last_np_communication_id{};
+    std::uint32_t last_np_service_state_address{};
+    std::uint32_t last_np_service_state{};
+    std::int32_t last_np_result{};
+    std::int32_t last_np_trophy_result{};
     std::int32_t exit_status{};
     std::uint32_t return_value{};
     std::string title_id;

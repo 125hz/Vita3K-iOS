@@ -13,6 +13,7 @@ This checklist tracks the shortest honest path to a first guest-produced Amagami
 - [x] Provide startup libc state for DSO handling, termination registration, C++ guards, and a writable guest heap.
 - [x] Provide validated, stateful AppUtil initialization/shutdown lifecycle calls.
 - [x] Provide public Sysmodule load/status/unload bookkeeping for reached HLE modules.
+- [x] Provide offline NP Manager and NP Trophy startup lifecycle state.
 - [x] Attach a Metal view and present host-owned diagnostic frames.
 
 ## Must happen before the title can reach its menu logic

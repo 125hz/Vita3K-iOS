@@ -49,6 +49,11 @@ constexpr std::uint32_t nid_sce_app_util_shutdown = 0xB220B00B;
 constexpr std::uint32_t nid_sce_sysmodule_is_loaded = 0x53099B7A;
 constexpr std::uint32_t nid_sce_sysmodule_load_module = 0x79A0160A;
 constexpr std::uint32_t nid_sce_sysmodule_unload_module = 0x31D87805;
+constexpr std::uint32_t nid_sce_np_get_service_state = 0x54060DF6;
+constexpr std::uint32_t nid_sce_np_init = 0x04D9F484;
+constexpr std::uint32_t nid_sce_np_term = 0x19E40AE1;
+constexpr std::uint32_t nid_sce_np_trophy_init = 0x34516838;
+constexpr std::uint32_t nid_sce_np_trophy_term = 0xBFE0F28F;
 constexpr std::uint32_t sce_app_util_error_parameter = 0x80100600;
 constexpr std::uint32_t sce_app_util_error_not_initialized = 0x80100601;
 constexpr std::uint32_t sce_app_util_error_busy = 0x80100603;
@@ -57,6 +62,13 @@ constexpr std::size_t sce_app_util_boot_param_size = 0x28;
 constexpr std::uint32_t sce_sysmodule_count = 0x56;
 constexpr std::uint32_t sce_sysmodule_error_invalid_value = 0x805A1000;
 constexpr std::uint32_t sce_sysmodule_error_unloaded = 0x805A1001;
+constexpr std::uint32_t sce_np_error_already_initialized = 0x80550001;
+constexpr std::uint32_t sce_np_error_invalid_argument = 0x80550003;
+constexpr std::uint32_t sce_np_trophy_error_not_initialized = 0x80551601;
+constexpr std::uint32_t sce_np_trophy_error_already_initialized = 0x80551602;
+constexpr std::uint32_t sce_np_service_state_signed_out = 1;
+constexpr std::size_t sce_np_communication_config_size = 12;
+constexpr std::size_t sce_np_communication_id_size = 12;
 constexpr std::int32_t first_diagnostic_thread_id = 0x10001;
 constexpr std::uint32_t diagnostic_heap_base = 0x90000000;
 constexpr std::uint32_t diagnostic_heap_size = 16 * 1024 * 1024;
@@ -152,6 +164,14 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         imported_nids, nid_sce_sysmodule_load_module);
     const bool imports_sce_sysmodule_unload_module = contains_nid(
         imported_nids, nid_sce_sysmodule_unload_module);
+    const bool imports_sce_np_get_service_state = contains_nid(
+        imported_nids, nid_sce_np_get_service_state);
+    const bool imports_sce_np_init = contains_nid(imported_nids, nid_sce_np_init);
+    const bool imports_sce_np_term = contains_nid(imported_nids, nid_sce_np_term);
+    const bool imports_sce_np_trophy_init = contains_nid(
+        imported_nids, nid_sce_np_trophy_init);
+    const bool imports_sce_np_trophy_term = contains_nid(
+        imported_nids, nid_sce_np_trophy_term);
     if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" || (imports_exit_thread && std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
         return result;
@@ -213,6 +233,22 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         result.detail = "The upstream Vita NID database did not match the Sysmodule lifecycle bindings.";
         return result;
     }
+    if ((imports_sce_np_get_service_state
+            && std::string_view(import_name(nid_sce_np_get_service_state))
+                != "sceNpGetServiceState")
+        || (imports_sce_np_init
+            && std::string_view(import_name(nid_sce_np_init)) != "sceNpInit")
+        || (imports_sce_np_term
+            && std::string_view(import_name(nid_sce_np_term)) != "sceNpTerm")
+        || (imports_sce_np_trophy_init
+            && std::string_view(import_name(nid_sce_np_trophy_init))
+                != "sceNpTrophyInit")
+        || (imports_sce_np_trophy_term
+            && std::string_view(import_name(nid_sce_np_trophy_term))
+                != "sceNpTrophyTerm")) {
+        result.detail = "The upstream Vita NID database did not match the NP lifecycle bindings.";
+        return result;
+    }
 
     HLEDispatcher dispatcher;
     bool exit_requested = false;
@@ -222,6 +258,9 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     std::string app_util_error;
     bool app_util_initialized = false;
     std::vector<std::uint32_t> loaded_sysmodules;
+    bool np_initialized = false;
+    bool np_trophy_initialized = false;
+    std::string np_error;
     GuestHeap heap;
     std::string heap_error;
     const bool imports_heap = imports_calloc || imports_free || imports_malloc
@@ -390,6 +429,117 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                 }
                 std::erase(loaded_sysmodules, module_id);
                 return set_sysmodule_result(module_id, 0);
+            });
+    }
+    const auto set_np_result = [&](std::uint32_t value) -> std::int32_t {
+        result.last_np_result = static_cast<std::int32_t>(value);
+        result.np_initialized = np_initialized;
+        result.np_trophy_initialized = np_trophy_initialized;
+        return result.last_np_result;
+    };
+    const auto set_np_trophy_result = [&](std::uint32_t value) -> std::int32_t {
+        result.last_np_trophy_result = static_cast<std::int32_t>(value);
+        result.np_initialized = np_initialized;
+        result.np_trophy_initialized = np_trophy_initialized;
+        return result.last_np_trophy_result;
+    };
+    const auto fail_np_memory = [&](ArmCpuState &state, std::string operation,
+                                    std::string error) -> std::int32_t {
+        np_error = std::move(operation) + " guest-memory validation failed: "
+            + std::move(error);
+        state.stop_requested = true;
+        state.stop_code = -1;
+        return set_np_result(sce_np_error_invalid_argument);
+    };
+    bool np_init_bound = true;
+    if (imports_sce_np_init) {
+        np_init_bound = dispatcher.bind(nid_sce_np_init,
+            "sceNpInit", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_init_call_count;
+                result.last_np_communication_config = state.registers[0];
+                if (np_initialized) {
+                    return set_np_result(sce_np_error_already_initialized);
+                }
+                if (state.registers[0] != 0) {
+                    std::array<std::uint8_t, sce_np_communication_config_size> config{};
+                    std::string error;
+                    if (!memory.read(state.registers[0], config, error)) {
+                        return fail_np_memory(state, "sceNpInit communication config",
+                            std::move(error));
+                    }
+                    std::memcpy(&result.last_np_communication_id,
+                        config.data(), sizeof(result.last_np_communication_id));
+                    if (result.last_np_communication_id != 0) {
+                        std::array<std::uint8_t, sce_np_communication_id_size> communication_id{};
+                        if (!memory.read(result.last_np_communication_id,
+                                communication_id, error)) {
+                            return fail_np_memory(state, "sceNpInit communication ID",
+                                std::move(error));
+                        }
+                    }
+                }
+                np_initialized = true;
+                return set_np_result(0);
+            });
+    }
+    bool np_get_service_state_bound = true;
+    if (imports_sce_np_get_service_state) {
+        np_get_service_state_bound = dispatcher.bind(nid_sce_np_get_service_state,
+            "sceNpGetServiceState", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_service_state_call_count;
+                result.last_np_service_state_address = state.registers[0];
+                if (state.registers[0] == 0) {
+                    return set_np_result(sce_np_error_invalid_argument);
+                }
+                std::string error;
+                if (!write_guest_u32(memory, state.registers[0],
+                        sce_np_service_state_signed_out, error)) {
+                    return fail_np_memory(state, "sceNpGetServiceState output",
+                        std::move(error));
+                }
+                result.last_np_service_state = sce_np_service_state_signed_out;
+                return set_np_result(0);
+            });
+    }
+    bool np_term_bound = true;
+    if (imports_sce_np_term) {
+        np_term_bound = dispatcher.bind(nid_sce_np_term,
+            "sceNpTerm", [&](ArmCpuState &) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_term_call_count;
+                np_trophy_initialized = false;
+                np_initialized = false;
+                return set_np_result(0);
+            });
+    }
+    bool np_trophy_init_bound = true;
+    if (imports_sce_np_trophy_init) {
+        np_trophy_init_bound = dispatcher.bind(nid_sce_np_trophy_init,
+            "sceNpTrophyInit", [&](ArmCpuState &) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_trophy_init_call_count;
+                if (np_trophy_initialized) {
+                    return set_np_trophy_result(
+                        sce_np_trophy_error_already_initialized);
+                }
+                np_trophy_initialized = true;
+                return set_np_trophy_result(0);
+            });
+    }
+    bool np_trophy_term_bound = true;
+    if (imports_sce_np_trophy_term) {
+        np_trophy_term_bound = dispatcher.bind(nid_sce_np_trophy_term,
+            "sceNpTrophyTerm", [&](ArmCpuState &) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.np_trophy_term_call_count;
+                if (!np_trophy_initialized) {
+                    return set_np_trophy_result(
+                        sce_np_trophy_error_not_initialized);
+                }
+                np_trophy_initialized = false;
+                return set_np_trophy_result(0);
             });
     }
     const auto record_atexit_registration = [&](std::uint32_t object,
@@ -767,7 +917,12 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         + static_cast<std::size_t>(imports_sce_app_util_shutdown)
         + static_cast<std::size_t>(imports_sce_sysmodule_is_loaded)
         + static_cast<std::size_t>(imports_sce_sysmodule_load_module)
-        + static_cast<std::size_t>(imports_sce_sysmodule_unload_module);
+        + static_cast<std::size_t>(imports_sce_sysmodule_unload_module)
+        + static_cast<std::size_t>(imports_sce_np_get_service_state)
+        + static_cast<std::size_t>(imports_sce_np_init)
+        + static_cast<std::size_t>(imports_sce_np_term)
+        + static_cast<std::size_t>(imports_sce_np_trophy_init)
+        + static_cast<std::size_t>(imports_sce_np_trophy_term);
     if (!get_id_bound || !exit_bound || !dso_handle_bound || !aeabi_atexit_bound
         || !cxa_atexit_bound || !cxa_finalize_bound || !cxa_guard_abort_bound
         || !cxa_guard_acquire_bound || !cxa_guard_release_bound
@@ -779,6 +934,8 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         || !delete_array_placement_bound
         || !app_util_init_bound || !app_util_shutdown_bound
         || !sysmodule_is_loaded_bound || !sysmodule_load_bound || !sysmodule_unload_bound
+        || !np_get_service_state_bound || !np_init_bound || !np_term_bound
+        || !np_trophy_init_bound || !np_trophy_term_bound
         || dispatcher.binding_count() != expected_binding_count) {
         result.detail = "The minimal kernel/runtime HLE bindings could not be registered.";
         return result;
@@ -905,6 +1062,30 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                << "; last module=" << nid_hex(result.last_sysmodule_id)
                << ", last result=" << nid_hex(
                     static_cast<std::uint32_t>(result.last_sysmodule_result)) << ".";
+    }
+    const auto np_call_count = result.np_init_call_count + result.np_term_call_count
+        + result.np_service_state_call_count + result.np_trophy_init_call_count
+        + result.np_trophy_term_call_count;
+    if (np_call_count != 0) {
+        detail << " NP lifecycle: initialized=" << (result.np_initialized ? "yes" : "no")
+               << ", init calls=" << result.np_init_call_count
+               << ", service-state calls=" << result.np_service_state_call_count
+               << ", term calls=" << result.np_term_call_count
+               << "; commConfig=" << nid_hex(result.last_np_communication_config)
+               << ", commId=" << nid_hex(result.last_np_communication_id)
+               << ", serviceState=" << result.last_np_service_state
+               << " at " << nid_hex(result.last_np_service_state_address)
+               << ", last result=" << nid_hex(
+                    static_cast<std::uint32_t>(result.last_np_result))
+               << ". Trophy lifecycle: initialized="
+               << (result.np_trophy_initialized ? "yes" : "no")
+               << ", init calls=" << result.np_trophy_init_call_count
+               << ", term calls=" << result.np_trophy_term_call_count
+               << ", last result=" << nid_hex(
+                    static_cast<std::uint32_t>(result.last_np_trophy_result)) << ".";
+    }
+    if (!np_error.empty()) {
+        detail << " NP boundary: " << np_error << ".";
     }
     result.detail = detail.str();
     return result;
