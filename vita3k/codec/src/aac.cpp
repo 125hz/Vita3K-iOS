@@ -25,7 +25,11 @@ extern "C" {
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 
+#ifndef VITA3K_PLATFORM_IOS
+// Stock FFmpeg installs (vcpkg iOS) do not ship this private header; the iOS
+// build uses the public send/receive API below instead.
 #include <libavcodec/codec_internal.h>
+#endif
 }
 
 #include <util/log.h>
@@ -79,6 +83,23 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
 
     av_frame_unref(frame);
 
+#ifdef VITA3K_PLATFORM_IOS
+    // The public API consumes the complete access unit handed in by
+    // SceAudiodec, so the consumed elementary-stream size is the packet size.
+    int err = avcodec_send_packet(context, packet);
+    if (err == 0)
+        err = avcodec_receive_frame(context, frame);
+    av_packet_free(&packet);
+    if (err < 0) {
+        LOG_WARN("Error sending Aac packet: {}.", codec_error_name(err));
+        return false;
+    }
+
+    es_size_used = size;
+
+    return true;
+}
+#else
     const FFCodec *ff_codec = ffcodec(codec);
     int got_frame;
     int len = ff_codec->cb.decode(context, frame, &got_frame, packet);
@@ -94,6 +115,7 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
 
     return true;
 }
+#endif
 
 bool AacDecoderState::receive(uint8_t *data, DecoderSize *size) {
     assert(frame->format == AV_SAMPLE_FMT_FLTP);
