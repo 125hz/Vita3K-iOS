@@ -293,7 +293,7 @@ The Actions artifact includes `milestone27-thumb2-multiple-transfer.zip`. Its le
 
 ## Milestone 28 C++ static-initialization guards
 
-The accepted Milestone 27 Amagami attempt advanced to 122 instructions and four HLE calls, then reached `__cxa_guard_acquire` (NID `0xD0310E31`) for guard word `0x812C75D8`. Milestone 28 binds the complete 32-bit Arm `__cxa_guard_acquire`, `__cxa_guard_release`, and `__cxa_guard_abort` protocol. Acquire reads the aligned 4-byte guest word and returns one only to the initializer owner; release atomically preserves the word while setting initialized bit zero; abort releases ownership without claiming initialization. The bounded single-thread runtime tracks ownership explicitly and stops on recursive acquisition, invalid alignment, or inaccessible guest memory instead of fabricating progress.
+The accepted Milestone 27 Amagami attempt advanced to 122 instructions and four HLE calls, then reached `__cxa_guard_acquire` (NID `0xD0310E31`) for guard word `0x812C75D8`. Milestone 28 binds the complete 32-bit Arm `__cxa_guard_acquire`, `__cxa_guard_release`, and `__cxa_guard_abort` protocol. Acquire reads the aligned 4-byte guest word and returns one only to the initializer owner; release preserves the word while setting initialized bit zero; abort releases ownership without claiming initialization. The bounded single-thread runtime tracks ownership explicitly and stops on recursive acquisition, invalid alignment, or inaccessible guest memory instead of fabricating progress. Cross-thread semaphore scheduling remains outside this runner.
 
 1. Install the Milestone 28 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
 2. Confirm preparation reports `module_start 0x810176B9 via lifecycle export`.
