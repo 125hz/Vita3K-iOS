@@ -54,10 +54,10 @@ jobs:
         run: |
           brew install molten-vk
           MVK_ROOT="$(brew --prefix molten-vk)"
-          MVK_LIBRARY="$(find "$MVK_ROOT" -type f -name libMoltenVK.a -ipath '*ios*' | head -n 1)"
+          MVK_LIBRARY="$(find -L "$MVK_ROOT" -type f -name libMoltenVK.a -ipath '*ios*' | head -n 1)"
           if [[ -z "$MVK_LIBRARY" ]]; then
             echo "No iOS libMoltenVK.a found under $MVK_ROOT" >&2
-            find "$MVK_ROOT" -maxdepth 6 -print | sort >&2
+            find -L "$MVK_ROOT" -maxdepth 6 -print | sort >&2
             exit 1
           fi
           test -f "$MVK_ROOT/include/MoltenVK/mvk_vulkan.h"
