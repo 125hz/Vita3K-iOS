@@ -19,6 +19,10 @@ add_executable(Vita3KiOS MACOSX_BUNDLE
     src/main.mm
 )
 
+if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
+    target_sources(Vita3KiOS PRIVATE src/UpstreamCoreLink.cpp)
+endif()
+
 target_include_directories(Vita3KiOS PRIVATE include)
 target_compile_features(Vita3KiOS PRIVATE cxx_std_23)
 target_compile_options(Vita3KiOS PRIVATE
@@ -37,6 +41,11 @@ target_link_libraries(Vita3KiOS PRIVATE
     "-framework UIKit"
     "-framework UniformTypeIdentifiers"
 )
+
+if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
+    target_link_libraries(Vita3KiOS PRIVATE vita3k)
+    target_compile_definitions(Vita3KiOS PRIVATE VITA3K_IOS_UPSTREAM_CORE=1)
+endif()
 
 set_target_properties(Vita3KiOS PROPERTIES
     OUTPUT_NAME "Vita3K-iOS"

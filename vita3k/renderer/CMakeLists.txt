@@ -55,9 +55,11 @@ if(ANDROID)
 	target_link_libraries(renderer PRIVATE android adrenotools)
 endif()
 
-if(APPLE)
+if(APPLE AND NOT VITA3K_BUILD_IOS_UPSTREAM_CORE)
 	target_sources(renderer PRIVATE src/vulkan/metal_layer.mm)
 	target_link_libraries(renderer PRIVATE "-framework QuartzCore" "-framework Cocoa")
+elseif(VITA3K_BUILD_IOS_UPSTREAM_CORE)
+	target_link_libraries(renderer PRIVATE vulkan "-framework QuartzCore")
 endif()
 
 if(X11_FOUND)

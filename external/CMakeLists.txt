@@ -225,7 +225,27 @@ target_include_directories(CLI11 INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/cli11")
 
 add_library(vulkan INTERFACE)
 target_include_directories(vulkan INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/VulkanMemoryAllocator-Hpp/Vulkan-Headers/include")
-if(APPLE)
+if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
+	set(VITA3K_IOS_MOLTENVK_LIBRARY "" CACHE FILEPATH "Path to the iOS arm64 MoltenVK static library")
+	set(VITA3K_IOS_MOLTENVK_INCLUDE_DIR "" CACHE PATH "Path to MoltenVK headers")
+	if(NOT EXISTS "${VITA3K_IOS_MOLTENVK_LIBRARY}")
+		message(FATAL_ERROR "VITA3K_IOS_MOLTENVK_LIBRARY must name an existing iOS MoltenVK static library.")
+	endif()
+	if(NOT EXISTS "${VITA3K_IOS_MOLTENVK_INCLUDE_DIR}/MoltenVK/mvk_vulkan.h")
+		message(FATAL_ERROR "VITA3K_IOS_MOLTENVK_INCLUDE_DIR must contain MoltenVK/mvk_vulkan.h.")
+	endif()
+	add_library(moltenvk-ios STATIC IMPORTED GLOBAL)
+	set_target_properties(moltenvk-ios PROPERTIES
+		IMPORTED_LOCATION "${VITA3K_IOS_MOLTENVK_LIBRARY}"
+		INTERFACE_INCLUDE_DIRECTORIES "${VITA3K_IOS_MOLTENVK_INCLUDE_DIR}")
+	target_include_directories(vulkan INTERFACE "${VITA3K_IOS_MOLTENVK_INCLUDE_DIR}")
+	target_link_libraries(vulkan INTERFACE
+		moltenvk-ios
+		"-framework Foundation"
+		"-framework IOSurface"
+		"-framework Metal"
+		"-framework QuartzCore")
+elseif(APPLE)
 	if(NOT EXISTS "${CMAKE_BINARY_DIR}/external/MoltenVK-macos.tar")
 		message(STATUS "Downloading MoltenVK...")
 		file(DOWNLOAD https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.11-artifacts/MoltenVK-macos.tar
@@ -455,7 +475,7 @@ endif()
 # Use XDG desktop portals on Linux
 set(NFD_PORTAL ON)
 
-if(NOT ANDROID)
+if(NOT ANDROID AND NOT VITA3K_BUILD_IOS_UPSTREAM_CORE)
 	# nativefiledialog-extended
 	add_subdirectory(nativefiledialog-extended)
 

@@ -98,7 +98,7 @@ bool ScreenRenderer::create() {
         surface_created = true;
 #endif
     } else if (const auto *handle = std::get_if<renderer::MacOSDisplayHandle>(&display_handle)) {
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(VITA3K_PLATFORM_IOS)
         void *metal_layer = get_metal_layer_from_view(handle->view);
         if (!metal_layer) {
             LOG_ERROR("Failed to get CAMetalLayer from NSView");
