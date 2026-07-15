@@ -222,6 +222,10 @@ The accepted Milestone 30 device run crossed the former CPU boundary and then co
 
 The accepted Milestone 31 device run continued forward to 5637 instructions and 30 HLE calls, then stopped at `_Znwj` (NID `0xF99ED5AC`) with an 8-byte request. Milestone 32 implements all ten adjacent 32-bit C++ allocation/deallocation exports in the Vita NID database. They reuse the bounded guest heap, preserve regular, array, nothrow, null-delete, and placement-delete semantics, and expose per-run call diagnostics. Throwing allocation exhaustion stops because exception unwinding is not yet present; nothrow exhaustion returns null. CI emits `milestone32-cxx-allocation.zip`, and portable tests execute every handler plus both exhaustion paths.
 
+## Milestone 33 AppUtil lifecycle
+
+The accepted Milestone 32 device run completed `_Znwj(8)`, then advanced to 5676 instructions and 31 HLE calls before reaching `sceAppUtilInit` with two mapped guest parameter blocks. Milestone 33 implements stateful init/shutdown using the official VitaSDK `0x40`/`0x28` structure sizes, bounded guest reads, reserved-field checks, documented parameter/state errors, and observable input diagnostics. Unmapped pointers stop rather than becoming host pointers. Savedata, events, mounts, and system settings are deliberately not faked. CI emits `milestone33-app-util-lifecycle.zip`, and portable tests cover valid init, null input, an unmapped pointer, shutdown-before-init, and a complete paired lifecycle.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.

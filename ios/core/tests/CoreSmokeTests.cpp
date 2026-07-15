@@ -171,6 +171,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m30_install_zip_fixture;
     std::filesystem::path emitted_m31_install_zip_fixture;
     std::filesystem::path emitted_m32_install_zip_fixture;
+    std::filesystem::path emitted_m33_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -216,6 +217,8 @@ int main(int argc, char **argv) {
             emitted_m31_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m32-install-zip-fixture" && index + 1 < argc) {
             emitted_m32_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m33-install-zip-fixture" && index + 1 < argc) {
+            emitted_m33_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -240,6 +243,7 @@ int main(int argc, char **argv) {
                          "[--emit-m30-install-zip-fixture <path>] "
                          "[--emit-m31-install-zip-fixture <path>] "
                          "[--emit-m32-install-zip-fixture <path>] "
+                         "[--emit-m33-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -764,6 +768,69 @@ int main(int argc, char **argv) {
         delete_array_nothrow_nid, 0);
     const auto delete_array_placement_install_zip = make_cpp_allocation_archive(
         delete_array_placement_nid, 8);
+    constexpr std::uint32_t app_util_init_nid = 0xDAFFE671u;
+    constexpr std::uint32_t app_util_shutdown_nid = 0xB220B00Bu;
+    constexpr std::uint32_t app_util_error_parameter = 0x80100600u;
+    constexpr std::uint32_t app_util_error_not_initialized = 0x80100601u;
+    constexpr std::uint32_t synthetic_app_util_init_param = 0x81000240u;
+    constexpr std::uint32_t synthetic_app_util_boot_param = 0x81000280u;
+    const auto make_app_util_init_archive = [&](std::uint32_t init_param,
+                                                std::uint32_t boot_param) {
+        auto elf = lifecycle_elf;
+        const std::array<std::uint16_t, 8> program{
+            0xB510u, // PUSH {r4, lr}
+            0x4803u, // LDR r0, [pc, #12] -> SceAppUtilInitParam
+            0x4903u, // LDR r1, [pc, #12] -> SceAppUtilBootParam
+            0x4B04u, // LDR r3, [pc, #16] -> sceAppUtilInit import stub
+            0x4798u, // BLX r3
+            0xBD10u, // POP {r4, pc}
+            0xBF00u, 0xBF00u
+        };
+        std::memcpy(elf.data() + 244, program.data(), sizeof(program));
+        write_value(elf, 260, init_param);
+        write_value(elf, 264, boot_param);
+        write_value(elf, 268, static_cast<std::uint32_t>(0x81000050));
+        write_value(elf, 372, app_util_init_nid);
+        const auto self = make_plain_self(elf);
+        return vita3k::ios::make_synthetic_install_zip(self, self);
+    };
+    const auto m33_install_zip = make_app_util_init_archive(
+        synthetic_app_util_init_param, synthetic_app_util_boot_param);
+    const auto null_app_util_init_install_zip = make_app_util_init_archive(0, 0);
+    const auto invalid_app_util_init_install_zip = make_app_util_init_archive(
+        0x70000000u, synthetic_app_util_boot_param);
+    const auto uninitialized_app_util_shutdown_install_zip = make_cpp_allocation_archive(
+        app_util_shutdown_nid, 0);
+    auto app_util_lifecycle_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 8> app_util_lifecycle_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4803u, // LDR r0, [pc, #12] -> init param
+        0x4903u, // LDR r1, [pc, #12] -> boot param
+        0x4B04u, // LDR r3, [pc, #16] -> init stub
+        0x4798u, // BLX r3
+        0x4B04u, // LDR r3, [pc, #16] -> shutdown stub
+        0x4798u, // BLX r3
+        0xBD10u // POP {r4, pc}
+    };
+    std::memcpy(app_util_lifecycle_elf.data() + 244,
+        app_util_lifecycle_program.data(), sizeof(app_util_lifecycle_program));
+    write_value(app_util_lifecycle_elf, 260, synthetic_app_util_init_param);
+    write_value(app_util_lifecycle_elf, 264, synthetic_app_util_boot_param);
+    write_value(app_util_lifecycle_elf, 268, static_cast<std::uint32_t>(0x81000050));
+    write_value(app_util_lifecycle_elf, 272, static_cast<std::uint32_t>(0x81000030));
+    write_value(app_util_lifecycle_elf, 314, static_cast<std::uint16_t>(3));
+    write_value(app_util_lifecycle_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(app_util_lifecycle_elf, 368, get_thread_id_nid);
+    write_value(app_util_lifecycle_elf, 372, app_util_init_nid);
+    write_value(app_util_lifecycle_elf, 376, app_util_shutdown_nid);
+    // Keep this three-entry table away from guest 0x810000F0, which is the
+    // synthetic ELF's deliberate relocation target.
+    write_value(app_util_lifecycle_elf, 344, static_cast<std::uint32_t>(0x81000040));
+    write_value(app_util_lifecycle_elf, 348, static_cast<std::uint32_t>(0x81000050));
+    write_value(app_util_lifecycle_elf, 352, static_cast<std::uint32_t>(0x81000030));
+    const auto app_util_lifecycle_self = make_plain_self(app_util_lifecycle_elf);
+    const auto app_util_lifecycle_install_zip = vita3k::ios::make_synthetic_install_zip(
+        app_util_lifecycle_self, app_util_lifecycle_self);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -836,6 +903,13 @@ int main(int argc, char **argv) {
         || delete_array_placement_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 32 C++ allocation fixtures.\n";
         return 124;
+    }
+    if (m33_install_zip.empty() || null_app_util_init_install_zip.empty()
+        || invalid_app_util_init_install_zip.empty()
+        || uninitialized_app_util_shutdown_install_zip.empty()
+        || app_util_lifecycle_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 33 AppUtil lifecycle fixtures.\n";
+        return 132;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -1055,6 +1129,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 32 C++ allocation fixture.\n";
             return 125;
+        }
+    }
+    if (!emitted_m33_install_zip_fixture.empty()) {
+        if (!emitted_m33_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m33_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m33_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m33_install_zip.data()),
+            static_cast<std::streamsize>(m33_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 33 AppUtil lifecycle fixture.\n";
+            return 133;
         }
     }
 
@@ -1733,6 +1820,77 @@ int main(int argc, char **argv) {
                   << cpp_delete_array_placement_boot.detail << '\n';
         return 131;
     }
+    const auto app_util_init_boot = run_guard_fixture(
+        m33_install_zip, "milestone33-app-util-init.zip");
+    if (!app_util_init_boot.returned || app_util_init_boot.instruction_count != 8
+        || app_util_init_boot.hle_dispatch_count != 1
+        || app_util_init_boot.last_hle_nid != app_util_init_nid
+        || !app_util_init_boot.app_util_initialized
+        || app_util_init_boot.app_util_init_call_count != 1
+        || app_util_init_boot.app_util_shutdown_call_count != 0
+        || app_util_init_boot.last_app_util_init_param != synthetic_app_util_init_param
+        || app_util_init_boot.last_app_util_boot_param != synthetic_app_util_boot_param
+        || app_util_init_boot.last_app_util_work_buffer_size != 0
+        || app_util_init_boot.last_app_util_boot_attribute != 0
+        || app_util_init_boot.last_app_util_app_version != 0
+        || app_util_init_boot.last_app_util_result != 0
+        || app_util_init_boot.return_value != 0
+        || app_util_init_boot.detail.find(
+            "AppUtil lifecycle: initialized=yes, init calls=1") == std::string::npos) {
+        std::cerr << app_util_init_boot.detail << '\n';
+        return 134;
+    }
+    const auto null_app_util_init_boot = run_guard_fixture(
+        null_app_util_init_install_zip, "milestone33-app-util-null-init.zip");
+    if (!null_app_util_init_boot.returned || null_app_util_init_boot.app_util_initialized
+        || null_app_util_init_boot.app_util_init_call_count != 1
+        || static_cast<std::uint32_t>(null_app_util_init_boot.last_app_util_result)
+            != app_util_error_parameter
+        || null_app_util_init_boot.return_value != app_util_error_parameter) {
+        std::cerr << null_app_util_init_boot.detail << '\n';
+        return 135;
+    }
+    const auto invalid_app_util_init_boot = run_guard_fixture(
+        invalid_app_util_init_install_zip, "milestone33-app-util-invalid-init.zip");
+    if (!invalid_app_util_init_boot.started || invalid_app_util_init_boot.returned
+        || invalid_app_util_init_boot.app_util_initialized
+        || invalid_app_util_init_boot.app_util_init_call_count != 1
+        || invalid_app_util_init_boot.detail.find(
+            "AppUtil boundary: sceAppUtilInit initParam guest-memory validation failed")
+            == std::string::npos) {
+        std::cerr << invalid_app_util_init_boot.detail << '\n';
+        return 136;
+    }
+    const auto uninitialized_app_util_shutdown_boot = run_guard_fixture(
+        uninitialized_app_util_shutdown_install_zip,
+        "milestone33-app-util-uninitialized-shutdown.zip");
+    if (!uninitialized_app_util_shutdown_boot.returned
+        || uninitialized_app_util_shutdown_boot.app_util_initialized
+        || uninitialized_app_util_shutdown_boot.app_util_shutdown_call_count != 1
+        || static_cast<std::uint32_t>(
+            uninitialized_app_util_shutdown_boot.last_app_util_result)
+            != app_util_error_not_initialized
+        || uninitialized_app_util_shutdown_boot.return_value
+            != app_util_error_not_initialized) {
+        std::cerr << uninitialized_app_util_shutdown_boot.detail << '\n';
+        return 137;
+    }
+    const auto app_util_lifecycle_boot = run_guard_fixture(
+        app_util_lifecycle_install_zip, "milestone33-app-util-lifecycle.zip");
+    if (!app_util_lifecycle_boot.returned
+        || app_util_lifecycle_boot.instruction_count != 12
+        || app_util_lifecycle_boot.hle_dispatch_count != 2
+        || app_util_lifecycle_boot.last_hle_nid != app_util_shutdown_nid
+        || app_util_lifecycle_boot.app_util_initialized
+        || app_util_lifecycle_boot.app_util_init_call_count != 1
+        || app_util_lifecycle_boot.app_util_shutdown_call_count != 1
+        || app_util_lifecycle_boot.last_app_util_result != 0
+        || app_util_lifecycle_boot.return_value != 0
+        || app_util_lifecycle_boot.detail.find(
+            "initialized=no, init calls=1, shutdown calls=1") == std::string::npos) {
+        std::cerr << app_util_lifecycle_boot.detail << '\n';
+        return 138;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -1864,6 +2022,10 @@ int main(int argc, char **argv) {
     if (!emitted_m32_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 32 C++ allocation fixture: "
                   << emitted_m32_install_zip_fixture << '\n';
+    }
+    if (!emitted_m33_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 33 AppUtil lifecycle fixture: "
+                  << emitted_m33_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

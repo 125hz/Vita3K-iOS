@@ -75,6 +75,9 @@ struct TitleBootResult {
     std::size_t cxx_delete_array_call_count{};
     std::size_t cxx_nothrow_failure_count{};
     std::size_t cxx_placement_delete_call_count{};
+    bool app_util_initialized{};
+    std::size_t app_util_init_call_count{};
+    std::size_t app_util_shutdown_call_count{};
     std::uint64_t libc_heap_live_bytes{};
     std::uint64_t libc_heap_peak_bytes{};
     std::uint32_t last_libc_atexit_object{};
@@ -87,6 +90,12 @@ struct TitleBootResult {
     std::uint32_t last_libc_heap_address{};
     std::uint32_t last_libc_heap_size{};
     std::uint32_t last_libc_heap_alignment{};
+    std::uint32_t last_app_util_init_param{};
+    std::uint32_t last_app_util_boot_param{};
+    std::uint32_t last_app_util_work_buffer_size{};
+    std::uint32_t last_app_util_boot_attribute{};
+    std::uint32_t last_app_util_app_version{};
+    std::int32_t last_app_util_result{};
     std::int32_t exit_status{};
     std::uint32_t return_value{};
     std::string title_id;

@@ -1806,6 +1806,9 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.cxx_delete_array_call_count = thread.cxx_delete_array_call_count;
         result.cxx_nothrow_failure_count = thread.cxx_nothrow_failure_count;
         result.cxx_placement_delete_call_count = thread.cxx_placement_delete_call_count;
+        result.app_util_initialized = thread.app_util_initialized;
+        result.app_util_init_call_count = thread.app_util_init_call_count;
+        result.app_util_shutdown_call_count = thread.app_util_shutdown_call_count;
         result.libc_heap_live_bytes = thread.libc_heap_live_bytes;
         result.libc_heap_peak_bytes = thread.libc_heap_peak_bytes;
         result.last_libc_atexit_object = thread.last_libc_atexit_object;
@@ -1818,6 +1821,12 @@ TitleBootResult attempt_prepared_title_boot(std::size_t instruction_limit) {
         result.last_libc_heap_address = thread.last_libc_heap_address;
         result.last_libc_heap_size = thread.last_libc_heap_size;
         result.last_libc_heap_alignment = thread.last_libc_heap_alignment;
+        result.last_app_util_init_param = thread.last_app_util_init_param;
+        result.last_app_util_boot_param = thread.last_app_util_boot_param;
+        result.last_app_util_work_buffer_size = thread.last_app_util_work_buffer_size;
+        result.last_app_util_boot_attribute = thread.last_app_util_boot_attribute;
+        result.last_app_util_app_version = thread.last_app_util_app_version;
+        result.last_app_util_result = thread.last_app_util_result;
         result.exit_status = thread.exit_status;
         result.return_value = thread.return_value;
         result.detail = thread.detail;

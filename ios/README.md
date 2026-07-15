@@ -353,3 +353,16 @@ Milestone 32 binds the complete ten-export 32-bit C++ allocation family from the
 4. Share the entire next boundary. It should exceed 5637 instructions and 30 HLE calls, and the detail should include `C++ allocation ABI: new=1` unless later startup performs more allocation calls first.
 
 The Actions artifact includes `milestone32-cxx-allocation.zip`. Its legal synthetic title calls the exact captured `_Znwj(8)` import and returns writable guest address `0x90000000`. Portable regressions cover all ten exports, both successful nothrow variants, null and placement deletion, nothrow exhaustion, and the explicit throwing-allocation boundary.
+
+## Milestone 33 AppUtil lifecycle
+
+The accepted Milestone 32 run completed `_Znwj(8)` exactly: heap allocations rose to seven, live bytes rose to 12744, and the new C++ ABI diagnostic reported one successful scalar allocation. Amagami then advanced to 5676 instructions and 31 HLE calls before reaching `sceAppUtilInit` (NID `0xDAFFE671`) with non-null guest parameters at `0x812C82B8` and `0x812C828C`.
+
+Milestone 33 implements a bounded AppUtil lifecycle rather than returning a blind success. It validates the VitaSDK-defined `0x40`-byte `SceAppUtilInitParam` and `0x28`-byte `SceAppUtilBootParam` ranges, enforces zeroed reserved fields, records work-buffer size and boot metadata, tracks initialized state, and pairs initialization with `sceAppUtilShutdown`. Null parameters and invalid lifecycle state return documented AppUtil errors; an unmapped non-null guest range remains an explicit memory boundary. Upstream Vita3K currently leaves both lifecycle exports unimplemented, so this narrow behavior is isolated to the diagnostic iOS runner. Savedata, app events, system parameters, and mount services remain unbound until reached and implemented with real backing state.
+
+1. Install the Milestone 33 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (65536 Instructions)** once.
+4. Share the entire next boundary. It should exceed 5676 instructions and 31 HLE calls and include `AppUtil lifecycle: initialized=yes, init calls=1` unless startup later shuts it down.
+
+The Actions artifact includes `milestone33-app-util-lifecycle.zip`. Its legal synthetic title initializes AppUtil with correctly sized zeroed guest structures and returns cleanly. Portable companions cover null parameters, unmapped pointers, shutdown-before-init, and a complete init/shutdown sequence with three rebound imports.

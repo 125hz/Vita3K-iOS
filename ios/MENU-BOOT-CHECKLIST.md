@@ -8,9 +8,10 @@ This checklist tracks the shortest honest path to a first guest-produced Amagami
 - [x] Install app and patch archives transactionally and select `patch/eboot.bin`.
 - [x] Map the title's SELF segments, apply relocations, parse imports/exports, and resolve the lifecycle `module_start`.
 - [x] Rebind imported function stubs and cross ARM/Thumb import trampolines.
-- [x] Execute 5637 real Amagami instructions and 30 HLE calls before an honest unbound runtime import.
+- [x] Execute 5676 real Amagami instructions and 31 HLE calls before an honest unbound service import.
 - [x] Use the 65536-instruction telemetry run to prove startup is still advancing rather than trapped in a hot loop.
 - [x] Provide startup libc state for DSO handling, termination registration, C++ guards, and a writable guest heap.
+- [x] Provide validated, stateful AppUtil initialization/shutdown lifecycle calls.
 - [x] Attach a Metal view and present host-owned diagnostic frames.
 
 ## Must happen before the title can reach its menu logic

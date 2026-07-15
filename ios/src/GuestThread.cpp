@@ -44,6 +44,13 @@ constexpr std::uint32_t nid_new_array = 0xE7FB2BF4;
 constexpr std::uint32_t nid_new_array_nothrow = 0x31C62481;
 constexpr std::uint32_t nid_new = 0xF99ED5AC;
 constexpr std::uint32_t nid_new_nothrow = 0x0AE71DC3;
+constexpr std::uint32_t nid_sce_app_util_init = 0xDAFFE671;
+constexpr std::uint32_t nid_sce_app_util_shutdown = 0xB220B00B;
+constexpr std::uint32_t sce_app_util_error_parameter = 0x80100600;
+constexpr std::uint32_t sce_app_util_error_not_initialized = 0x80100601;
+constexpr std::uint32_t sce_app_util_error_busy = 0x80100603;
+constexpr std::size_t sce_app_util_init_param_size = 0x40;
+constexpr std::size_t sce_app_util_boot_param_size = 0x28;
 constexpr std::int32_t first_diagnostic_thread_id = 0x10001;
 constexpr std::uint32_t diagnostic_heap_base = 0x90000000;
 constexpr std::uint32_t diagnostic_heap_size = 16 * 1024 * 1024;
@@ -131,6 +138,8 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
     const bool imports_new_array_nothrow = contains_nid(imported_nids, nid_new_array_nothrow);
     const bool imports_new = contains_nid(imported_nids, nid_new);
     const bool imports_new_nothrow = contains_nid(imported_nids, nid_new_nothrow);
+    const bool imports_sce_app_util_init = contains_nid(imported_nids, nid_sce_app_util_init);
+    const bool imports_sce_app_util_shutdown = contains_nid(imported_nids, nid_sce_app_util_shutdown);
     if (std::string_view(import_name(nid_sce_kernel_get_thread_id)) != "sceKernelGetThreadId" || (imports_exit_thread && std::string_view(import_name(nid_sce_kernel_exit_thread)) != "sceKernelExitThread")) {
         result.detail = "The upstream Vita NID database did not match the kernel thread bindings.";
         return result;
@@ -173,12 +182,21 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         result.detail = "The upstream Vita NID database did not match the C++ allocation bindings.";
         return result;
     }
+    if ((imports_sce_app_util_init
+            && std::string_view(import_name(nid_sce_app_util_init)) != "sceAppUtilInit")
+        || (imports_sce_app_util_shutdown
+            && std::string_view(import_name(nid_sce_app_util_shutdown)) != "sceAppUtilShutdown")) {
+        result.detail = "The upstream Vita NID database did not match the AppUtil lifecycle bindings.";
+        return result;
+    }
 
     HLEDispatcher dispatcher;
     bool exit_requested = false;
     std::vector<LibcAtexitRegistration> atexit_registrations;
     std::vector<std::uint32_t> guards_in_progress;
     std::string guard_error;
+    std::string app_util_error;
+    bool app_util_initialized = false;
     GuestHeap heap;
     std::string heap_error;
     const bool imports_heap = imports_calloc || imports_free || imports_malloc
@@ -217,6 +235,78 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                 ++result.hle_dispatch_count;
                 result.libc_dso_handle_main = state.registers[0];
                 return 0;
+            });
+    }
+    const auto set_app_util_result = [&](std::uint32_t value) -> std::int32_t {
+        result.last_app_util_result = static_cast<std::int32_t>(value);
+        return result.last_app_util_result;
+    };
+    const auto fail_app_util_memory = [&](ArmCpuState &state, std::string operation,
+                                          std::string error) -> std::int32_t {
+        app_util_error = std::move(operation) + " guest-memory validation failed: "
+            + std::move(error);
+        state.stop_requested = true;
+        state.stop_code = -1;
+        return set_app_util_result(sce_app_util_error_parameter);
+    };
+    bool app_util_init_bound = true;
+    if (imports_sce_app_util_init) {
+        app_util_init_bound = dispatcher.bind(nid_sce_app_util_init,
+            "sceAppUtilInit", [&](ArmCpuState &state) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.app_util_init_call_count;
+                result.last_app_util_init_param = state.registers[0];
+                result.last_app_util_boot_param = state.registers[1];
+                if (app_util_initialized) {
+                    return set_app_util_result(sce_app_util_error_busy);
+                }
+                if (state.registers[0] == 0 || state.registers[1] == 0) {
+                    return set_app_util_result(sce_app_util_error_parameter);
+                }
+                std::array<std::uint8_t, sce_app_util_init_param_size> init_param{};
+                std::array<std::uint8_t, sce_app_util_boot_param_size> boot_param{};
+                std::string error;
+                if (!memory.read(state.registers[0], init_param, error)) {
+                    return fail_app_util_memory(state, "sceAppUtilInit initParam",
+                        std::move(error));
+                }
+                if (!memory.read(state.registers[1], boot_param, error)) {
+                    return fail_app_util_memory(state, "sceAppUtilInit bootParam",
+                        std::move(error));
+                }
+                std::memcpy(&result.last_app_util_work_buffer_size,
+                    init_param.data(), sizeof(result.last_app_util_work_buffer_size));
+                std::memcpy(&result.last_app_util_boot_attribute,
+                    boot_param.data(), sizeof(result.last_app_util_boot_attribute));
+                std::memcpy(&result.last_app_util_app_version,
+                    boot_param.data() + sizeof(std::uint32_t),
+                    sizeof(result.last_app_util_app_version));
+                const bool init_reserved_nonzero = std::ranges::any_of(
+                    std::span(init_param).subspan(sizeof(std::uint32_t)),
+                    [](std::uint8_t value) { return value != 0; });
+                const bool boot_reserved_nonzero = std::ranges::any_of(
+                    std::span(boot_param).subspan(2 * sizeof(std::uint32_t)),
+                    [](std::uint8_t value) { return value != 0; });
+                if (init_reserved_nonzero || boot_reserved_nonzero) {
+                    return set_app_util_result(sce_app_util_error_parameter);
+                }
+                app_util_initialized = true;
+                result.app_util_initialized = true;
+                return set_app_util_result(0);
+            });
+    }
+    bool app_util_shutdown_bound = true;
+    if (imports_sce_app_util_shutdown) {
+        app_util_shutdown_bound = dispatcher.bind(nid_sce_app_util_shutdown,
+            "sceAppUtilShutdown", [&](ArmCpuState &) -> std::int32_t {
+                ++result.hle_dispatch_count;
+                ++result.app_util_shutdown_call_count;
+                if (!app_util_initialized) {
+                    return set_app_util_result(sce_app_util_error_not_initialized);
+                }
+                app_util_initialized = false;
+                result.app_util_initialized = false;
+                return set_app_util_result(0);
             });
     }
     const auto record_atexit_registration = [&](std::uint32_t object,
@@ -589,7 +679,9 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         + static_cast<std::size_t>(imports_new_array)
         + static_cast<std::size_t>(imports_new_array_nothrow)
         + static_cast<std::size_t>(imports_new)
-        + static_cast<std::size_t>(imports_new_nothrow);
+        + static_cast<std::size_t>(imports_new_nothrow)
+        + static_cast<std::size_t>(imports_sce_app_util_init)
+        + static_cast<std::size_t>(imports_sce_app_util_shutdown);
     if (!get_id_bound || !exit_bound || !dso_handle_bound || !aeabi_atexit_bound
         || !cxa_atexit_bound || !cxa_finalize_bound || !cxa_guard_abort_bound
         || !cxa_guard_acquire_bound || !cxa_guard_release_bound
@@ -599,6 +691,7 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
         || !delete_bound || !delete_nothrow_bound || !delete_placement_bound
         || !delete_array_bound || !delete_array_nothrow_bound
         || !delete_array_placement_bound
+        || !app_util_init_bound || !app_util_shutdown_bound
         || dispatcher.binding_count() != expected_binding_count) {
         result.detail = "The minimal kernel/runtime HLE bindings could not be registered.";
         return result;
@@ -698,6 +791,22 @@ GuestThreadRunResult run_guest_module_start(GuestMemory &memory,
                << ", nothrow failures=" << result.cxx_nothrow_failure_count
                << ", placement deletes=" << result.cxx_placement_delete_call_count
                << ".";
+    }
+    if (result.app_util_init_call_count != 0 || result.app_util_shutdown_call_count != 0) {
+        detail << " AppUtil lifecycle: initialized="
+               << (result.app_util_initialized ? "yes" : "no")
+               << ", init calls=" << result.app_util_init_call_count
+               << ", shutdown calls=" << result.app_util_shutdown_call_count
+               << "; initParam=" << nid_hex(result.last_app_util_init_param)
+               << ", workBufSize=" << result.last_app_util_work_buffer_size
+               << ", bootParam=" << nid_hex(result.last_app_util_boot_param)
+               << ", attr=" << nid_hex(result.last_app_util_boot_attribute)
+               << ", appVersion=" << nid_hex(result.last_app_util_app_version)
+               << ", last result=" << nid_hex(
+                    static_cast<std::uint32_t>(result.last_app_util_result)) << ".";
+    }
+    if (!app_util_error.empty()) {
+        detail << " AppUtil boundary: " << app_util_error << ".";
     }
     result.detail = detail.str();
     return result;

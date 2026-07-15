@@ -1,6 +1,6 @@
 # Vita3K iOS next-milestone handoff
 
-Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 32. Read `MENU-BOOT-CHECKLIST.md` for the full first-menu critical path.
+Use this file when continuing in a new Codex task or Claude Code session. The repository is `https://github.com/125hz/Vita3K-iOS`, the working branch is `ios-port`, and the current completed implementation target is Milestone 33. Read `MENU-BOOT-CHECKLIST.md` for the full first-menu critical path.
 
 ## Copy-paste prompt
 
@@ -14,11 +14,11 @@ Extend the existing .github/workflows/ios.yml workflow; do not create a duplicat
 Update the milestone number in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, and docs/ios-development.md. Commit and push the completed work to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download the exact artifact, compute the IPA SHA-256, and give me concise physical-device test steps plus the next diagnostic I should return. Be transparent about all remaining upstream incompatibilities.
 ```
 
-## Known Milestone 32 boundary
+## Known Milestone 33 boundary
 
-Milestone 31 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. The 65536-instruction telemetry ceiling was not reached: startup advanced to 5637 instructions and 30 HLE calls, then stopped on unbound NID `0xF99ED5AC`, upstream name `_Znwj`, with `r0=8`. DSO remained `0x812C7690`; termination registrations reached 11; C++ guards reached acquire=6, release=6, initializers=6; the heap reached six allocations, zero failures, and 12736 live/peak bytes. This proves continued forward initialization rather than a hot loop.
+Milestone 32 was accepted on a physical device with Amagami title `PCSG00291` from `patch/eboot.bin`. `_Znwj(8)` succeeded at guest address `0x900031C0`; the heap reached seven allocations, zero failures, and 12744 live/peak bytes; the C++ ABI diagnostic reported `new=1`. Startup advanced to 5676 instructions and 31 HLE calls, then stopped on unbound `sceAppUtilInit` (NID `0xDAFFE671`) with `r0=0x812C82B8` and `r1=0x812C828C`. DSO, 11 termination registrations, and six completed guard initializers remained intact.
 
-Milestone 32 binds all ten adjacent 32-bit C++ allocation/deallocation exports: scalar/array `new`, nothrow variants, scalar/array `delete`, nothrow deletes, and placement deletes. They reuse the checked guest heap; nothrow failure returns null, while throwing allocation failure stops until guest exception unwinding exists. Install the Milestone 32 artifact, prepare `PCSG00291`, and run the attempt once. Return the complete next CPU, memory, HLE, normal-return, or budget boundary; never skip unknown behavior.
+Milestone 33 validates the official VitaSDK `SceAppUtilInitParam` (`0x40`) and `SceAppUtilBootParam` (`0x28`) guest structures, tracks initialized state, and implements the paired `sceAppUtilShutdown` lifecycle with documented parameter/state errors. It does not fabricate savedata, app events, system settings, or mounts. Install the Milestone 33 artifact, prepare `PCSG00291`, and run the attempt once. Return the complete next CPU, memory, HLE, normal-return, or budget boundary; never skip unknown behavior.
 
 ## Local Windows verification
 
@@ -30,7 +30,7 @@ cmake --build build-core-tests --config Release --parallel
 ctest --test-dir build-core-tests -C Release --output-on-failure
 ```
 
-The smoke-test executable also accepts output switches used by CI, including `--emit-m32-install-zip-fixture artifacts/milestone32-cxx-allocation.zip`. Generated build and artifact directories are not source and should not be committed.
+The smoke-test executable also accepts output switches used by CI, including `--emit-m33-install-zip-fixture artifacts/milestone33-app-util-lifecycle.zip`. Generated build and artifact directories are not source and should not be committed.
 
 ## GitHub Actions and artifact verification
 
