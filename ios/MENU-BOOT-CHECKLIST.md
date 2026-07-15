@@ -16,6 +16,7 @@ This checklist tracks the shortest honest path to a first guest-produced Amagami
 - [x] Provide offline NP Manager and NP Trophy startup lifecycle state.
 - [x] Provide bounded NP Trophy context and asynchronous-handle object bookkeeping.
 - [x] Provide controller sampling modes, handheld port discovery, and bounded neutral read/peek buffers for startup.
+- [x] Provide touch sampling state, panel geometry, and empty neutral peek/read buffers; deterministic process/RTC time; power clock/battery reporting; and display vblank/vcount/framebuffer bookkeeping for startup.
 - [x] Attach a Metal view and present host-owned diagnostic frames.
 
 ## Must happen before the title can reach its menu logic

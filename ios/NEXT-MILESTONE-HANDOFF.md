@@ -1,6 +1,6 @@
 # Vita3K iOS continuation handoff
 
-This is the authoritative continuation note for the Windows-first Vita3K iOS work in `https://github.com/125hz/Vita3K-iOS`, branch `ios-port`. The current completed and physical-device-accepted target is **Milestone 37**. No Milestone 38 implementation has started.
+This is the authoritative continuation note for the Windows-first Vita3K iOS work in `https://github.com/125hz/Vita3K-iOS`, branch `ios-port`. The newest implemented milestone is **Milestone 38** (touch, time, power, and display startup HLE). Milestone 37 is the last milestone accepted on a physical device; Milestone 38 is implemented, portable-tested, and CI-verified but **awaits its physical-device run**, so the next real boundary is unknown until the user tests the Milestone 38 IPA.
 
 Read this file together with:
 
@@ -11,20 +11,9 @@ Read this file together with:
 - `docs/ios-development.md` for local and CI build operations.
 - `.github/workflows/ios.yml` and `.ci/package-ios.sh` for the authoritative unsigned IPA path.
 
-## Current stop point: Milestone 37 accepted
+## Boundary history at this point
 
-The user tested the Milestone 37 IPA on a physical iOS device with their locally owned Amagami dump:
-
-- Title: `PCSG00291` / `エビコレ+ アマガミ`
-- Selected executable: `patch/eboot.bin`
-- Module: `PSVita_ProjectTest01`, NID `0xE8A676A4`
-- Entry: `module_start 0x810176B9 via lifecycle export`
-- Loader: two preferred-address relocatable SELF segments, 44,760/44,760 relocation patches verified, 211 function stubs rebound
-- Progress: **5,735 guest instructions and 38 successful HLE calls**
-- Milestone 37 controller result: sampling mode 2 accepted; no controller buffers were requested yet
-- Preserved state: AppUtil initialized, NP and NP Trophy initialized offline, two sysmodules loaded, Trophy context 1 alive, 11 libc termination registrations, six completed C++ guards, and seven heap allocations / 12,744 live bytes
-
-The first honest unimplemented boundary is now:
+The Milestone 37 physical run (Amagami `PCSG00291`, `patch/eboot.bin`, `module_start 0x810176B9 via lifecycle export`) executed 5,735 instructions and 38 HLE calls, accepted controller sampling mode 2, and stopped at:
 
 ```text
 NID:          0x1B9C5D14
@@ -32,164 +21,122 @@ Name:         sceTouchSetSamplingState
 SVC:          0x8109B8E8
 LR:           0x81013F85
 Arguments:    r0=0x00000000 r1=0x00000001
-Observed:     5735 instructions, 38 HLE calls
 ```
 
-The signature is `sceTouchSetSamplingState(port, state)`. The captured values are consistent with enabling sampling on the front touch panel. Treat that interpretation as a working inference and verify it against upstream/VitaSDK definitions before implementing it. The extra register values shown by the diagnostic are not additional formal arguments.
+That is `sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START)`, verified against upstream Vita3K (`vita3k/modules/SceTouch/SceTouch.cpp`, `vita3k/touch/`). **This boundary is what Milestone 38 implements. Do not treat it as the next boundary anymore.** The next boundary will be whatever the Milestone 38 device run reports.
 
-Do not skip this call, return success from all unknown imports, or patch Amagami-specific addresses. When work resumes, the next bounded batch should be a coherent upstream-backed touch subsystem, not a one-off hardcoded result.
+## What Milestone 38 implemented
 
-## What exists today
+One coherent batch of four upstream-backed startup service families, all bound conditionally on the title's import inventory (nothing is bound that the title does not import), all validated against the upstream sources checked into `vita3k/`:
 
-### Build, packaging, and CI
+1. **Touch** (`ios/src/GuestThread.cpp`, `touch_imports` table): `sceTouchSetSamplingState`, `sceTouchGetSamplingState`, `sceTouchGetPanelInfo` (upstream 1920x1088 geometry, rear active-area Y 108..889, force 1..128), `sceTouchGetPixelDensity` (22.0), `sceTouchPeek`, `sceTouchPeek2`, `sceTouchPeekRegion` (upstream ignores the region), `sceTouchRead`, `sceTouchRead2`, `sceTouchEnableTouchForce`, `sceTouchDisableTouchForce`. Peek/read use upstream port/pointer/count validation (`SCE_TOUCH_ERROR_INVALID_ARG` = `0x80350001`, max 64 buffers) and write zero-report neutral `SceTouchData` (0x90 bytes each) with checked guest writes. Peek returns zero buffers while sampling is stopped, exactly like upstream `touch_get`. Read advances one virtual vblank per call because real blocking needs the future scheduler. **No fabricated touches; the UIKit touch bridge is not connected to guest HLE yet.**
+2. **Time**: `sceKernelGetProcessTime`, `sceKernelGetProcessTimeLow`, `sceKernelGetProcessTimeWide`, `sceKernelGetSystemTimeWide` (64-bit values returned in r0/r1), `sceRtcGetCurrentTick`, `_sceRtcGetCurrentTick` (checked u64 guest writes; null pointer returns `SCE_RTC_ERROR_INVALID_POINTER` = `0x80251001`). All are driven by one deterministic virtual microsecond clock that starts at zero, increments by one per query, and jumps one vblank period (16,667 us) per vblank wait; RTC ticks add the upstream `RTC_OFFSET` (62,135,596,800,000,000) so the reported date is the epoch, deterministically.
+3. **Power**: clock setters (`scePowerSetArmClockFrequency`, bus, GPU, GPU xbar) with upstream negative-frequency validation (`0x802B0000`) and recorded requests; clock getters returning upstream's fixed 444/222/222/166 MHz; deterministic offline battery profile (`scePowerGetBatteryLifePercent`=100, `GetBatteryLifeTime`=INT_MAX, `IsBatteryCharging`=0, `IsBatteryExist`=1, `IsLowBattery`=0, `IsPowerOnline`=0).
+4. **Display**: `sceDisplayWaitVblankStart`, `WaitVblankStartCB`, `WaitVblankStartMulti`, `WaitVblankStartMultiCB` (advance a virtual vblank counter; no callbacks can exist because callback creation is still unbound), `sceDisplayGetVcount` (counter & 0xFFFF), `sceDisplayGetRefreshRate` (59.94005), and `_sceDisplaySetFrameBuf`/`sceDisplaySetFrameBuf`/`_sceDisplayGetFrameBuf`/`sceDisplayGetFrameBuf` with the full upstream validation chain (struct size 0x18/0x1C, non-null base, pitch >= width, `SCE_DISPLAY_PIXELFORMAT_A8B8G8R8` only, sync 0/1, minimum 480x272 resolution, pitch >= 480) and recorded framebuffer state. **A recorded SetFrameBuf is bookkeeping only, not presentation.** If the device run reports `Display HLE: ... framebuf base=...`, the title has declared its first framebuffer address — a major signal for the GXM/display phase.
 
-- The root build has an early `VITA3K_BUILD_IOS` gate so iPhoneOS configuration avoids the desktop Qt dependency graph.
-- CMake builds a real arm64 `iphoneos` application target named `Vita3KiOS`.
-- `.ci/package-ios.sh` stages `Payload/Vita3K-iOS.app`, validates the device binary and plist, rejects signing material, and creates `artifacts/Vita3K-iOS-unsigned.ipa`.
-- `.github/workflows/ios.yml` is the only iOS workflow. It supports `workflow_dispatch`, branch/path-filtered pushes, and pull requests.
-- GitHub Actions first builds a legal VitaSDK homebrew fixture in a pinned official Docker image on Ubuntu.
-- A `macos-15` job runs all portable core tests, configures the Xcode iPhoneOS arm64 target, builds with `CODE_SIGNING_ALLOWED=NO` and `CODE_SIGNING_REQUIRED=NO`, packages the IPA, and uploads the IPA plus every legal synthetic milestone fixture.
-- No Apple certificate, provisioning profile, game, firmware, key, or protected extracted content is stored in the repository or Actions secrets.
-- Windows remains the primary editing and portable-test environment. The macOS Action is the compile truth for the Apple/iPhoneOS target.
+Diagnostics gained `Touch HLE:`, `Time HLE:`, `Power HLE:`, and `Display HLE:` sections plus `Touch/Time/Display boundary:` messages for failed checked guest-memory operations, which stop the run without partial state mutation.
 
-### iOS host shell and storage
+Unimplemented upstream stubs (touch regions/ext variants/device info, `_sceKernelGetSystemTime`, power callbacks, display callbacks/registration, everything else) remain hard diagnostic boundaries.
 
-- The app has a sandboxed Vita directory layout, persistent settings, import rescanning, and an installed-title inventory.
-- ZIP/VPK app and patch roots are inspected and installed transactionally.
-- `sce_sys/param.sfo` metadata is parsed with upstream-compatible code.
-- The game library can select a title and prefer `ux0/patch/<TITLE_ID>/eboot.bin` over the base executable.
-- The current UIKit shell already contains a diagnostic home view, game-library table, settings view, import/install controls, and an `MTKView` host surface.
-- The dark-blue screen is a deliberately temporary diagnostic presentation. Its Metal clear is host-owned and is **not** a Vita guest frame.
+### Relevant files changed by Milestone 38
 
-### Loader and execution foundation
+- `ios/src/GuestThread.cpp` — the four family tables, verification, bindings, virtual clock, diagnostics.
+- `ios/include/vita3k_ios/GuestThread.h` — new result telemetry fields.
+- `ios/include/vita3k_ios/CoreBridge.h`, `ios/src/CoreBridge.cpp` — `TitleBootResult` mirrors and propagation.
+- `ios/core/tests/CoreSmokeTests.cpp` — 18 new fixtures/assertion blocks (exit codes 174–193) plus `--emit-m38-install-zip-fixture`.
+- `.github/workflows/ios.yml` — emits/uploads `milestone38-startup-services.zip`.
+- `ios/Info.plist.in` (0.38.0 / 38), `ios/src/AppDelegate.mm` (title), `ios/README.md`, `ios/PORTING.md`, `docs/ios-development.md`, `ios/MENU-BOOT-CHECKLIST.md`, this handoff.
 
-- Plain or already-decrypted SELF load segments are mapped at checked guest addresses.
-- Relocation tables, imports, exports, and function-stub rebinding are implemented and regression-tested.
-- Export symbol addresses are preserved, and `NID_MODULE_START` (`0x935CD196`) overrides the module-info entry when present. Diagnostics must continue to say `via lifecycle export` for Amagami.
-- A bounded interpreter crosses Thumb, Thumb-2, and ARM modes, recognizes canonical inline import trampolines, and reports the exact first unsupported CPU, memory, or HLE boundary.
-- Unknown instructions and NIDs remain hard boundaries. The runner does not fabricate guest state to look farther ahead.
-- The one-shot budget is 65,536 instructions and includes PC/register/loop telemetry. It remains a diagnostic runner, not a production process scheduler or JIT.
+### Milestone 38 test coverage
 
-### Implemented CPU/runtime/HLE runway
+Portable Windows tests (all in `CoreSmokeTests.cpp`, run via `ctest`) cover: the captured set/get sampling-state startup pair; peek with sampling stopped (zero buffers, no vblank advance); read (one neutral sample, one vblank advance); unmapped and null buffers; invalid port and invalid sampling state; panel geometry read back through guest memory and returned via `sceKernelExitThread` (exit status `0x043F077F` = packed maxAaX/maxAaY); virtual-clock monotonicity across two `sceKernelGetProcessTimeWide` calls; RTC tick success/null/unmapped; power clock request + fixed 444 report + negative rejection; vblank wait + vcount readback; framebuffer set/get success, invalid pixel format, and upstream null-framebuffer success. A failed guest write never partially mutates sample counters or framebuffer state.
 
-The legal fixture history in CI records the following progression:
+## Current verified build
 
-- Milestones 9-16: legal ARM/VitaSDK fixtures, SFO/archive inspection, transactional installation, SELF preparation, and installed-title selection.
-- Milestone 18: correct lifecycle-export entry resolution.
-- Milestones 19-21: wide Thumb-2 prologue, common Thumb compiler baseline, constants, and doubleword memory families.
-- Milestone 22: exact inline import NID identity and call-context reporting.
-- Milestones 23-30: libc DSO state, broad Thumb-2 runtime/register/multiple-transfer families, termination registration, C++ guards, a bounded heap, and correct LR shifted-register behavior.
-- Milestone 31: expanded execution telemetry proving startup advanced beyond the earlier 4,096-instruction ceiling rather than spinning.
-- Milestone 32: C++ scalar/array allocation and deletion ABI coverage.
-- Milestone 33: validated AppUtil initialization/shutdown state.
-- Milestone 34: public sysmodule load/status/unload bookkeeping.
-- Milestone 35: offline NP Manager and NP Trophy startup lifecycle.
-- Milestone 36: bounded Trophy context/handle objects without fabricated trophy data.
-- Milestone 37: 19 controller startup/read exports with checked guest writes and neutral centered samples until real host input is connected.
+```text
+Milestone 38 source commit:  PENDING - recorded by the finishing docs commit
+Actions run:                 PENDING
+Workflow:                    Build unsigned iOS IPA
+Artifact:                    PENDING (Vita3K-iOS-<commit>-unsigned)
+Local IPA:                   test-artifacts/milestone38/Vita3K-iOS-unsigned.ipa
+Bundle ID:                   org.vita3k.experimental.ios
+Version:                     0.38.0 (build 38)
+Signing files:               0
+IPA SHA-256:                 PENDING
+```
 
-The repository has deterministic Windows-runnable tests and a legal installable fixture for each relevant milestone. These fixtures test emulator behavior; they are not commercial-game content.
+(If any field above still reads PENDING, the implementation commit was pushed but the finishing documentation commit was not; re-derive the values with `gh run list --repo 125hz/Vita3K-iOS --branch ios-port` and artifact verification before trusting a build.)
 
-## What this is not yet
-
-This project does **not** currently boot Vita games normally. It prepares Amagami and executes roughly 5.7 thousand real startup instructions in one bounded diagnostic thread before stopping at the first unknown dependency. It does not yet have the complete guest process, kernel, filesystem, or graphics stack needed to reach and display a menu.
-
-Specifically, it does not yet provide:
-
-- A real Vita process/thread scheduler, TLS, callbacks, waits, timers, mutexes, semaphores, or multi-thread guard behavior.
-- Complete ARM/Thumb/VFP/NEON/atomic instruction coverage for every title path.
-- A process-wide memory/page service, stack growth, or production allocator.
-- Vita VFS mounts and general `SceIo` access for game scripts, textures, fonts, savedata, and system paths.
-- Broad AppMgr, display, time, power, font, common-dialog, savedata, and other service behavior.
-- A GXM graphics context, guest render targets, command processing, shaders, textures, synchronization, or display queue.
-- Guest-produced frames on the `MTKView`.
-- Guest audio, persistent save data, or a complete UIKit/GameController-to-Vita input bridge.
-
-## Shortest honest roadmap to an Amagami menu
-
-The roadmap should no longer be thought of as an arbitrary count of one-NID milestones. Use larger, coherent, independently tested subsystem batches.
-
-### Phase A: clear the startup-service runway
-
-1. Implement the reached touch family as one batch: sampling state/mode plus the read/peek APIs actually imported by the title, with checked buffers and neutral host state until the UIKit bridge is connected.
-2. Produce an import-coverage map for all 214 imported NIDs and compare it with upstream Vita3K handlers.
-3. Proactively batch the high-confidence startup families that Amagami imports and is likely to reach next: time/process info, AppMgr/event state, display setup, power, and minimal I/O entry points.
-4. Continue stopping on the first genuinely unknown behavior. A batch may cover adjacent upstream-backed calls, but it must not turn every unimplemented import into success.
-
-This phase ends when startup reaches a real kernel wait/thread boundary, file access, or graphics initialization rather than another trivial initialization setter.
-
-### Phase B: integrate the runtime foundation
-
-1. Replace the single diagnostic thread with the upstream-style process/thread model and scheduler seam.
-2. Integrate process memory, stacks/TLS, synchronization, callbacks, and timers needed by the reached path.
-3. Mount a read-only `app0:` view with patch overlay semantics, then connect the minimum real `SceIo` path required to load Amagami's own menu assets. Add writable savedata only when reached.
-
-This is a major architectural tranche. Blind HLE returns cannot substitute for it because the game must be able to block, wake, create work, and read its own data correctly.
-
-### Phase C: produce the first guest frame
-
-1. Integrate or adapt the upstream GXM command/resource path instead of inventing an Amagami-specific renderer.
-2. Connect Vita surfaces, shaders, textures, buffers, draw state, and synchronization to an iOS-capable backend: upstream Vulkan through MoltenVK or a validated Metal backend.
-3. Route the guest display queue/framebuffer to the existing `MTKView`.
-4. Load the legally local game/font/system assets required by the title screen without committing them.
-
-The first-menu goal is complete only when a recognizable Amagami title/menu frame is generated from guest GXM state and reproduced after a clean install. A host-drawn imitation, screenshot, synthetic texture, or blue clear does not count.
-
-### Phase D: make the menu usable and the app presentable
-
-After the first guest frame, connect real touch/controller samples, audio, savedata, suspend/resume, and longer-run stability. These are required for playability but do not all block the first visible frame.
-
-## Acceleration policy
-
-The following shortcuts are valid and should make progress materially faster:
-
-- Batch complete API families when they share state and have upstream/VitaSDK behavior to copy.
-- Use the title's full import inventory to implement obvious startup clusters before waiting for each one to become the next boundary.
-- Reuse upstream Vita3K kernel, VFS, HLE, GXM, and renderer behavior behind narrow iOS adapters.
-- Use deterministic offline behavior where it is semantically valid: signed-out NP state, neutral input, read-only app data, and bounded object IDs.
-- Automate boundary logging and keep one physical-device run capable of exposing the next real subsystem edge.
-- Treat kernel/VFS/GXM integration as major milestones rather than continuing a long chain of tiny leaf-call patches.
-
-The following are not acceptable shortcuts:
-
-- Returning zero for every unknown NID.
-- Treating unsupported CPU instructions as no-ops or forcibly advancing the PC.
-- Hardcoding Amagami addresses, title IDs, control flow, file contents, or expected return values.
-- Pretending a wait completed without scheduler state, or pretending a file read succeeded without real bytes.
-- Drawing a fake Amagami menu in UIKit/Metal and calling it guest rendering.
-- Uploading the user's game, firmware, keys, decrypted protected content, certificates, or provisioning profiles.
-
-These invalid shortcuts can produce a screenshot quickly but corrupt guest state and make later failures impossible to diagnose.
-
-## UI plan
-
-There are two separate UI jobs:
-
-1. **Emulator shell UI:** library cards/icons, install progress, launch controls, settings, compatibility/status, and diagnostics in a separate sheet or log view. The current UIKit library/settings code is a usable foundation, and this redesign can begin at any time.
-2. **In-game UI:** the full-screen surface showing frames produced by the Vita guest. This cannot be completed before Phase C's GXM/display pipeline exists.
-
-For the shortest route to the Amagami menu, do not let shell polish block runtime/VFS/GXM work. The recommended point for a dedicated shell redesign is after Phase A reaches the first stable I/O/kernel/GXM boundary, or in parallel with those core integrations. At that point the default launch experience should be a real library screen; the diagnostic text should move into an optional developer panel. Once guest presentation works, launching a title should transition to the full-screen guest surface.
-
-If visual polish is prioritized over first-menu speed, a shell redesign can be the next dedicated milestone, but it will not make Amagami execute or render sooner.
-
-## Last verified Milestone 37 build
+The last physically accepted build remains Milestone 37:
 
 ```text
 Source commit: 1b49202f22bc1d3d12f12b378c46f52f955231f9
 Actions run:   29402882032
-Workflow:      Build unsigned iOS IPA
 Artifact:      Vita3K-iOS-1b49202f22bc1d3d12f12b378c46f52f955231f9-unsigned
-Local IPA:     test-artifacts/milestone37/Vita3K-iOS-milestone37-unsigned.ipa
-Bundle ID:     org.vita3k.experimental.ios
-Version:       0.37.0 (build 37)
 IPA SHA-256:   33A364609BD99ACCB3BA065E746C69C75C39E6E677202EFC7032B66FF421BBFA
-Signing files: 0
 ```
 
-That IPA and hash belong to the accepted code commit above. A later documentation-only commit is not a new emulator milestone and must not replace this record.
+## Physical device test the user must run next
+
+1. Sign and sideload the Milestone 38 IPA (user handles signing/JIT; nothing changed in that flow).
+2. Launch, select `PCSG00291` with **Prefer Installed Patch** enabled.
+3. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+4. Run **Attempt Boot (65536 Instructions)** once.
+5. Return the complete diagnostic text, especially:
+   - the new first-boundary block (NID, name, SVC, LR, r0–r3),
+   - the instruction and HLE-call counts,
+   - any `Touch HLE:`, `Time HLE:`, `Power HLE:`, `Display HLE:` sections and boundary messages.
+
+The diagnostic to paste back is the whole boot detail string shown in the app; do not summarize it.
+
+## What this is not yet
+
+Nothing in this milestone renders, schedules, or reads files. The project still does not have: a guest process/thread scheduler, TLS, callbacks, waits/timers/mutexes; complete CPU coverage (VFP/NEON/atomics likely gaps); a process-wide memory service; guest VFS mounts and `SceIo`; GXM contexts/shaders/draw translation; guest frames on the `MTKView`; audio; savedata; or a UIKit/GameController-to-guest input bridge. The dark-blue Metal clear remains host diagnostic output.
+
+## Shortest honest roadmap to an Amagami menu
+
+### Phase A: clear the startup-service runway (in progress)
+
+1. ~~Touch family~~ plus time/power/display basics — **done in Milestone 38**.
+2. Run the Milestone 38 IPA on device; the run should now cross touch startup and likely time/power/display probing. The next boundary candidates, in rough likelihood order: `SceIo` file access (needs Phase B VFS), `sceGxmInitialize` (Phase C), kernel threading/callback creation (Phase B), AppMgr/CommonDialog state, or an unsupported CPU instruction. Each remains a hard boundary by design.
+3. If the next boundary is another small deterministic service family with upstream behavior, batch it the same way (import-conditional bindings, upstream constants, checked guest memory, portable tests, one legal fixture).
+4. Produce an import-coverage map of all imported NIDs against upstream Vita3K handlers to size the remaining runway (still not done; useful next).
+
+### Phase B: integrate the runtime foundation
+
+Threads/scheduler seam, process memory/stacks/TLS, synchronization, callbacks, timers, then a read-only `app0:` VFS view with patch overlay plus the minimal real `SceIo` paths. Blind HLE returns cannot substitute: the game must block, wake, and read real bytes.
+
+### Phase C: produce the first guest frame
+
+Integrate/adapt the upstream GXM command/resource path (do not invent an Amagami-specific renderer), connect to MoltenVK/Vulkan or a validated Metal backend, and route the display queue to the existing `MTKView`. Milestone 38's framebuffer bookkeeping gives the display-side anchor.
+
+### Phase D: make the menu usable
+
+Real touch/controller sample bridging (the HLE surface from Milestones 37–38 is ready to receive it), audio, savedata, stability.
+
+### Strategic note for whoever continues
+
+The `vita3k/` tree in this repository contains the complete upstream emulator (kernel, modules, VFS, GXM, renderers). The `ios/` core is a from-scratch bounded diagnostic runner that reuses upstream headers/NIDs but reimplements execution. Phase A is tractable this way, but Phases B and C amount to reimplementing large upstream subsystems. Before starting Phase B from scratch, seriously evaluate lifting upstream subsystems (kernel/threading, VFS, GXM) behind the existing narrow iOS interfaces instead of continuing the reimplementation — that is very likely the faster honest path to a real menu, and the acceleration policy below explicitly allows it.
+
+## Acceleration policy
+
+Valid shortcuts:
+
+- Batch complete API families with upstream/VitaSDK behavior to copy (Milestone 38 batched four).
+- Use the title's full import inventory to implement obvious startup clusters proactively.
+- Reuse upstream Vita3K kernel, VFS, HLE, GXM, and renderer code behind narrow iOS adapters.
+- Deterministic offline behavior where semantically valid: signed-out NP, neutral input, empty touch, fixed clocks, virtual monotonic time, read-only app data.
+- Keep one physical-device run capable of exposing the next real subsystem edge.
+
+Forbidden shortcuts (unchanged):
+
+- Returning success for unknown NIDs; skipping unsupported CPU instructions.
+- Hardcoding Amagami addresses, title IDs, control flow, file contents, or expected return values.
+- Pretending waits completed or file reads succeeded without real state/bytes.
+- Drawing a fake Amagami menu in UIKit/Metal and calling it guest rendering.
+- Uploading the user's game, firmware, keys, decrypted protected content, certificates, or provisioning profiles.
 
 ## Local Windows verification
-
-Use PowerShell from the repository root:
 
 ```powershell
 git switch ios-port
@@ -201,25 +148,9 @@ git diff --check
 git status --short
 ```
 
-Windows validates the portable core and repository hygiene. It does not replace the macOS iPhoneOS build.
-
 ## GitHub Actions: authoritative unsigned IPA procedure
 
-Always extend `.github/workflows/ios.yml`; never create a duplicate iOS workflow. Keep the workflow name exactly `Build unsigned iOS IPA`.
-
-The workflow must retain:
-
-- `workflow_dispatch` for manual builds.
-- The `ios-port` push trigger and existing path filters.
-- The pinned official VitaSDK Docker fixture job.
-- The `macos-15` iPhoneOS arm64 job.
-- Portable core tests and all legal synthetic fixtures.
-- CMake options `VITA3K_BUILD_IOS=ON` and `VITA3K_IOS_LINK_CORE=ON`.
-- `CODE_SIGNING_ALLOWED=NO` and `CODE_SIGNING_REQUIRED=NO`.
-- Packaging through `.ci/package-ios.sh` to `artifacts/Vita3K-iOS-unsigned.ipa`.
-- Artifact upload named with `${{ github.sha }}` and containing the IPA plus legal fixtures.
-
-For an implementation milestone:
+Always extend `.github/workflows/ios.yml`; never create a duplicate iOS workflow. Keep the workflow name exactly `Build unsigned iOS IPA`. The workflow must retain: `workflow_dispatch`, the `ios-port` push trigger and path filters, the pinned VitaSDK Docker fixture job, the `macos-15` arm64 job, portable tests plus all legal fixtures (now through `milestone38-startup-services.zip`), `VITA3K_BUILD_IOS=ON`, `VITA3K_IOS_LINK_CORE=ON`, `CODE_SIGNING_ALLOWED=NO`, `CODE_SIGNING_REQUIRED=NO`, packaging via `.ci/package-ios.sh`, and the `${{ github.sha }}`-named artifact upload.
 
 ```powershell
 git add -A
@@ -228,59 +159,42 @@ git push origin ios-port
 
 gh run list --repo 125hz/Vita3K-iOS --branch ios-port --workflow "Build unsigned iOS IPA" --limit 5
 gh run watch RUN_ID --repo 125hz/Vita3K-iOS --exit-status
-gh run view RUN_ID --repo 125hz/Vita3K-iOS --log-failed
 gh run download RUN_ID --repo 125hz/Vita3K-iOS --name ARTIFACT_NAME --dir test-artifacts\milestoneN
 Get-FileHash test-artifacts\milestoneN\Vita3K-iOS-unsigned.ipa -Algorithm SHA256
 ```
 
-Do not rely on the local `gh` default repository; pass `--repo 125hz/Vita3K-iOS` explicitly.
-
-Verify the downloaded artifact before reporting completion:
-
-1. Extract the IPA with `tar -xf` or another ZIP-capable tool. PowerShell `Expand-Archive` can reject the `.ipa` extension.
-2. Confirm `Payload/Vita3K-iOS.app/Vita3K-iOS` exists and is arm64 iPhoneOS output.
-3. Parse `Info.plist` and record bundle ID, short version, and build number.
-4. Confirm no `_CodeSignature`, `embedded.mobileprovision`, `.p12`, `.cer`, or private-key material exists.
-5. Record the exact source commit, run ID, artifact name, IPA path, and SHA-256.
-
-Do not stop at a green Action. A code milestone is handed off only after the artifact is downloaded and verified.
+Verify before reporting completion: extract with `tar -xf`, confirm `Payload/Vita3K-iOS.app/Vita3K-iOS` is arm64 iPhoneOS, parse `Info.plist` (bundle `org.vita3k.experimental.ios`, correct version/build), confirm zero signing material (`_CodeSignature`, `embedded.mobileprovision`, `.p12`, `.cer`, keys), and record commit/run/artifact/path/SHA-256. A green Action alone is not a handoff.
 
 ## Milestone update checklist
 
-For every code milestone:
-
-- Anchor the work in the exact physical-device CPU, memory, HLE, return, or budget boundary.
-- Prefer one coherent subsystem batch over a single trivial NID.
-- Add deterministic portable tests and a legal synthetic installable fixture.
-- Update the fixture emission/upload list in `.github/workflows/ios.yml` when a new fixture is added.
-- Bump the milestone/version consistently in `ios/Info.plist.in`, `ios/src/AppDelegate.mm`, `ios/README.md`, `ios/PORTING.md`, and `docs/ios-development.md`.
-- Update this handoff and `ios/MENU-BOOT-CHECKLIST.md` with the accepted result and remaining critical path.
-- Run the Windows tests, commit, push, monitor the Action, download the artifact, verify it, and report its SHA-256.
-- Give the user concise device steps and ask for the complete next diagnostic.
-
-Documentation-only changes do not create a new milestone or require a version bump.
+- Anchor the work in the exact physical-device boundary; prefer one coherent upstream-backed batch.
+- Add deterministic portable tests and a legal synthetic installable fixture; extend the workflow's emission/upload list.
+- Bump milestone/version in `ios/Info.plist.in`, `ios/src/AppDelegate.mm`, `ios/README.md`, `ios/PORTING.md`, `docs/ios-development.md`; update `ios/MENU-BOOT-CHECKLIST.md` and this handoff.
+- Run Windows tests, commit, push, watch the Action, download and verify the artifact, record its SHA-256.
+- Give the user concise device steps and request the complete next diagnostic.
+- Documentation-only changes do not bump versions.
 
 ## Legal and operational boundaries
 
-- Keep Amagami, any other game, `fontpkg.pup`, `preinstall.pup`, `psvupdat.pup`, keys, and extracted proprietary files local.
-- Never commit or upload certificates, provisioning profiles, Apple credentials, or signing secrets.
+- Keep Amagami, any other game, firmware PUPs, keys, and extracted proprietary files local; never commit or upload them.
+- Never commit certificates, provisioning profiles, Apple credentials, or signing secrets.
 - The user handles signing, sideloading, entitlement/JIT setup, and physical-device execution.
-- Codex owns source changes, portable verification, GitHub Actions monitoring, artifact download, unsigned-package verification, and exact handoff records.
-- Preserve desktop and Android behavior. Keep iOS-specific host behavior behind narrow interfaces.
-- Be explicit that a prepared executable, blue Metal clear, host input capture, or synthetic fixture is not a booted/rendered commercial game.
+- The implementing agent owns source changes, portable verification, Actions monitoring, artifact download/verification, and exact handoff records.
+- Preserve desktop and Android behavior; keep iOS host behavior behind narrow interfaces.
+- A prepared executable, blue Metal clear, host input capture, or synthetic fixture is not a booted or rendered commercial game.
 
 ## Copy-paste continuation prompt
 
 ```text
-Continue the Vita3K iOS port in https://github.com/125hz/Vita3K-iOS on branch ios-port. First read ios/NEXT-MILESTONE-HANDOFF.md, ios/MENU-BOOT-CHECKLIST.md, ios/README.md, ios/PORTING.md, ios/VION-ANALYSIS.md, docs/ios-development.md, .github/workflows/ios.yml, and the latest git log/diff.
+Continue the Vita3K iOS port in https://github.com/125hz/Vita3K-iOS on branch ios-port. First read ios/NEXT-MILESTONE-HANDOFF.md, ios/MENU-BOOT-CHECKLIST.md, ios/README.md, ios/PORTING.md, ios/VION-ANALYSIS.md, docs/ios-development.md, .github/workflows/ios.yml, and the latest git log/diff. Treat the checked-in handoff and source as authoritative over this prompt.
 
-Milestone 37 is complete and accepted on a physical device. Amagami PCSG00291 from patch/eboot.bin entered module_start 0x810176B9 via lifecycle export, successfully executed 5735 instructions and 38 HLE calls, accepted controller sampling mode 2, then stopped at sceTouchSetSamplingState (NID 0x1B9C5D14), SVC 0x8109B8E8, LR 0x81013F85, with r0=0 and r1=1. Do not reimplement Milestone 37 and do not skip the touch call.
+Milestone 38 (touch + time + power + display startup HLE) is implemented, portable-tested, and CI-verified. Its physical-device result determines the next boundary. If the user has not yet tested the Milestone 38 IPA, ask them to run the device test in the handoff's "Physical device test" section and return the complete diagnostic. Do not reimplement Milestones 37-38 and do not assume what the next boundary is.
 
-Before editing, inspect upstream Vita3K/VitaSDK behavior and the title's full import inventory. Implement a coherent, deterministic touch startup/read subsystem batch rather than a one-off hardcoded return. Proactively include only adjacent imported touch APIs whose behavior can be validated. Unknown CPU, memory, and HLE behavior must remain a hard boundary. Do not hardcode Amagami data or claim the game is playable.
+When the user returns the diagnostic: verify the reported NID against upstream Vita3K/VitaSDK in the vita3k/ tree, then implement the next coherent upstream-backed batch. Bind only imported NIDs, keep unknown CPU/memory/HLE behavior as hard boundaries, use checked guest memory with no partial mutation on failure, and never hardcode Amagami data. If the boundary is kernel threading, SceIo/VFS, or GXM initialization, stop patching leaf calls: plan the corresponding Phase B/C subsystem integration and strongly consider reusing the upstream vita3k/ subsystems behind the existing narrow iOS interfaces instead of reimplementing them.
 
-Add or update deterministic legal Windows-runnable tests and the legal installable fixture. Preserve desktop/Android behavior and keep platform code behind narrow interfaces. Run the portable Windows build/tests. Update the milestone/version in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, docs/ios-development.md, ios/MENU-BOOT-CHECKLIST.md, and this handoff.
+Add deterministic legal Windows-runnable tests and a legal installable fixture for anything implemented. Preserve desktop/Android behavior. Run the portable Windows build/tests (cmake -S ios/core -B build-core-tests; build; ctest; git diff --check). Bump milestone/version consistently in ios/Info.plist.in, ios/src/AppDelegate.mm, ios/README.md, ios/PORTING.md, docs/ios-development.md, ios/MENU-BOOT-CHECKLIST.md, and rewrite ios/NEXT-MILESTONE-HANDOFF.md for the next agent.
 
-Extend the existing .github/workflows/ios.yml only. Commit and push to ios-port, monitor the Build unsigned iOS IPA Action until it succeeds, download and inspect the exact artifact, record commit/run/artifact/bundle/version/unsigned status/IPA SHA-256, and provide concise physical-device steps. Never upload game or firmware content, keys, certificates, or provisioning profiles. Do not sign, sideload, or enable JIT; the user handles those steps.
+Extend the existing .github/workflows/ios.yml only. Commit and push to ios-port, monitor the "Build unsigned iOS IPA" run with gh --repo 125hz/Vita3K-iOS, download and verify the exact artifact (arm64 iPhoneOS, org.vita3k.experimental.ios, no signing material), record commit/run/artifact/version/SHA-256, and give the user concise device steps plus the exact diagnostic to return. Never upload game or firmware content, keys, certificates, or provisioning profiles. Do not sign, sideload, or enable JIT; the user handles those.
 ```
 
 ## Definition of the menu goal

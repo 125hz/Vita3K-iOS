@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -176,6 +177,7 @@ int main(int argc, char **argv) {
     std::filesystem::path emitted_m35_install_zip_fixture;
     std::filesystem::path emitted_m36_install_zip_fixture;
     std::filesystem::path emitted_m37_install_zip_fixture;
+    std::filesystem::path emitted_m38_install_zip_fixture;
     std::filesystem::path vitasdk_fixture;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
@@ -231,6 +233,8 @@ int main(int argc, char **argv) {
             emitted_m36_install_zip_fixture = argv[++index];
         } else if (argument == "--emit-m37-install-zip-fixture" && index + 1 < argc) {
             emitted_m37_install_zip_fixture = argv[++index];
+        } else if (argument == "--emit-m38-install-zip-fixture" && index + 1 < argc) {
+            emitted_m38_install_zip_fixture = argv[++index];
         } else if (argument == "--verify-vitasdk" && index + 1 < argc) {
             vitasdk_fixture = argv[++index];
         } else {
@@ -260,6 +264,7 @@ int main(int argc, char **argv) {
                          "[--emit-m35-install-zip-fixture <path>] "
                          "[--emit-m36-install-zip-fixture <path>] "
                          "[--emit-m37-install-zip-fixture <path>] "
+                         "[--emit-m38-install-zip-fixture <path>] "
                          "[--verify-vitasdk <path>]\n";
             return 64;
         }
@@ -1113,6 +1118,299 @@ int main(int argc, char **argv) {
         ctrl_buffer_self, ctrl_buffer_self);
     const auto invalid_ctrl_buffer_install_zip = make_cpp_allocation_archive(
         ctrl_peek_buffer_positive_nid, 1);
+    constexpr std::uint32_t touch_set_sampling_state_nid = 0x1B9C5D14u;
+    constexpr std::uint32_t touch_get_sampling_state_nid = 0x26531526u;
+    constexpr std::uint32_t touch_get_panel_info_nid = 0x10A2CA25u;
+    constexpr std::uint32_t touch_peek_nid = 0xFF082DF0u;
+    constexpr std::uint32_t touch_read_nid = 0x169A1D58u;
+    constexpr std::uint32_t touch_error_invalid_arg = 0x80350001u;
+    constexpr std::uint32_t kernel_get_process_time_wide_nid = 0xB110C123u;
+    constexpr std::uint32_t rtc_get_current_tick_nid = 0x23F79274u;
+    constexpr std::uint32_t rtc_error_invalid_pointer = 0x80251001u;
+    constexpr std::uint64_t rtc_epoch_offset_us = 62135596800000000ULL;
+    constexpr std::uint32_t power_set_arm_clock_nid = 0x74DB5AE5u;
+    constexpr std::uint32_t power_get_arm_clock_nid = 0xABC6F88Fu;
+    constexpr std::uint32_t power_error_invalid_value = 0x802B0000u;
+    constexpr std::uint32_t display_wait_vblank_start_nid = 0x5795E898u;
+    constexpr std::uint32_t display_get_vcount_nid = 0xB6FDE0BAu;
+    constexpr std::uint32_t display_set_frame_buf_nid = 0x7A410B64u;
+    constexpr std::uint32_t display_get_frame_buf_nid = 0x42AE6BBCu;
+    constexpr std::uint32_t display_error_invalid_pixelformat = 0x80290003u;
+    constexpr std::uint32_t synthetic_touch_state_output = 0x81000240u;
+    constexpr std::uint32_t synthetic_touch_buffer = 0x81000240u;
+    // Milestone 38 startup fixture mirroring the Amagami boundary:
+    // sceTouchSetSamplingState(front, start) then sceTouchGetSamplingState.
+    auto touch_startup_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 10> touch_startup_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2000u, // MOVS r0, #0 (SCE_TOUCH_PORT_FRONT)
+        0x2101u, // MOVS r1, #1 (SCE_TOUCH_SAMPLING_STATE_START)
+        0x4B03u, // LDR r3, [pc, #12] -> set-sampling-state stub
+        0x4798u, // BLX r3
+        0x2000u, // MOVS r0, #0
+        0x4903u, // LDR r1, [pc, #12] -> state output
+        0x3310u, // ADDS r3, #16 -> get-sampling-state stub
+        0x4798u, // BLX r3
+        0xBD10u // POP {r4, pc}
+    };
+    std::memcpy(touch_startup_elf.data() + 244, touch_startup_program.data(),
+        sizeof(touch_startup_program));
+    write_value(touch_startup_elf, 264, static_cast<std::uint32_t>(0x81000030));
+    write_value(touch_startup_elf, 272, synthetic_touch_state_output);
+    write_value(touch_startup_elf, 314, static_cast<std::uint16_t>(3));
+    write_value(touch_startup_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(touch_startup_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(touch_startup_elf, 348, static_cast<std::uint32_t>(0x81000030));
+    write_value(touch_startup_elf, 352, static_cast<std::uint32_t>(0x81000040));
+    write_value(touch_startup_elf, 368, get_thread_id_nid);
+    write_value(touch_startup_elf, 372, touch_set_sampling_state_nid);
+    write_value(touch_startup_elf, 376, touch_get_sampling_state_nid);
+    const auto touch_startup_self = make_plain_self(touch_startup_elf);
+    const auto m38_install_zip = vita3k::ios::make_synthetic_install_zip(
+        touch_startup_self, touch_startup_self);
+    // Peek/read buffer fixtures on the front port.
+    const auto make_touch_buffer_archive = [&](std::uint32_t nid,
+                                               std::uint32_t buffer_address) {
+        auto elf = lifecycle_elf;
+        const std::array<std::uint16_t, 8> program{
+            0xB510u, // PUSH {r4, lr}
+            0x2000u, // MOVS r0, #0 (front port)
+            0x4903u, // LDR r1, [pc, #12] -> sample buffer
+            0x2202u, // MOVS r2, #2
+            0x4B03u, // LDR r3, [pc, #12] -> touch import stub
+            0x4798u, // BLX r3
+            0xBD10u, // POP {r4, pc}
+            0xBF00u
+        };
+        std::memcpy(elf.data() + 244, program.data(), sizeof(program));
+        write_value(elf, 264, buffer_address);
+        write_value(elf, 268, static_cast<std::uint32_t>(0x81000050));
+        write_value(elf, 372, nid);
+        const auto self = make_plain_self(elf);
+        return vita3k::ios::make_synthetic_install_zip(self, self);
+    };
+    const auto touch_peek_install_zip = make_touch_buffer_archive(
+        touch_peek_nid, synthetic_touch_buffer);
+    const auto touch_read_install_zip = make_touch_buffer_archive(
+        touch_read_nid, synthetic_touch_buffer);
+    const auto unmapped_touch_buffer_install_zip = make_touch_buffer_archive(
+        touch_peek_nid, 0x70000000u);
+    const auto null_touch_buffer_install_zip = make_touch_buffer_archive(
+        touch_peek_nid, 0);
+    const auto invalid_touch_port_install_zip = make_cpp_allocation_archive(
+        touch_set_sampling_state_nid, 2);
+    // sceTouchSetSamplingState(front, 2) -> invalid sampling state.
+    auto invalid_touch_state_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 8> invalid_touch_state_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2000u, // MOVS r0, #0 (front port)
+        0x2102u, // MOVS r1, #2 (invalid sampling state)
+        0x4B03u, // LDR r3, [pc, #12] -> set-sampling-state stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc}
+        0xBF00u, 0xBF00u
+    };
+    std::memcpy(invalid_touch_state_elf.data() + 244,
+        invalid_touch_state_program.data(), sizeof(invalid_touch_state_program));
+    write_value(invalid_touch_state_elf, 264, static_cast<std::uint32_t>(0x81000050));
+    write_value(invalid_touch_state_elf, 372, touch_set_sampling_state_nid);
+    const auto invalid_touch_state_self = make_plain_self(invalid_touch_state_elf);
+    const auto invalid_touch_state_install_zip = vita3k::ios::make_synthetic_install_zip(
+        invalid_touch_state_self, invalid_touch_state_self);
+    // sceTouchGetPanelInfo(front, buffer) then exit with the guest-visible
+    // packed maxAaX/maxAaY word so the test proves real guest-memory content.
+    auto touch_panel_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 10> touch_panel_program{
+        0xB510u, // PUSH {r4, lr}
+        0x2000u, // MOVS r0, #0 (front port)
+        0x4904u, // LDR r1, [pc, #16] -> panel-info buffer
+        0x4B05u, // LDR r3, [pc, #20] -> panel-info stub
+        0x4798u, // BLX r3
+        0x4C03u, // LDR r4, [pc, #12] -> panel-info buffer
+        0x6860u, // LDR r0, [r4, #4] -> packed maxAaX | maxAaY << 16
+        0x3310u, // ADDS r3, #16 -> exit-thread stub
+        0x4798u, // BLX r3
+        0xBD10u // POP {r4, pc}
+    };
+    std::memcpy(touch_panel_elf.data() + 244, touch_panel_program.data(),
+        sizeof(touch_panel_program));
+    write_value(touch_panel_elf, 268, synthetic_touch_buffer);
+    write_value(touch_panel_elf, 272, static_cast<std::uint32_t>(0x81000030));
+    write_value(touch_panel_elf, 314, static_cast<std::uint16_t>(3));
+    write_value(touch_panel_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(touch_panel_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(touch_panel_elf, 348, static_cast<std::uint32_t>(0x81000030));
+    write_value(touch_panel_elf, 352, static_cast<std::uint32_t>(0x81000040));
+    write_value(touch_panel_elf, 368, get_thread_id_nid);
+    write_value(touch_panel_elf, 372, touch_get_panel_info_nid);
+    write_value(touch_panel_elf, 376, exit_thread_nid);
+    const auto touch_panel_self = make_plain_self(touch_panel_elf);
+    const auto touch_panel_install_zip = vita3k::ios::make_synthetic_install_zip(
+        touch_panel_self, touch_panel_self);
+    // Two sceKernelGetProcessTimeWide samples prove the virtual clock is
+    // monotonic; the second low word is passed to sceKernelExitThread.
+    auto process_time_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 8> process_time_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4B03u, // LDR r3, [pc, #12] -> process-time-wide stub
+        0x4798u, // BLX r3
+        0x4798u, // BLX r3 (second sample)
+        0x3310u, // ADDS r3, #16 -> exit-thread stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc}
+        0xBF00u
+    };
+    std::memcpy(process_time_elf.data() + 244, process_time_program.data(),
+        sizeof(process_time_program));
+    write_value(process_time_elf, 260, static_cast<std::uint32_t>(0x81000030));
+    write_value(process_time_elf, 314, static_cast<std::uint16_t>(3));
+    write_value(process_time_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(process_time_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(process_time_elf, 348, static_cast<std::uint32_t>(0x81000030));
+    write_value(process_time_elf, 352, static_cast<std::uint32_t>(0x81000040));
+    write_value(process_time_elf, 368, get_thread_id_nid);
+    write_value(process_time_elf, 372, kernel_get_process_time_wide_nid);
+    write_value(process_time_elf, 376, exit_thread_nid);
+    const auto process_time_self = make_plain_self(process_time_elf);
+    const auto process_time_install_zip = vita3k::ios::make_synthetic_install_zip(
+        process_time_self, process_time_self);
+    const auto rtc_tick_install_zip = make_cpp_allocation_archive(
+        rtc_get_current_tick_nid, synthetic_touch_state_output);
+    const auto null_rtc_tick_install_zip = make_cpp_allocation_archive(
+        rtc_get_current_tick_nid, 0);
+    const auto unmapped_rtc_tick_install_zip = make_cpp_allocation_archive(
+        rtc_get_current_tick_nid, 0x70000000u);
+    // scePowerSetArmClockFrequency(111) then scePowerGetArmClockFrequency,
+    // exiting with the upstream fixed 444 MHz report.
+    auto power_clock_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 10> power_clock_program{
+        0xB510u, // PUSH {r4, lr}
+        0x206Fu, // MOVS r0, #111 (requested ARM MHz)
+        0x4B03u, // LDR r3, [pc, #12] -> set-arm-clock stub
+        0x4798u, // BLX r3
+        0x3310u, // ADDS r3, #16 -> get-arm-clock stub
+        0x4798u, // BLX r3
+        0x3310u, // ADDS r3, #16 -> exit-thread stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc}
+        0xBF00u
+    };
+    std::memcpy(power_clock_elf.data() + 244, power_clock_program.data(),
+        sizeof(power_clock_program));
+    write_value(power_clock_elf, 264, static_cast<std::uint32_t>(0x81000030));
+    write_value(power_clock_elf, 314, static_cast<std::uint16_t>(4));
+    write_value(power_clock_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(power_clock_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(power_clock_elf, 348, static_cast<std::uint32_t>(0x81000030));
+    write_value(power_clock_elf, 352, static_cast<std::uint32_t>(0x81000040));
+    write_value(power_clock_elf, 356, static_cast<std::uint32_t>(0x81000050));
+    write_value(power_clock_elf, 368, get_thread_id_nid);
+    write_value(power_clock_elf, 372, power_set_arm_clock_nid);
+    write_value(power_clock_elf, 376, power_get_arm_clock_nid);
+    write_value(power_clock_elf, 380, exit_thread_nid);
+    const auto power_clock_self = make_plain_self(power_clock_elf);
+    const auto power_clock_install_zip = vita3k::ios::make_synthetic_install_zip(
+        power_clock_self, power_clock_self);
+    const auto negative_power_clock_install_zip = make_cpp_allocation_archive(
+        power_set_arm_clock_nid, 0x80000000u);
+    // sceDisplayWaitVblankStart then sceDisplayGetVcount, exiting with the
+    // virtual vblank counter.
+    auto display_vblank_elf = lifecycle_elf;
+    const std::array<std::uint16_t, 8> display_vblank_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4B03u, // LDR r3, [pc, #12] -> wait-vblank stub
+        0x4798u, // BLX r3
+        0x3310u, // ADDS r3, #16 -> get-vcount stub
+        0x4798u, // BLX r3
+        0x3310u, // ADDS r3, #16 -> exit-thread stub
+        0x4798u, // BLX r3
+        0xBD10u // POP {r4, pc}
+    };
+    std::memcpy(display_vblank_elf.data() + 244, display_vblank_program.data(),
+        sizeof(display_vblank_program));
+    write_value(display_vblank_elf, 260, static_cast<std::uint32_t>(0x81000030));
+    write_value(display_vblank_elf, 314, static_cast<std::uint16_t>(4));
+    write_value(display_vblank_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(display_vblank_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(display_vblank_elf, 348, static_cast<std::uint32_t>(0x81000030));
+    write_value(display_vblank_elf, 352, static_cast<std::uint32_t>(0x81000040));
+    write_value(display_vblank_elf, 356, static_cast<std::uint32_t>(0x81000050));
+    write_value(display_vblank_elf, 368, get_thread_id_nid);
+    write_value(display_vblank_elf, 372, display_wait_vblank_start_nid);
+    write_value(display_vblank_elf, 376, display_get_vcount_nid);
+    write_value(display_vblank_elf, 380, exit_thread_nid);
+    const auto display_vblank_self = make_plain_self(display_vblank_elf);
+    const auto display_vblank_install_zip = vita3k::ios::make_synthetic_install_zip(
+        display_vblank_self, display_vblank_self);
+    // Set-then-get framebuffer fixture. The initialized SceDisplayFrameBuf
+    // lives in PT_LOAD #1, whose file window is moved past the relocation
+    // entry so the base ELF stays untouched.
+    constexpr std::uint32_t synthetic_frame_buf_struct = 0x81000800u;
+    constexpr std::uint32_t synthetic_frame_buf_base = 0x81400000u;
+    const auto make_frame_buf_elf = [&](std::uint32_t pixelformat) {
+        std::vector<std::uint8_t> elf(lifecycle_elf.begin(), lifecycle_elf.end());
+        elf.resize(464, 0);
+        write_value(elf, 88, static_cast<std::uint32_t>(432)); // PT_LOAD #1 offset
+        write_value(elf, 100, static_cast<std::uint32_t>(24)); // PT_LOAD #1 filesz
+        write_value(elf, 432, static_cast<std::uint32_t>(0x18)); // size
+        write_value(elf, 436, synthetic_frame_buf_base); // base
+        write_value(elf, 440, static_cast<std::uint32_t>(960)); // pitch
+        write_value(elf, 444, pixelformat); // pixelformat
+        write_value(elf, 448, static_cast<std::uint32_t>(960)); // width
+        write_value(elf, 452, static_cast<std::uint32_t>(544)); // height
+        return elf;
+    };
+    auto frame_buf_elf = make_frame_buf_elf(0);
+    const std::array<std::uint16_t, 12> frame_buf_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4C05u, // LDR r4, [pc, #20] -> framebuffer struct
+        0x4620u, // MOV r0, r4
+        0x2101u, // MOVS r1, #1 (SCE_DISPLAY_SETBUF_NEXTFRAME)
+        0x4B04u, // LDR r3, [pc, #16] -> set-frame-buf stub
+        0x4798u, // BLX r3
+        0x4620u, // MOV r0, r4
+        0x2101u, // MOVS r1, #1
+        0x3310u, // ADDS r3, #16 -> get-frame-buf stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc}
+        0xBF00u
+    };
+    std::memcpy(frame_buf_elf.data() + 244, frame_buf_program.data(),
+        sizeof(frame_buf_program));
+    write_value(frame_buf_elf, 268, synthetic_frame_buf_struct);
+    write_value(frame_buf_elf, 272, static_cast<std::uint32_t>(0x81000030));
+    write_value(frame_buf_elf, 314, static_cast<std::uint16_t>(3));
+    write_value(frame_buf_elf, 340, static_cast<std::uint32_t>(0x810000C4));
+    write_value(frame_buf_elf, 344, static_cast<std::uint32_t>(0x81000020));
+    write_value(frame_buf_elf, 348, static_cast<std::uint32_t>(0x81000030));
+    write_value(frame_buf_elf, 352, static_cast<std::uint32_t>(0x81000040));
+    write_value(frame_buf_elf, 368, get_thread_id_nid);
+    write_value(frame_buf_elf, 372, display_set_frame_buf_nid);
+    write_value(frame_buf_elf, 376, display_get_frame_buf_nid);
+    const auto frame_buf_self = make_plain_self(frame_buf_elf);
+    const auto frame_buf_install_zip = vita3k::ios::make_synthetic_install_zip(
+        frame_buf_self, frame_buf_self);
+    // Single set call with a rejected pixel format.
+    auto invalid_frame_buf_elf = make_frame_buf_elf(1);
+    const std::array<std::uint16_t, 8> invalid_frame_buf_program{
+        0xB510u, // PUSH {r4, lr}
+        0x4803u, // LDR r0, [pc, #12] -> framebuffer struct
+        0x2101u, // MOVS r1, #1
+        0x4B03u, // LDR r3, [pc, #12] -> set-frame-buf stub
+        0x4798u, // BLX r3
+        0xBD10u, // POP {r4, pc}
+        0xBF00u, 0xBF00u
+    };
+    std::memcpy(invalid_frame_buf_elf.data() + 244, invalid_frame_buf_program.data(),
+        sizeof(invalid_frame_buf_program));
+    write_value(invalid_frame_buf_elf, 260, synthetic_frame_buf_struct);
+    write_value(invalid_frame_buf_elf, 264, static_cast<std::uint32_t>(0x81000050));
+    write_value(invalid_frame_buf_elf, 372, display_set_frame_buf_nid);
+    const auto invalid_frame_buf_self = make_plain_self(invalid_frame_buf_elf);
+    const auto invalid_frame_buf_install_zip = vita3k::ios::make_synthetic_install_zip(
+        invalid_frame_buf_self, invalid_frame_buf_self);
+    const auto null_frame_buf_install_zip = make_cpp_allocation_archive(
+        display_set_frame_buf_nid, 0);
     if (m16_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 16 SELF installation fixture.\n";
         return 34;
@@ -1224,6 +1522,26 @@ int main(int argc, char **argv) {
         || invalid_ctrl_buffer_install_zip.empty()) {
         std::cerr << "Could not create the Milestone 37 controller HLE fixtures.\n";
         return 166;
+    }
+    if (m38_install_zip.empty() || touch_peek_install_zip.empty()
+        || touch_read_install_zip.empty()
+        || unmapped_touch_buffer_install_zip.empty()
+        || null_touch_buffer_install_zip.empty()
+        || invalid_touch_port_install_zip.empty()
+        || invalid_touch_state_install_zip.empty()
+        || touch_panel_install_zip.empty()
+        || process_time_install_zip.empty()
+        || rtc_tick_install_zip.empty()
+        || null_rtc_tick_install_zip.empty()
+        || unmapped_rtc_tick_install_zip.empty()
+        || power_clock_install_zip.empty()
+        || negative_power_clock_install_zip.empty()
+        || display_vblank_install_zip.empty()
+        || frame_buf_install_zip.empty()
+        || invalid_frame_buf_install_zip.empty()
+        || null_frame_buf_install_zip.empty()) {
+        std::cerr << "Could not create the Milestone 38 startup-service fixtures.\n";
+        return 175;
     }
     if (!emitted_self_fixture.empty()) {
         if (!emitted_self_fixture.parent_path().empty()) {
@@ -1508,6 +1826,19 @@ int main(int argc, char **argv) {
         if (error || !output) {
             std::cerr << "Could not emit the Milestone 37 controller HLE fixture.\n";
             return 167;
+        }
+    }
+    if (!emitted_m38_install_zip_fixture.empty()) {
+        if (!emitted_m38_install_zip_fixture.parent_path().empty()) {
+            std::filesystem::create_directories(
+                emitted_m38_install_zip_fixture.parent_path(), error);
+        }
+        std::ofstream output(emitted_m38_install_zip_fixture, std::ios::binary);
+        output.write(reinterpret_cast<const char *>(m38_install_zip.data()),
+            static_cast<std::streamsize>(m38_install_zip.size()));
+        if (error || !output) {
+            std::cerr << "Could not emit the Milestone 38 startup-service fixture.\n";
+            return 174;
         }
     }
 
@@ -2585,6 +2916,206 @@ int main(int argc, char **argv) {
         std::cerr << invalid_ctrl_buffer_boot.detail << '\n';
         return 170;
     }
+    const auto touch_startup_boot = run_guard_fixture(
+        m38_install_zip, "milestone38-touch-startup.zip");
+    if (!touch_startup_boot.returned || touch_startup_boot.hle_dispatch_count != 2
+        || touch_startup_boot.touch_sampling_state_set_call_count != 1
+        || touch_startup_boot.touch_sampling_state_get_call_count != 1
+        || touch_startup_boot.touch_front_sampling_state != 1
+        || touch_startup_boot.touch_back_sampling_state != 0
+        || touch_startup_boot.last_touch_result != 0
+        || touch_startup_boot.return_value != 0
+        || touch_startup_boot.detail.find(
+            "Touch HLE: front=1, back=0 (set=1, get=1")
+            == std::string::npos) {
+        std::cerr << touch_startup_boot.detail << '\n';
+        return 176;
+    }
+    const auto touch_peek_boot = run_guard_fixture(
+        touch_peek_install_zip, "milestone38-touch-peek.zip");
+    if (!touch_peek_boot.returned || touch_peek_boot.touch_buffer_call_count != 1
+        || touch_peek_boot.touch_sample_count != 0
+        || touch_peek_boot.last_touch_port != 0
+        || touch_peek_boot.last_touch_buffer_address != synthetic_touch_buffer
+        || touch_peek_boot.last_touch_requested_count != 2
+        || touch_peek_boot.last_touch_result != 0
+        || touch_peek_boot.return_value != 0
+        || touch_peek_boot.display_vblank_count != 0) {
+        std::cerr << touch_peek_boot.detail << '\n';
+        return 177;
+    }
+    const auto touch_read_boot = run_guard_fixture(
+        touch_read_install_zip, "milestone38-touch-read.zip");
+    if (!touch_read_boot.returned || touch_read_boot.touch_buffer_call_count != 1
+        || touch_read_boot.touch_sample_count != 1
+        || touch_read_boot.last_touch_requested_count != 2
+        || touch_read_boot.last_touch_result != 1
+        || touch_read_boot.return_value != 1
+        || touch_read_boot.display_vblank_count != 1) {
+        std::cerr << touch_read_boot.detail << '\n';
+        return 178;
+    }
+    const auto unmapped_touch_buffer_boot = run_guard_fixture(
+        unmapped_touch_buffer_install_zip, "milestone38-touch-unmapped-buffer.zip");
+    if (!unmapped_touch_buffer_boot.started || unmapped_touch_buffer_boot.returned
+        || unmapped_touch_buffer_boot.touch_sample_count != 0
+        || unmapped_touch_buffer_boot.detail.find(
+            "Touch boundary: sceTouchPeek guest-memory validation failed")
+            == std::string::npos) {
+        std::cerr << unmapped_touch_buffer_boot.detail << '\n';
+        return 179;
+    }
+    const auto null_touch_buffer_boot = run_guard_fixture(
+        null_touch_buffer_install_zip, "milestone38-touch-null-buffer.zip");
+    if (!null_touch_buffer_boot.returned
+        || null_touch_buffer_boot.touch_buffer_call_count != 1
+        || null_touch_buffer_boot.touch_sample_count != 0
+        || static_cast<std::uint32_t>(null_touch_buffer_boot.last_touch_result)
+            != touch_error_invalid_arg
+        || null_touch_buffer_boot.return_value != touch_error_invalid_arg) {
+        std::cerr << null_touch_buffer_boot.detail << '\n';
+        return 180;
+    }
+    const auto invalid_touch_port_boot = run_guard_fixture(
+        invalid_touch_port_install_zip, "milestone38-touch-invalid-port.zip");
+    if (!invalid_touch_port_boot.returned
+        || invalid_touch_port_boot.touch_sampling_state_set_call_count != 1
+        || invalid_touch_port_boot.touch_front_sampling_state != 0
+        || invalid_touch_port_boot.touch_back_sampling_state != 0
+        || static_cast<std::uint32_t>(invalid_touch_port_boot.last_touch_result)
+            != touch_error_invalid_arg
+        || invalid_touch_port_boot.return_value != touch_error_invalid_arg) {
+        std::cerr << invalid_touch_port_boot.detail << '\n';
+        return 181;
+    }
+    const auto invalid_touch_state_boot = run_guard_fixture(
+        invalid_touch_state_install_zip, "milestone38-touch-invalid-state.zip");
+    if (!invalid_touch_state_boot.returned
+        || invalid_touch_state_boot.touch_sampling_state_set_call_count != 1
+        || invalid_touch_state_boot.touch_front_sampling_state != 0
+        || static_cast<std::uint32_t>(invalid_touch_state_boot.last_touch_result)
+            != touch_error_invalid_arg
+        || invalid_touch_state_boot.return_value != touch_error_invalid_arg) {
+        std::cerr << invalid_touch_state_boot.detail << '\n';
+        return 182;
+    }
+    const auto touch_panel_boot = run_guard_fixture(
+        touch_panel_install_zip, "milestone38-touch-panel-info.zip");
+    if (!touch_panel_boot.exited || touch_panel_boot.touch_panel_info_call_count != 1
+        || touch_panel_boot.last_touch_result != 0
+        || touch_panel_boot.exit_status
+            != static_cast<std::int32_t>(0x043F077Fu)) {
+        std::cerr << touch_panel_boot.detail << '\n';
+        return 183;
+    }
+    const auto process_time_boot = run_guard_fixture(
+        process_time_install_zip, "milestone38-process-time.zip");
+    if (!process_time_boot.exited || process_time_boot.time_query_call_count != 2
+        || process_time_boot.last_time_value != 1
+        || process_time_boot.last_time_result != 0
+        || process_time_boot.exit_status != 1) {
+        std::cerr << process_time_boot.detail << '\n';
+        return 184;
+    }
+    const auto rtc_tick_boot = run_guard_fixture(
+        rtc_tick_install_zip, "milestone38-rtc-tick.zip");
+    if (!rtc_tick_boot.returned || rtc_tick_boot.rtc_tick_call_count != 1
+        || rtc_tick_boot.last_rtc_tick_address != synthetic_touch_state_output
+        || rtc_tick_boot.last_time_value != rtc_epoch_offset_us
+        || rtc_tick_boot.last_time_result != 0
+        || rtc_tick_boot.return_value != 0) {
+        std::cerr << rtc_tick_boot.detail << '\n';
+        return 185;
+    }
+    const auto null_rtc_tick_boot = run_guard_fixture(
+        null_rtc_tick_install_zip, "milestone38-rtc-null-tick.zip");
+    if (!null_rtc_tick_boot.returned || null_rtc_tick_boot.rtc_tick_call_count != 1
+        || static_cast<std::uint32_t>(null_rtc_tick_boot.last_time_result)
+            != rtc_error_invalid_pointer
+        || null_rtc_tick_boot.return_value != rtc_error_invalid_pointer) {
+        std::cerr << null_rtc_tick_boot.detail << '\n';
+        return 186;
+    }
+    const auto unmapped_rtc_tick_boot = run_guard_fixture(
+        unmapped_rtc_tick_install_zip, "milestone38-rtc-unmapped-tick.zip");
+    if (!unmapped_rtc_tick_boot.started || unmapped_rtc_tick_boot.returned
+        || unmapped_rtc_tick_boot.detail.find(
+            "Time boundary: sceRtcGetCurrentTick guest-memory validation failed")
+            == std::string::npos) {
+        std::cerr << unmapped_rtc_tick_boot.detail << '\n';
+        return 187;
+    }
+    const auto power_clock_boot = run_guard_fixture(
+        power_clock_install_zip, "milestone38-power-clocks.zip");
+    if (!power_clock_boot.exited || power_clock_boot.power_clock_set_call_count != 1
+        || power_clock_boot.power_clock_get_call_count != 1
+        || power_clock_boot.last_power_requested_arm_clock != 111
+        || power_clock_boot.last_power_result != 0
+        || power_clock_boot.exit_status != 444) {
+        std::cerr << power_clock_boot.detail << '\n';
+        return 188;
+    }
+    const auto negative_power_clock_boot = run_guard_fixture(
+        negative_power_clock_install_zip, "milestone38-power-negative-clock.zip");
+    if (!negative_power_clock_boot.returned
+        || negative_power_clock_boot.power_clock_set_call_count != 1
+        || negative_power_clock_boot.last_power_requested_arm_clock
+            != std::numeric_limits<std::int32_t>::min()
+        || static_cast<std::uint32_t>(negative_power_clock_boot.last_power_result)
+            != power_error_invalid_value
+        || negative_power_clock_boot.return_value != power_error_invalid_value) {
+        std::cerr << negative_power_clock_boot.detail << '\n';
+        return 189;
+    }
+    const auto display_vblank_boot = run_guard_fixture(
+        display_vblank_install_zip, "milestone38-display-vblank.zip");
+    if (!display_vblank_boot.exited
+        || display_vblank_boot.display_wait_vblank_call_count != 1
+        || display_vblank_boot.display_get_vcount_call_count != 1
+        || display_vblank_boot.display_vblank_count != 1
+        || display_vblank_boot.exit_status != 1) {
+        std::cerr << display_vblank_boot.detail << '\n';
+        return 190;
+    }
+    const auto frame_buf_boot = run_guard_fixture(
+        frame_buf_install_zip, "milestone38-display-frame-buf.zip");
+    if (!frame_buf_boot.returned
+        || frame_buf_boot.display_set_frame_buf_call_count != 1
+        || frame_buf_boot.display_get_frame_buf_call_count != 1
+        || !frame_buf_boot.display_frame_buf_set
+        || frame_buf_boot.last_display_frame_buf_address != synthetic_frame_buf_struct
+        || frame_buf_boot.last_display_frame_buf_base != synthetic_frame_buf_base
+        || frame_buf_boot.last_display_frame_buf_pitch != 960
+        || frame_buf_boot.last_display_frame_buf_width != 960
+        || frame_buf_boot.last_display_frame_buf_height != 544
+        || frame_buf_boot.last_display_frame_buf_pixel_format != 0
+        || frame_buf_boot.last_display_frame_buf_sync != 1
+        || frame_buf_boot.last_display_result != 0
+        || frame_buf_boot.return_value != 0) {
+        std::cerr << frame_buf_boot.detail << '\n';
+        return 191;
+    }
+    const auto invalid_frame_buf_boot = run_guard_fixture(
+        invalid_frame_buf_install_zip, "milestone38-display-invalid-format.zip");
+    if (!invalid_frame_buf_boot.returned
+        || invalid_frame_buf_boot.display_set_frame_buf_call_count != 1
+        || invalid_frame_buf_boot.display_frame_buf_set
+        || static_cast<std::uint32_t>(invalid_frame_buf_boot.last_display_result)
+            != display_error_invalid_pixelformat
+        || invalid_frame_buf_boot.return_value != display_error_invalid_pixelformat) {
+        std::cerr << invalid_frame_buf_boot.detail << '\n';
+        return 192;
+    }
+    const auto null_frame_buf_boot = run_guard_fixture(
+        null_frame_buf_install_zip, "milestone38-display-null-frame-buf.zip");
+    if (!null_frame_buf_boot.returned
+        || null_frame_buf_boot.display_set_frame_buf_call_count != 1
+        || null_frame_buf_boot.display_frame_buf_set
+        || null_frame_buf_boot.last_display_result != 0
+        || null_frame_buf_boot.return_value != 0) {
+        std::cerr << null_frame_buf_boot.detail << '\n';
+        return 193;
+    }
 
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
@@ -2736,6 +3267,10 @@ int main(int argc, char **argv) {
     if (!emitted_m37_install_zip_fixture.empty()) {
         std::cout << "Emitted legal Milestone 37 controller HLE fixture: "
                   << emitted_m37_install_zip_fixture << '\n';
+    }
+    if (!emitted_m38_install_zip_fixture.empty()) {
+        std::cout << "Emitted legal Milestone 38 startup-service fixture: "
+                  << emitted_m38_install_zip_fixture << '\n';
     }
     std::cout << rescanned.summary << '\n';
     return 0;

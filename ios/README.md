@@ -412,3 +412,19 @@ Until the host-input adapter is connected to guest controller state, buffer call
 4. Share the complete next boundary and the `Controller HLE:` diagnostic.
 
 The Actions artifact includes `milestone37-controller-hle.zip`. Its legal synthetic title sets analog-wide mode and reads it back through mapped guest memory. Portable companions exercise a two-sample neutral buffer and invalid mode/null-buffer paths.
+
+## Milestone 38 touch, time, power, and display startup HLE
+
+The accepted Milestone 37 run accepted controller sampling mode 2, then advanced to 5,735 instructions and 38 HLE calls before reaching `sceTouchSetSamplingState(0, 1)` (NID `0x1B9C5D14`), which enables front-panel touch sampling. Milestone 38 batches that touch family together with the three highest-confidence startup families Amagami imports next, all copied from upstream Vita3K behavior:
+
+- **Touch:** sampling state set/get, panel geometry, pixel density, force mode, and the peek/read buffer forms with upstream port/pointer/count validation, checked guest writes, and neutral empty samples (no fabricated touches) until the UIKit bridge is connected.
+- **Time:** process time, system time, and RTC ticks driven by one deterministic virtual microsecond clock anchored at the upstream RTC epoch offset, so polling loops observe strictly monotonic time.
+- **Power:** clock frequency set/get with upstream fixed 444/222/222/166 MHz reports and a deterministic offline battery profile (full, present, not charging, no external power).
+- **Display:** vblank waits and vcount backed by a virtual vblank counter, refresh-rate reporting, and full `sceDisplaySetFrameBuf`/`GetFrameBuf` validation and bookkeeping. A framebuffer set would be the first guest-declared frame address; presentation still requires the future GXM/display pipeline.
+
+1. Install the Milestone 38 IPA and select `PCSG00291` with **Prefer Installed Patch** enabled.
+2. Confirm preparation still reports `module_start 0x810176B9 via lifecycle export`.
+3. Run **Attempt Boot (65536 Instructions)** once.
+4. Share the complete next boundary plus any `Touch HLE:`, `Time HLE:`, `Power HLE:`, and `Display HLE:` diagnostics.
+
+The Actions artifact includes `milestone38-startup-services.zip`, whose legal synthetic title enables front-panel sampling and reads it back through mapped guest memory. Portable companions cover panel geometry read back through guest memory, empty peek/read output, virtual-clock monotonicity, RTC pointers, clock frequency requests, vblank waits, framebuffer validation, and unmapped/null/invalid boundaries for every family.

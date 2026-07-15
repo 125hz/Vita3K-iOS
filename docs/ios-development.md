@@ -242,6 +242,10 @@ The accepted Milestone 35 run advanced to `sceNpTrophyCreateContext` at 5712 ins
 
 The accepted Milestone 36 device run crossed Trophy context creation and stopped at `sceCtrlSetSamplingMode(2)` after 5722 instructions and 37 HLE calls. Milestone 37 adds the 19-function upstream controller startup/read cluster in one batch. Standard/extended sampling state, handheld port discovery, wireless information, multi-controller support, and every positive/negative read/peek buffer import now use bounded state and guest writes. Neutral samples keep both sticks centered until `HostInput` is connected to guest HLE; read blocking remains a scheduler/display-vblank task rather than a fabricated wait. CI emits `milestone37-controller-hle.zip`, and deterministic tests cover set/get state, two-sample output, invalid modes, and invalid buffers.
 
+## Milestone 38 touch, time, power, and display startup HLE
+
+The accepted Milestone 37 device run accepted controller sampling mode 2 and stopped at `sceTouchSetSamplingState(0, 1)` after 5,735 instructions and 38 HLE calls. Milestone 38 clears the reached touch boundary and proactively batches the adjacent high-confidence startup families with upstream Vita3K semantics: touch sampling/panel/density/force/peek/read with neutral empty samples and checked guest writes, process/system/RTC time on one deterministic virtual microsecond clock, power clock and offline battery reporting, and display vblank/vcount/refresh plus validated framebuffer set/get records. Eighteen new deterministic Windows-runnable fixtures cover success, invalid-argument, null-pointer, and unmapped-memory paths, including guest-visible readback of panel geometry and clock reports through `sceKernelExitThread`. CI emits `milestone38-startup-services.zip`.
+
 ## 10. Troubleshooting CI
 
 - **CMake enters the desktop Qt build:** confirm `-DCMAKE_SYSTEM_NAME=iOS` and `-DVITA3K_BUILD_IOS=ON` are both present.
