@@ -206,10 +206,12 @@ elseif(VITA3K_BUILD_IOS_UPSTREAM_CORE)
 		interface.h
 		performance.cpp
 	)
-	# The iOS shell includes interface.h, which needs this directory plus
-	# util's public headers (exit_code.h, fs.h and their boost includes).
+	# The iOS frontend (ios/src/UpstreamMain.cpp) includes this directory's
+	# interface.h plus the public headers of the components it drives, so
+	# propagate those usage requirements to the application target.
 	target_include_directories(vita3k PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-	target_link_libraries(vita3k PUBLIC util)
+	target_link_libraries(vita3k PUBLIC
+		app compat config ctrl emuenv modules renderer touch util)
 	target_link_libraries(vita3k PRIVATE SDL3::SDL3 pugixml::pugixml)
 else()
 	add_executable(vita3k MACOSX_BUNDLE main.cpp interface.cpp interface.h performance.cpp)
