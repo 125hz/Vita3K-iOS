@@ -118,6 +118,9 @@ struct State {
 
     bool should_display;
 
+    // Diagnostic counter: number of frames the host render loop has presented.
+    std::atomic<uint64_t> host_frames_presented{ 0 };
+
     std::atomic<bool> async_flip_requested{ false };
     std::atomic<int> pending_vsync{ -1 };
 

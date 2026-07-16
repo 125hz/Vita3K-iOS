@@ -146,6 +146,10 @@ EXPORT(SceInt32, _sceDisplaySetFrameBuf, const SceDisplayFrameBuf *pFrameBuf, Sc
         STUBBED("SCE_DISPLAY_SETBUF_IMMEDIATE is not supported");
     }
 
+    LOG_INFO_ONCE("First sceDisplaySetFrameBuf: base=0x{:X} pitch={} size={}x{} sync={} (TID {})",
+        pFrameBuf->base.address(), pFrameBuf->pitch, pFrameBuf->width, pFrameBuf->height,
+        static_cast<int>(sync), thread_id);
+
     DisplayFrameInfo &info = emuenv.display.sce_frame;
 
     info.base = pFrameBuf->base;

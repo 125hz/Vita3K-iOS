@@ -110,6 +110,11 @@ bool update_runtime_metrics(EmuEnvState &emuenv, LaunchRuntimeMetrics &metrics);
 void abort_game_launch(EmuEnvState &emuenv);
 void request_in_process_launch(EmuEnvState &emuenv, AppLaunchRequest request);
 
+// Log a diagnostic snapshot of the guest runtime (threads, sync-primitive
+// waiters, display/audio/NGS progress). Safe to call from any host thread
+// while the emulated app runs; used by frontend hang watchdogs.
+void dump_guest_state(EmuEnvState &emuenv, const char *reason);
+
 void load_users(EmuEnvState &emuenv);
 void save_user(EmuEnvState &emuenv, const std::string &user_id);
 std::string create_user(EmuEnvState &emuenv, const std::string &name);

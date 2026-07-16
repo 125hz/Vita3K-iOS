@@ -34,6 +34,7 @@
 #include <config/version.h>
 #include <ctrl/functions.h>
 #include <ctrl/state.h>
+#include <display/state.h>
 #include <emuenv/state.h>
 #include <modules/module_parent.h>
 #include <renderer/frame_host.h>
@@ -42,7 +43,9 @@
 #include <util/fs.h>
 #include <util/log.h>
 
+#include <cstddef>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -320,6 +323,17 @@ int main(int argc, char *argv[]) {
 
     LOG_INFO("Game started: {} ({})", emuenv->current_app_title, launch_request->app_path);
 
+    // Hang watchdog: if the title stops calling sceDisplaySetFrameBuf, dump the
+    // guest state so the log names the blocked thread/wait instead of going
+    // silent. A few scheduled dumps also fire early after boot so a title that
+    // keeps re-submitting a static frame is still diagnosed.
+    const Uint64 watchdog_start_ms = SDL_GetTicks();
+    constexpr Uint64 scheduled_dump_at_ms[] = { 20000, 60000, 180000 };
+    std::size_t next_scheduled_dump = 0;
+    uint64_t last_setframe_seen = emuenv->display.last_setframe_vblank_count.load();
+    Uint64 last_setframe_change_ms = watchdog_start_ms;
+    Uint64 next_stall_dump_ms = 0;
+
     bool running = true;
     while (running) {
         SDL_Event event;
@@ -354,6 +368,24 @@ int main(int argc, char *argv[]) {
 
             default:
                 break;
+            }
+        }
+
+        {
+            const Uint64 now_ms = SDL_GetTicks();
+            const uint64_t setframe_count = emuenv->display.last_setframe_vblank_count.load();
+            if (setframe_count != last_setframe_seen) {
+                last_setframe_seen = setframe_count;
+                last_setframe_change_ms = now_ms;
+            }
+            if (next_scheduled_dump < std::size(scheduled_dump_at_ms)
+                && now_ms - watchdog_start_ms >= scheduled_dump_at_ms[next_scheduled_dump]) {
+                app::dump_guest_state(*emuenv, "scheduled boot diagnostic");
+                ++next_scheduled_dump;
+            }
+            if (now_ms - last_setframe_change_ms >= 8000 && now_ms >= next_stall_dump_ms) {
+                app::dump_guest_state(*emuenv, "no sceDisplaySetFrameBuf progress for 8s");
+                next_stall_dump_ms = now_ms + 30000;
             }
         }
 

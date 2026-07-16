@@ -729,6 +729,9 @@ EXPORT(int, _sceKernelStartThread, SceUID thid, SceSize arglen, Ptr<void> argp) 
         return RET_ERROR(SCE_KERNEL_ERROR_RUNNING);
     }
 
+    LOG_DEBUG("Guest thread starting: '{}' (TID {}) entry=0x{:08X} by TID {}",
+        thread->name, thread->id, thread->entry_point, thread_id);
+
     const int res = thread->start(arglen, argp, true);
     if (res < 0) {
         return RET_ERROR(res);
@@ -1181,6 +1184,7 @@ EXPORT(int, sceKernelDeleteTimer, SceUID timer_handle) {
 EXPORT(int, sceKernelExitDeleteThread, int status) {
     TRACY_FUNC(sceKernelExitDeleteThread, status);
     const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+    LOG_DEBUG("Guest thread exiting (delete): '{}' (TID {}) status={}", thread->name, thread->id, status);
     thread->exit_delete();
 
     return status;

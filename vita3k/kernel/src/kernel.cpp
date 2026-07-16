@@ -151,6 +151,9 @@ ThreadStatePtr KernelState::create_thread(MemState &mem, const char *name, Ptr<c
     if (thread->init(name, entry_point, init_priority, affinity_mask, stack_size, option) < 0)
         return nullptr;
 
+    LOG_DEBUG("Guest thread created: '{}' (TID {}) entry=0x{:08X} priority={} stack_size=0x{:X} affinity=0x{:X}",
+        thread->name, thread->id, entry_point.address(), init_priority, stack_size, affinity_mask);
+
     {
         const std::lock_guard<std::mutex> lock(mutex);
         threads.emplace(thread->id, thread);

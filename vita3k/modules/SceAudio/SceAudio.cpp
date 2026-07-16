@@ -172,8 +172,11 @@ EXPORT(int, sceAudioOutOpenPort, SceAudioOutPortType type, int len, int freq, Sc
     const int channels = (mode == SCE_AUDIO_OUT_MODE_MONO) ? 1 : 2;
 
     AudioOutPortPtr port = emuenv.audio.open_port(channels, freq, len);
-    if (!port)
+    if (!port) {
+        LOG_ERROR("Audio out port open failed: type={} len={} freq={} channels={}", static_cast<int>(type), len, freq, channels);
         return RET_ERROR(SCE_AUDIO_OUT_ERROR_NOT_OPENED);
+    }
+    LOG_INFO("Audio out port opened: type={} len={} freq={} channels={} (TID {})", static_cast<int>(type), len, freq, channels, thread_id);
 
     // Save the port configuration
     port->type = type;
@@ -205,6 +208,7 @@ EXPORT(int, sceAudioOutOutput, int port, const void *buf) {
     if (!thread) {
         return RET_ERROR(SCE_AUDIO_OUT_ERROR_INVALID_PORT);
     }
+    LOG_INFO_ONCE("First sceAudioOutOutput call (port={}, TID {})", port, thread_id);
     // is it really useful to update the thread status?
     thread->update_status(ThreadStatus::wait);
     emuenv.audio.audio_output(*prt, buf);

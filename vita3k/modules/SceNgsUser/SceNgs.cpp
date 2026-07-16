@@ -311,9 +311,12 @@ EXPORT(SceUInt32, sceNgsRackInit, ngs::System *system, SceNgsBufferInfo *info, c
     }
 
     if (!ngs::init_rack(emuenv.ngs, emuenv.mem, system, info, description)) {
+        LOG_ERROR("NGS rack init failed (voice_count={})", description->voice_count);
         return RET_ERROR(SCE_NGS_ERROR);
     }
 
+    LOG_DEBUG("NGS rack initialized: voice_count={} channels_per_voice={} max_patches_per_input={} patches_per_output={}",
+        description->voice_count, description->channels_per_voice, description->max_patches_per_input, description->patches_per_output);
     *rack = info->data.cast<ngs::Rack>();
     return SCE_NGS_OK;
 }
@@ -365,6 +368,8 @@ EXPORT(int, sceNgsSystemGetRequiredMemorySize, SceNgsSystemInitParams *params, u
         return 0;
     }
     *size = ngs::System::get_required_memspace_size(params); // System struct size
+    LOG_DEBUG("NGS system memory size requested: {} bytes (max_racks={} max_voices={} granularity={} sample_rate={})",
+        *size, params->max_racks, params->max_voices, params->granularity, params->sample_rate);
     return 0;
 }
 
@@ -376,9 +381,12 @@ EXPORT(SceUInt32, sceNgsSystemInit, Ptr<void> memspace, const uint32_t memspace_
     }
 
     if (!ngs::init_system(emuenv.ngs, emuenv.mem, params, memspace, memspace_size)) {
+        LOG_ERROR("NGS system init failed (memspace=0x{:X} size={})", memspace.address(), memspace_size);
         return RET_ERROR(SCE_NGS_ERROR); // TODO: Better error code
     }
 
+    LOG_INFO("NGS system initialized: memspace=0x{:X} size={} max_racks={} max_voices={} granularity={} sample_rate={}",
+        memspace.address(), memspace_size, params->max_racks, params->max_voices, params->granularity, params->sample_rate);
     *system = memspace.cast<ngs::System>();
     return SCE_NGS_OK;
 }
@@ -431,6 +439,7 @@ EXPORT(SceUInt32, sceNgsSystemUpdate, ngs::System *system) {
         return 0;
     }
 
+    LOG_INFO_ONCE("First sceNgsSystemUpdate call (TID {})", thread_id);
     system->voice_scheduler.update(emuenv.kernel, emuenv.mem, thread_id);
 
     return SCE_NGS_OK;

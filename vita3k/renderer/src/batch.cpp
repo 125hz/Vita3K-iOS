@@ -270,6 +270,7 @@ static void render_loop(renderer::State &state, DisplayState &display, GxmState 
 
         state.render_frame(display, gxm, mem);
         state.swap_window();
+        state.host_frames_presented.fetch_add(1, std::memory_order_relaxed);
         state.async_flip_requested.store(false, std::memory_order_relaxed);
 
 #ifdef TRACY_ENABLE

@@ -345,6 +345,7 @@ uint32_t start_module(EmuEnvState &emuenv, const SceKernelModuleInfo &module, Sc
 
         return ret;
     }
+    LOG_DEBUG("Module {} (at \"{}\") has no module_start entry; start treated as success", module.module_name, module.path);
     return 0;
 }
 

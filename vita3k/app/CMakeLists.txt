@@ -9,6 +9,7 @@ add_library(
 	src/app.cpp
 	src/apps_list.cpp
 	src/discord.cpp
+	src/guest_dump.cpp
 	src/session_controller.cpp
 	src/user.cpp
 )
