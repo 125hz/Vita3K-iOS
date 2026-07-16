@@ -6,7 +6,9 @@
 
 #import <UIKit/UIKit.h>
 
+#include <cmath>
 #include <mutex>
+#include <utility>
 
 namespace {
 
@@ -29,6 +31,13 @@ UIWindow *active_window() {
         }
     }
     return nil;
+}
+
+void perform_on_main(dispatch_block_t block) {
+    if (NSThread.isMainThread)
+        block();
+    else
+        dispatch_async(dispatch_get_main_queue(), block);
 }
 
 UIVisualEffect *glass_effect() {
@@ -499,7 +508,9 @@ static Vita3KLibraryView *g_library = nil;
 
 void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
     const Vita3KIOSSettings &settings) {
-    dispatch_async(dispatch_get_main_queue(), ^{
+    const std::vector<Vita3KIOSGameEntry> gamesCopy = games;
+    const Vita3KIOSSettings settingsCopy = settings;
+    perform_on_main(^{
         UIWindow *window = active_window();
         if (!window)
             return;
@@ -507,20 +518,22 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
             g_library = [[Vita3KLibraryView alloc] initWithFrame:window.bounds];
             [window addSubview:g_library];
         }
-        [g_library updateGames:games settings:settings];
+        [g_library updateGames:gamesCopy settings:settingsCopy];
         [window bringSubviewToFront:g_library];
     });
 }
 
 void vita3k_ios_update_library(const std::vector<Vita3KIOSGameEntry> &games,
     const Vita3KIOSSettings &settings) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [g_library updateGames:games settings:settings];
+    const std::vector<Vita3KIOSGameEntry> gamesCopy = games;
+    const Vita3KIOSSettings settingsCopy = settings;
+    perform_on_main(^{
+        [g_library updateGames:gamesCopy settings:settingsCopy];
     });
 }
 
 void vita3k_ios_hide_library() {
-    dispatch_async(dispatch_get_main_queue(), ^{
+    perform_on_main(^{
         [g_library removeFromSuperview];
         g_library = nil;
     });
@@ -537,7 +550,7 @@ void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_r
     NSMutableArray<NSString *> *labels = [NSMutableArray arrayWithCapacity:restart_required.size()];
     for (const auto &label : restart_required)
         [labels addObject:[NSString stringWithUTF8String:label.c_str()]];
-    dispatch_async(dispatch_get_main_queue(), ^{
+    perform_on_main(^{
         [g_library reportRestartRequired:labels];
     });
 }
