@@ -227,6 +227,7 @@ int main(int argc, char *argv[]) {
     }
 
     app::AppSessionController session_controller(*emuenv);
+    SDL_Log("Vita3K iOS: begin_launch '%s'", launch_request->app_path.c_str());
     if (!session_controller.begin_launch(*launch_request)) {
         LOG_ERROR("Could not find app '{}' in apps list.", launch_request->app_path);
         return -1;
@@ -252,16 +253,19 @@ int main(int argc, char *argv[]) {
 
     IOSFrameHost frame_host(window);
 
+    SDL_Log("Vita3K iOS: initialize_renderer (Vulkan/MoltenVK)");
     if (!session_controller.initialize_renderer(frame_host)) {
         LOG_ERROR("Failed to initialise renderer.");
         return -1;
     }
 
+    SDL_Log("Vita3K iOS: initialize_runtime (kernel/CPU - requires JIT)");
     if (!session_controller.initialize_runtime()) {
         LOG_ERROR("Failed late initialisation.");
         return -1;
     }
 
+    SDL_Log("Vita3K iOS: load_and_run");
     if (!session_controller.load_and_run()) {
         LOG_ERROR("Failed to load or start the app session.");
         return -1;
