@@ -28,6 +28,7 @@
 
 #include <bit>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -334,6 +335,15 @@ Dynarmic::ExclusiveMonitor DynarmicCPU::shared_monitor(MAX_CORE_COUNT);
 
 std::unique_ptr<Dynarmic::A32::Jit> DynarmicCPU::make_jit() {
     Dynarmic::A32::UserConfig config{};
+#if defined(VITA3K_PLATFORM_IOS)
+    // Vita3K owns one Dynarmic JIT per guest thread. On iOS 26+, each cache
+    // also has a same-sized writable vm_remap alias, so Dynarmic's 128 MiB
+    // default scales poorly during middleware worker-thread bursts. Sixteen
+    // MiB remains above Dynarmic's documented approximate 8 MiB minimum; the
+    // backend clears the cache when it approaches capacity.
+    constexpr std::size_t IOS_CODE_CACHE_SIZE = 16 * 1024 * 1024;
+    config.code_cache_size = IOS_CODE_CACHE_SIZE;
+#endif
     config.arch_version = Dynarmic::A32::ArchVersion::v7;
     config.callbacks = cb.get();
     if (parent->mem->use_page_table) {
@@ -349,7 +359,25 @@ std::unique_ptr<Dynarmic::A32::Jit> DynarmicCPU::make_jit() {
     config.optimizations = cpu_opt ? Dynarmic::all_safe_optimizations : Dynarmic::no_optimizations;
     config.enable_cycle_counting = false;
 
+#if defined(VITA3K_PLATFORM_IOS)
+    // StikDebug services Oaknut's BRK #0xf00d while the JIT constructor maps
+    // its execution cache. Serialize this short boundary so simultaneous
+    // guest-thread creation cannot issue overlapping debugger requests.
+    static std::mutex jit_creation_mutex;
+    static uint64_t jit_creation_count = 0;
+    const std::lock_guard lock(jit_creation_mutex);
+    const uint64_t allocation_id = ++jit_creation_count;
+    LOG_INFO("iOS Dynarmic JIT cache #{} allocating: thread={} core={} size={} bytes ({} MiB)",
+        allocation_id, parent->thread_id, core_id, config.code_cache_size,
+        config.code_cache_size / (1024 * 1024));
+    auto jit = std::make_unique<Dynarmic::A32::Jit>(config);
+    LOG_INFO("iOS Dynarmic JIT cache #{} ready: thread={} core={} size={} bytes ({} MiB)",
+        allocation_id, parent->thread_id, core_id, config.code_cache_size,
+        config.code_cache_size / (1024 * 1024));
+    return jit;
+#else
     return std::make_unique<Dynarmic::A32::Jit>(config);
+#endif
 }
 
 DynarmicCPU::DynarmicCPU(CPUState *state, std::size_t processor_id, bool cpu_opt)
