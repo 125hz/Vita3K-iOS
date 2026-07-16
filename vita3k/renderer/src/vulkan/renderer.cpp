@@ -44,6 +44,12 @@
 #include <MoltenVK/mvk_vulkan.h>
 #endif
 
+#if defined(VITA3K_PLATFORM_IOS)
+// MoltenVK is linked statically on iOS; there is no loader library for the
+// dynamic dispatcher to dlopen, so resolve everything from this entry point.
+extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char *pName);
+#endif
+
 #ifdef __ANDROID__
 #include <SDL3/SDL_system.h>
 #include <dlfcn.h>
@@ -382,6 +388,9 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
 
         if (!detect_patch_bcn(&texture_cache.support_dxt))
             return false;
+#elif defined(VITA3K_PLATFORM_IOS)
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(
+            reinterpret_cast<PFN_vkGetInstanceProcAddr>(&vkGetInstanceProcAddr));
 #else
         VULKAN_HPP_DEFAULT_DISPATCHER.init();
 #endif
@@ -1689,6 +1698,8 @@ renderer::VulkanDeviceInfo renderer::enumerate_vulkan_devices(const std::string 
             return info;
 
         dispatch.init(vk_get_instance_proc_addr);
+#elif defined(VITA3K_PLATFORM_IOS)
+        dispatch.init(reinterpret_cast<PFN_vkGetInstanceProcAddr>(&vkGetInstanceProcAddr));
 #else
         dispatch.init();
 #endif

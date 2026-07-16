@@ -41,6 +41,10 @@
 #endif
 #endif
 
+#if defined(VITA3K_PLATFORM_IOS)
+#include <SDL3/SDL_vulkan.h>
+#endif
+
 #ifdef __ANDROID__
 #include <SDL3/SDL_vulkan.h>
 #include <jni.h>
@@ -76,7 +80,7 @@ ScreenRenderer::ScreenRenderer(VKState &state)
 
 bool ScreenRenderer::create() {
     if (this->surface) {
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(VITA3K_PLATFORM_IOS)
         SDL_Vulkan_DestroySurface(state.instance, this->surface, nullptr);
 #else
         state.instance.destroySurfaceKHR(this->surface);
@@ -111,9 +115,11 @@ bool ScreenRenderer::create() {
         surface_created = true;
 #endif
     } else if (const auto *handle = std::get_if<renderer::AndroidDisplayHandle>(&display_handle)) {
-#ifdef __ANDROID__
+// iOS reuses this handle type: the frontend hands over an SDL window and the
+// surface is created through SDL_Vulkan_CreateSurface exactly as on Android.
+#if defined(__ANDROID__) || defined(VITA3K_PLATFORM_IOS)
         if (!handle->window) {
-            LOG_WARN("Android SDL window is not ready yet; deferring Vulkan surface recreation");
+            LOG_WARN("SDL window is not ready yet; deferring Vulkan surface recreation");
             return false;
         }
 
@@ -402,7 +408,7 @@ void ScreenRenderer::cleanup() {
 
     command_buffers.clear();
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(VITA3K_PLATFORM_IOS)
     SDL_Vulkan_DestroySurface(state.instance, surface, nullptr);
 #else
     state.instance.destroy(surface);
