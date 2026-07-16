@@ -1,16 +1,22 @@
 diff --git a/externals/oaknut/include/oaknut/code_block.hpp b/externals/oaknut/include/oaknut/code_block.hpp
-index bfa87d96..ffe59052 100644
+index bfa87d96..0314a4fb 100644
 --- a/externals/oaknut/include/oaknut/code_block.hpp
 +++ b/externals/oaknut/include/oaknut/code_block.hpp
-@@ -6,6 +6,7 @@
+@@ -4,9 +4,13 @@
+ #pragma once
+ 
  #include <algorithm>
++#include <atomic>
  #include <cstddef>
  #include <cstdint>
 +#include <cstdlib>
++#include <mutex>
  #include <new>
++#include <vector>
  
  #if defined(_WIN32)
-@@ -14,8 +15,11 @@
+ #    define NOMINMAX
+@@ -14,8 +18,12 @@
  #elif defined(__APPLE__)
  #    include <TargetConditionals.h>
  #    include <libkern/OSCacheControl.h>
@@ -18,16 +24,66 @@ index bfa87d96..ffe59052 100644
 +#    include <mach/vm_map.h>
  #    include <pthread.h>
  #    include <sys/mman.h>
++#    include <sys/proc.h>
 +#    include <sys/sysctl.h>
  #    include <unistd.h>
  #else
  #    include <sys/mman.h>
-@@ -23,6 +27,31 @@
+@@ -23,6 +31,186 @@
  
  namespace oaknut {
  
 +#if defined(__APPLE__) && TARGET_OS_IPHONE
 +namespace detail {
++
++enum class JitRegionPoolEvent {
++    Take,
++    Return,
++    Miss,
++    Prewarm,
++    SessionLost,
++};
++
++using JitRegionPoolLogCallback = void (*)(JitRegionPoolEvent, std::size_t, std::size_t);
++
++struct PreparedJitRegion {
++    std::uint32_t* rx = nullptr;
++    std::uint32_t* rw = nullptr;
++    std::size_t size = 0;
++};
++
++struct JitRegionPool {
++    std::mutex mutex;
++    std::vector<PreparedJitRegion> regions;
++};
++
++inline JitRegionPool& jit_region_pool()
++{
++    // Deliberately leaked: CodeBlocks can be destroyed during static teardown,
++    // and their prepared mappings must still have a valid return destination.
++    static JitRegionPool* pool = new JitRegionPool;
++    return *pool;
++}
++
++inline std::atomic<JitRegionPoolLogCallback>& jit_region_pool_log_callback()
++{
++    static std::atomic<JitRegionPoolLogCallback> callback{nullptr};
++    return callback;
++}
++
++inline std::size_t matching_region_count(std::size_t size)
++{
++    auto& pool = jit_region_pool();
++    const std::lock_guard lock(pool.mutex);
++    return static_cast<std::size_t>(std::count_if(pool.regions.begin(), pool.regions.end(),
++        [size](const PreparedJitRegion& region) { return region.size == size; }));
++}
++
++inline void log_jit_region_pool_event(JitRegionPoolEvent event, std::size_t size, std::size_t available)
++{
++    if (const auto callback = jit_region_pool_log_callback().load(std::memory_order_acquire))
++        callback(event, size, available);
++}
 +
 +inline bool requires_universal_jit()
 +{
@@ -48,13 +104,119 @@ index bfa87d96..ffe59052 100644
 +            "ret");
 +}
 +
++inline bool is_process_traced()
++{
++    int mib[] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
++    struct kinfo_proc process_info {};
++    std::size_t process_info_size = sizeof(process_info);
++    if (sysctl(mib, 4, &process_info, &process_info_size, nullptr, 0) != 0)
++        return false;
++    return (process_info.kp_proc.p_flag & P_TRACED) != 0;
++}
++
++inline PreparedJitRegion prepare_new_universal_jit_region(std::size_t size)
++{
++    auto* rx = static_cast<std::uint32_t*>(
++        mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0));
++    if (rx == MAP_FAILED)
++        throw std::bad_alloc{};
++
++    auto* const prepared_rx = static_cast<std::uint32_t*>(prepare_universal_jit_region(rx, size));
++    if (prepared_rx == nullptr) {
++        munmap(rx, size);
++        throw std::bad_alloc{};
++    }
++    rx = prepared_rx;
++
++    vm_prot_t current_protection = 0;
++    vm_prot_t maximum_protection = 0;
++    vm_address_t writable = 0;
++    const kern_return_t remap_result = vm_remap(
++        mach_task_self(), &writable, size, 0, VM_FLAGS_ANYWHERE | VM_FLAGS_RANDOM_ADDR,
++        mach_task_self(), reinterpret_cast<vm_address_t>(rx), false,
++        &current_protection, &maximum_protection, VM_INHERIT_NONE);
++    if (remap_result != KERN_SUCCESS) {
++        munmap(rx, size);
++        throw std::bad_alloc{};
++    }
++
++    auto* const rw = reinterpret_cast<std::uint32_t*>(writable);
++    if (vm_protect(mach_task_self(), writable, size, false, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS) {
++        munmap(rw, size);
++        munmap(rx, size);
++        throw std::bad_alloc{};
++    }
++    return PreparedJitRegion{rx, rw, size};
++}
++
++inline bool take_prepared_jit_region(std::size_t size, PreparedJitRegion& result)
++{
++    auto& pool = jit_region_pool();
++    std::size_t available = 0;
++    {
++        const std::lock_guard lock(pool.mutex);
++        const auto found = std::find_if(pool.regions.begin(), pool.regions.end(),
++            [size](const PreparedJitRegion& region) { return region.size == size; });
++        if (found == pool.regions.end())
++            return false;
++        result = *found;
++        pool.regions.erase(found);
++        available = static_cast<std::size_t>(std::count_if(pool.regions.begin(), pool.regions.end(),
++            [size](const PreparedJitRegion& region) { return region.size == size; }));
++    }
++    log_jit_region_pool_event(JitRegionPoolEvent::Take, size, available);
++    return true;
++}
++
++inline void return_prepared_jit_region(PreparedJitRegion region)
++{
++    auto& pool = jit_region_pool();
++    std::size_t available = 0;
++    {
++        const std::lock_guard lock(pool.mutex);
++        pool.regions.push_back(region);
++        available = static_cast<std::size_t>(std::count_if(pool.regions.begin(), pool.regions.end(),
++            [size = region.size](const PreparedJitRegion& candidate) { return candidate.size == size; }));
++    }
++    log_jit_region_pool_event(JitRegionPoolEvent::Return, region.size, available);
++}
++
 +}  // namespace detail
++
++using JitRegionPoolEvent = detail::JitRegionPoolEvent;
++using JitRegionPoolLogCallback = detail::JitRegionPoolLogCallback;
++
++inline void set_jit_region_pool_log_callback(JitRegionPoolLogCallback callback)
++{
++    detail::jit_region_pool_log_callback().store(callback, std::memory_order_release);
++}
++
++inline std::size_t prewarm_jit_region_pool(std::size_t size, std::size_t target_count)
++{
++    std::size_t available = detail::matching_region_count(size);
++    while (available < target_count) {
++        if (!detail::is_process_traced()) {
++            detail::log_jit_region_pool_event(detail::JitRegionPoolEvent::SessionLost, size, available);
++            break;
++        }
++
++        auto region = detail::prepare_new_universal_jit_region(size);
++        auto& pool = detail::jit_region_pool();
++        {
++            const std::lock_guard lock(pool.mutex);
++            pool.regions.push_back(region);
++            ++available;
++        }
++        detail::log_jit_region_pool_event(detail::JitRegionPoolEvent::Prewarm, size, available);
++    }
++    return available;
++}
 +#endif
 +
  class CodeBlock {
  public:
      explicit CodeBlock(std::size_t size)
-@@ -32,7 +61,52 @@ public:
+@@ -32,7 +220,29 @@ public:
          m_memory = (std::uint32_t*)VirtualAlloc(nullptr, size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
  #elif defined(__APPLE__)
  #    if TARGET_OS_IPHONE
@@ -63,40 +225,17 @@ index bfa87d96..ffe59052 100644
 +            // iOS 26+ rejects protection flipping even for CS_DEBUGGED tasks.
 +            // StikDebug prepares a permanent RX view, then vm_remap creates a
 +            // writable alias of the same physical pages for Oaknut emission.
-+            m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
-+            if (m_memory == MAP_FAILED)
-+                throw std::bad_alloc{};
-+
-+            std::uint32_t* const prepared_memory =
-+                (std::uint32_t*)detail::prepare_universal_jit_region(m_memory, size);
-+            if (prepared_memory == nullptr) {
-+                munmap(m_memory, m_size);
-+                m_memory = nullptr;
-+                throw std::bad_alloc{};
++            detail::PreparedJitRegion region;
++            if (!detail::take_prepared_jit_region(size, region)) {
++                const std::size_t available = detail::matching_region_count(size);
++                detail::log_jit_region_pool_event(detail::JitRegionPoolEvent::Miss, size, available);
++                if (!detail::is_process_traced())
++                    detail::log_jit_region_pool_event(detail::JitRegionPoolEvent::SessionLost, size, available);
++                region = detail::prepare_new_universal_jit_region(size);
 +            }
-+            m_memory = prepared_memory;
-+
-+            vm_prot_t current_protection = 0;
-+            vm_prot_t maximum_protection = 0;
-+            vm_address_t writable = 0;
-+            const kern_return_t remap_result = vm_remap(
-+                mach_task_self(), &writable, size, 0, VM_FLAGS_ANYWHERE | VM_FLAGS_RANDOM_ADDR,
-+                mach_task_self(), (vm_address_t)m_memory, false,
-+                &current_protection, &maximum_protection, VM_INHERIT_NONE);
-+            if (remap_result != KERN_SUCCESS) {
-+                munmap(m_memory, m_size);
-+                m_memory = nullptr;
-+                throw std::bad_alloc{};
-+            }
-+            m_write_memory = (std::uint32_t*)writable;
-+
-+            if (vm_protect(mach_task_self(), writable, size, false, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS) {
-+                munmap(m_write_memory, m_size);
-+                munmap(m_memory, m_size);
-+                m_write_memory = nullptr;
-+                m_memory = nullptr;
-+                throw std::bad_alloc{};
-+            }
++            m_memory = region.rx;
++            m_write_memory = region.rw;
++            m_uses_universal_jit_pool = true;
 +        } else {
 +            // The traditional debugger JIT used by iOS 17/18 allows W^X
 +            // protection transitions on one anonymous mapping.
@@ -108,18 +247,24 @@ index bfa87d96..ffe59052 100644
  #    else
          m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE | MAP_JIT, -1, 0);
  #    endif
-@@ -56,6 +130,10 @@ public:
+@@ -56,6 +266,16 @@ public:
  #if defined(_WIN32)
          VirtualFree((void*)m_memory, 0, MEM_RELEASE);
  #else
 +#    if defined(__APPLE__) && TARGET_OS_IPHONE
++        if (m_uses_universal_jit_pool) {
++            detail::return_prepared_jit_region({m_memory, m_write_memory, m_size});
++            m_memory = nullptr;
++            m_write_memory = nullptr;
++            return;
++        }
 +        if (m_write_memory != nullptr && m_write_memory != m_memory)
 +            munmap(m_write_memory, m_size);
 +#    endif
          munmap(m_memory, m_size);
  #endif
      }
-@@ -70,10 +148,27 @@ public:
+@@ -70,10 +290,27 @@ public:
          return m_memory;
      }
  
@@ -147,7 +292,7 @@ index bfa87d96..ffe59052 100644
  #elif defined(__APPLE__) || defined(__NetBSD__) || defined(__OpenBSD__)
          mprotect(m_memory, m_size, PROT_READ | PROT_EXEC);
  #endif
-@@ -83,6 +178,9 @@ public:
+@@ -83,6 +320,9 @@ public:
      {
  #if defined(__APPLE__) && !TARGET_OS_IPHONE
          pthread_jit_write_protect_np(0);
@@ -157,12 +302,13 @@ index bfa87d96..ffe59052 100644
  #elif defined(__APPLE__) || defined(__NetBSD__) || defined(__OpenBSD__)
          mprotect(m_memory, m_size, PROT_READ | PROT_WRITE);
  #endif
-@@ -137,6 +235,9 @@ public:
+@@ -137,6 +377,10 @@ public:
  
  protected:
      std::uint32_t* m_memory;
 +#if defined(__APPLE__) && TARGET_OS_IPHONE
 +    std::uint32_t* m_write_memory = nullptr;
++    bool m_uses_universal_jit_pool = false;
 +#endif
      std::size_t m_size = 0;
  };

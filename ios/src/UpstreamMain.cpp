@@ -22,7 +22,6 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
-#include <SDL3/SDL_messagebox.h>
 
 #include <app/functions.h>
 #include <app/session_controller.h>
@@ -34,6 +33,7 @@
 #include <config/version.h>
 #include <ctrl/functions.h>
 #include <ctrl/state.h>
+#include <cpu/functions.h>
 #include <display/state.h>
 #include <emuenv/state.h>
 #include <modules/module_parent.h>
@@ -43,8 +43,10 @@
 #include <util/fs.h>
 #include <util/log.h>
 
+#include <vita3k_ios/NativeFrontend.h>
 #include <vita3k_ios/VirtualController.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -53,6 +55,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -195,66 +198,144 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
     }
 }
 
-std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv, SDL_Window *window) {
-    const auto apps = app::get_apps(emuenv);
-    if (apps.empty()) {
-        LOG_ERROR("No installed titles were found under {}. Copy a working "
-                  "desktop Vita3K data directory (vita/ux0/app/<TITLE_ID>, "
-                  "firmware os0/vs0/sa0) into Documents/Vita3K via file sharing.",
-            emuenv.vita_fs_path / "ux0/app");
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "No games installed",
-            "No installed Vita titles were found in Documents/Vita3K/vita/ux0/app.", window);
-        return std::nullopt;
-    }
+Vita3KIOSSettings native_settings(const Config &cfg) {
+    const auto &current = cfg.current_config;
+    return {
+        .resolution_multiplier = current.resolution_multiplier,
+        .v_sync = current.v_sync,
+        .fps_hack = current.fps_hack,
+        .cpu_opt = current.cpu_opt,
+        .ngs_enable = current.ngs_enable,
+        .async_pipeline_compilation = current.async_pipeline_compilation,
+        .anisotropic_filtering = current.anisotropic_filtering,
+    };
+}
 
+std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
+    const auto apps = app::get_apps(emuenv);
+    std::vector<Vita3KIOSGameEntry> games;
+    games.reserve(apps.size());
     for (const auto &entry : apps) {
         LOG_INFO("Installed title: {} ({}) category={} path={}",
             entry.title, entry.title_id, entry.category, entry.path);
+        fs::path icon = emuenv.vita_fs_path / "ux0/app" / entry.title_id / "sce_sys/icon0.png";
+        games.push_back({
+            .title = entry.title,
+            .title_id = entry.title_id,
+            .category = entry.category,
+            .app_path = entry.path.empty() ? entry.title_id : entry.path,
+            .icon_path = fs_utils::path_to_utf8(icon),
+        });
     }
+    return games;
+}
 
-    std::vector<std::string> labels;
-    labels.reserve(apps.size() + 1);
-    for (const auto &entry : apps)
-        labels.emplace_back(entry.title + " (" + entry.title_id + ")");
-    labels.emplace_back("Cancel");
-
-    std::vector<SDL_MessageBoxButtonData> buttons;
-    buttons.reserve(labels.size());
-    for (std::size_t index = 0; index < apps.size(); ++index) {
-        SDL_MessageBoxButtonData button{};
-        button.buttonID = static_cast<int>(index);
-        button.text = labels[index].c_str();
-        buttons.push_back(button);
+std::string restart_setting_name(config::RestartRequiredSetting setting) {
+    switch (setting) {
+    case config::RestartRequiredSetting::CpuOpt:
+        return "CPU optimisation";
+    case config::RestartRequiredSetting::ResolutionMultiplier:
+        return "resolution multiplier";
+    case config::RestartRequiredSetting::AudioBackend:
+        return "audio backend";
+    case config::RestartRequiredSetting::BackendRenderer:
+        return "renderer";
+    case config::RestartRequiredSetting::GraphicsDevice:
+        return "graphics device";
+    case config::RestartRequiredSetting::CustomDriver:
+        return "custom driver";
+    case config::RestartRequiredSetting::HighAccuracy:
+        return "high accuracy";
+    case config::RestartRequiredSetting::MemoryMapping:
+        return "memory mapping";
+    case config::RestartRequiredSetting::ValidationLayer:
+        return "validation layer";
     }
-    SDL_MessageBoxButtonData cancel{};
-    cancel.flags = SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
-    cancel.buttonID = -1;
-    cancel.text = labels.back().c_str();
-    buttons.push_back(cancel);
+    return "unknown setting";
+}
 
-    SDL_MessageBoxData dialog{};
-    dialog.flags = SDL_MESSAGEBOX_INFORMATION;
-    dialog.window = window;
-    dialog.title = "Vita3K iOS";
-    dialog.message = "Choose a game to boot";
-    dialog.numbuttons = static_cast<int>(buttons.size());
-    dialog.buttons = buttons.data();
-
-    int selection = -1;
-    if (!SDL_ShowMessageBox(&dialog, &selection)) {
-        LOG_ERROR("Could not show game picker: {}", SDL_GetError());
-        return std::nullopt;
-    }
-    if (selection < 0 || static_cast<std::size_t>(selection) >= apps.size()) {
-        LOG_INFO("Game selection cancelled.");
-        return std::nullopt;
-    }
-
-    const auto &chosen = apps[static_cast<std::size_t>(selection)];
-    LOG_INFO("Booting title: {} ({})", chosen.title, chosen.title_id);
-    return AppLaunchRequest{
-        .app_path = chosen.path.empty() ? chosen.title_id : chosen.path,
+void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &settings) {
+    Config desired;
+    desired = emuenv.cfg;
+    auto apply = [&](Config::CurrentConfig &current) {
+        current.resolution_multiplier = settings.resolution_multiplier;
+        current.v_sync = settings.v_sync;
+        current.fps_hack = settings.fps_hack;
+        current.cpu_opt = settings.cpu_opt;
+        current.ngs_enable = settings.ngs_enable;
+        current.async_pipeline_compilation = settings.async_pipeline_compilation;
+        current.anisotropic_filtering = settings.anisotropic_filtering;
+        current.audio_backend = "SDL";
     };
+    apply(desired.current_config);
+    desired.resolution_multiplier = settings.resolution_multiplier;
+    desired.v_sync = settings.v_sync;
+    desired.fps_hack = settings.fps_hack;
+    desired.cpu_opt = settings.cpu_opt;
+    desired.ngs_enable = settings.ngs_enable;
+    desired.async_pipeline_compilation = settings.async_pipeline_compilation;
+    desired.anisotropic_filtering = settings.anisotropic_filtering;
+    desired.audio_backend = "SDL";
+
+    const auto result = app::commit_settings(emuenv, desired);
+    std::vector<std::string> restart_required;
+    restart_required.reserve(result.restart_required_settings.size());
+    for (const auto setting : result.restart_required_settings)
+        restart_required.push_back(restart_setting_name(setting));
+    vita3k_ios_report_settings_result(restart_required);
+    LOG_INFO("iOS settings saved: runtime_applied={} restart_required={}",
+        result.runtime_settings_applied, restart_required.size());
+}
+
+std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
+    auto games = native_games(emuenv);
+    if (games.empty()) {
+        LOG_WARN("No installed titles were found under {}. Showing native empty-library instructions.",
+            emuenv.vita_fs_path / "ux0/app");
+    }
+    vita3k_ios_show_library(games, native_settings(emuenv.cfg));
+
+    for (;;) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+                vita3k_ios_hide_library();
+                return std::nullopt;
+            }
+        }
+
+        if (auto action = vita3k_ios_take_frontend_action()) {
+            switch (action->kind) {
+            case Vita3KIOSFrontendActionKind::Launch:
+                LOG_INFO("Booting selected iOS library title: {}", action->app_path);
+                vita3k_ios_hide_library();
+                return AppLaunchRequest{.app_path = action->app_path};
+            case Vita3KIOSFrontendActionKind::Refresh:
+                LOG_INFO("Rescanning iOS game library");
+                if (!app::init_apps_list(emuenv))
+                    LOG_ERROR("Failed to rescan apps list.");
+                games = native_games(emuenv);
+                vita3k_ios_update_library(games, native_settings(emuenv.cfg));
+                break;
+            case Vita3KIOSFrontendActionKind::ApplySettings:
+                apply_native_settings(emuenv, action->settings);
+                vita3k_ios_update_library(games, native_settings(emuenv.cfg));
+                break;
+            case Vita3KIOSFrontendActionKind::Quit:
+                vita3k_ios_hide_library();
+                return std::nullopt;
+            }
+        }
+        SDL_Delay(16);
+    }
+}
+
+bool has_physical_controller(CtrlState &state) {
+    const std::lock_guard lock(state.mutex);
+    return std::any_of(state.controllers.begin(), state.controllers.end(), [](const auto &entry) {
+        const char *name = entry.second.name;
+        return name == nullptr || std::string_view(name) != "Vita3K iOS Touch Controller";
+    });
 }
 
 } // namespace
@@ -298,7 +379,7 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    auto launch_request = choose_boot_title(*emuenv, window);
+    auto launch_request = choose_boot_title(*emuenv);
     if (!launch_request) {
         SDL_DestroyWindow(window);
         SDL_Quit();
@@ -326,6 +407,21 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    // Prepare every JIT mapping the session is expected to need while
+    // StikDebug is known to be attached. iOS 26 keeps these RX/RW aliases
+    // executable after the debugger app is suspended, so later guest worker
+    // threads can take a prepared region without issuing BRK #0xf00d.
+    constexpr std::size_t IOS_JIT_CACHE_SIZE = 16 * 1024 * 1024;
+    constexpr std::size_t IOS_JIT_POOL_TARGET = 24;
+    const std::size_t warmed_jit_regions =
+        prewarm_ios_jit_code_cache_pool(IOS_JIT_POOL_TARGET, IOS_JIT_CACHE_SIZE);
+    if (warmed_jit_regions < IOS_JIT_POOL_TARGET) {
+        LOG_CRITICAL("iOS JIT region pool is under target: target={} available={}",
+            IOS_JIT_POOL_TARGET, warmed_jit_regions);
+        if (auto logger = spdlog::default_logger())
+            logger->flush();
+    }
+
     SDL_Log("Vita3K iOS: load_and_run");
     if (!session_controller.load_and_run()) {
         LOG_ERROR("Failed to load or start the app session.");
@@ -341,6 +437,7 @@ int main(int argc, char *argv[]) {
         // by the normal sceCtrl polling path.
         refresh_controllers(emuenv->ctrl, *emuenv);
         LOG_INFO("iOS virtual controller ready: {} total controller(s)", emuenv->ctrl.controllers_num);
+        vita3k_ios_set_physical_controller_connected(has_physical_controller(emuenv->ctrl));
         vita3k_ios_show_virtual_controller();
     }
 
@@ -411,6 +508,7 @@ int main(int argc, char *argv[]) {
             case SDL_EVENT_GAMEPAD_ADDED:
             case SDL_EVENT_GAMEPAD_REMOVED:
                 refresh_controllers(emuenv->ctrl, *emuenv);
+                vita3k_ios_set_physical_controller_connected(has_physical_controller(emuenv->ctrl));
                 LOG_INFO("iOS controller refresh: {} connected controller(s)", emuenv->ctrl.controllers_num);
                 break;
 

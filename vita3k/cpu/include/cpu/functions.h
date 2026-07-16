@@ -73,3 +73,7 @@ CPUState *get_current_cpu_state();
 void set_log_mem(CPUState &state, bool log);
 bool get_log_code(CPUState &state);
 bool get_log_mem(CPUState &state);
+
+#if defined(VITA3K_PLATFORM_IOS)
+std::size_t prewarm_ios_jit_code_cache_pool(std::size_t target_count, std::size_t cache_size);
+#endif

@@ -13,6 +13,7 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
     # Stage-2 upstream-core application: SDL3 owns the UIKit application
     # lifecycle and the frontend boots titles through the real emulator.
     add_executable(Vita3KiOS MACOSX_BUNDLE
+        src/NativeFrontend.mm
         src/UpstreamMain.cpp
         src/VirtualController.mm
     )

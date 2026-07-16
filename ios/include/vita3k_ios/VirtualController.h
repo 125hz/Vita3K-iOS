@@ -13,5 +13,13 @@ bool vita3k_ios_attach_virtual_controller();
 void vita3k_ios_show_virtual_controller();
 void vita3k_ios_hide_virtual_controller();
 
+// Native controller customization, shared by the library settings screen and
+// the floating in-game menu.
+void vita3k_ios_present_controller_options();
+
+// Physical-pad state excludes Vita3K's own SDL virtual joystick. When enabled
+// in ios_controls.json, only the touch controls auto-hide; the menu stays.
+void vita3k_ios_set_physical_controller_connected(bool connected);
+
 // Releases all buttons and removes the SDL virtual gamepad.
 void vita3k_ios_detach_virtual_controller();

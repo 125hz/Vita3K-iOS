@@ -25,12 +25,53 @@
 #include <dynarmic/frontend/A32/a32_ir_emitter.h>
 #include <dynarmic/interface/A32/coprocessor.h>
 #include <dynarmic/interface/exclusive_monitor.h>
+#if defined(VITA3K_PLATFORM_IOS)
+#include <oaknut/code_block.hpp>
+#endif
 
 #include <bit>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+
+#if defined(VITA3K_PLATFORM_IOS)
+namespace {
+
+void log_ios_jit_region_pool_event(oaknut::JitRegionPoolEvent event, std::size_t size, std::size_t available) {
+    switch (event) {
+    case oaknut::JitRegionPoolEvent::Take:
+        LOG_INFO("iOS JIT region pool take: size={} bytes available={}", size, available);
+        break;
+    case oaknut::JitRegionPoolEvent::Return:
+        LOG_INFO("iOS JIT region pool return: size={} bytes available={}", size, available);
+        break;
+    case oaknut::JitRegionPoolEvent::Miss:
+        LOG_INFO("iOS JIT region pool miss: size={} bytes available={}", size, available);
+        break;
+    case oaknut::JitRegionPoolEvent::Prewarm:
+        LOG_INFO("iOS JIT region pool prewarm: size={} bytes available={}", size, available);
+        break;
+    case oaknut::JitRegionPoolEvent::SessionLost:
+        LOG_CRITICAL("StikDebug JIT session lost - cannot prepare a new JIT region; reopen StikDebug and re-enable JIT");
+        if (auto logger = spdlog::default_logger())
+            logger->flush();
+        break;
+    }
+}
+
+} // namespace
+
+std::size_t prewarm_ios_jit_code_cache_pool(std::size_t target_count, std::size_t cache_size) {
+    oaknut::set_jit_region_pool_log_callback(&log_ios_jit_region_pool_event);
+    LOG_INFO("iOS JIT region pool prewarm starting: target={} size={} bytes ({} MiB each)",
+        target_count, cache_size, cache_size / (1024 * 1024));
+    const std::size_t available = oaknut::prewarm_jit_region_pool(cache_size, target_count);
+    LOG_INFO("iOS JIT region pool prewarm complete: target={} available={} size={} bytes",
+        target_count, available, cache_size);
+    return available;
+}
+#endif
 
 class ArmDynarmicCP15 : public Dynarmic::A32::Coprocessor {
     uint32_t tpidruro;
