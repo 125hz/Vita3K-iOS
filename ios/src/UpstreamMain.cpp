@@ -43,6 +43,8 @@
 #include <util/fs.h>
 #include <util/log.h>
 
+#include <vita3k_ios/VirtualController.h>
+
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -332,6 +334,16 @@ int main(int argc, char *argv[]) {
 
     LOG_INFO("Game started: {} ({})", emuenv->current_app_title, launch_request->app_path);
 
+    const bool has_virtual_controller = vita3k_ios_attach_virtual_controller();
+    if (has_virtual_controller) {
+        // Register the virtual joystick immediately instead of waiting for the
+        // queued SDL_EVENT_GAMEPAD_ADDED. It is merged with any physical pad
+        // by the normal sceCtrl polling path.
+        refresh_controllers(emuenv->ctrl, *emuenv);
+        LOG_INFO("iOS virtual controller ready: {} total controller(s)", emuenv->ctrl.controllers_num);
+        vita3k_ios_show_virtual_controller();
+    }
+
     // Run the guest watchdog on its own host thread. Keeping it in the SDL
     // event loop meant a blocked frontend call could suppress the very dump
     // needed to diagnose the hang. The early two-second sample catches the
@@ -436,6 +448,9 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Shutting down game");
     stop_guest_watchdog.store(true, std::memory_order_relaxed);
     guest_watchdog.join();
+    vita3k_ios_hide_virtual_controller();
     session_controller.stop(app::AppSessionStopReason::FrontendShutdown);
+    if (has_virtual_controller)
+        vita3k_ios_detach_virtual_controller();
     return 0;
 }
