@@ -32,6 +32,7 @@
 #include <kernel/sync_primitives.h>
 #include <kernel/thread/thread_state.h>
 #include <ngs/scheduler.h>
+#include <ngs/state.h>
 #include <ngs/system.h>
 #include <renderer/state.h>
 #include <util/log.h>
