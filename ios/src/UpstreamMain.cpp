@@ -43,6 +43,7 @@
 #include <util/fs.h>
 #include <util/log.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -335,7 +336,8 @@ int main(int argc, char *argv[]) {
     // event loop meant a blocked frontend call could suppress the very dump
     // needed to diagnose the hang. The early three-second sample catches the
     // CRI filesystem worker boundary before iOS is backgrounded to copy logs.
-    std::jthread guest_watchdog([&](const std::stop_token stop_token) {
+    std::atomic_bool stop_guest_watchdog = false;
+    std::thread guest_watchdog([&] {
         using namespace std::chrono_literals;
 
         const Uint64 watchdog_start_ms = SDL_GetTicks();
@@ -345,9 +347,9 @@ int main(int argc, char *argv[]) {
         Uint64 last_setframe_change_ms = watchdog_start_ms;
         Uint64 next_stall_dump_ms = watchdog_start_ms + 8000;
 
-        while (!stop_token.stop_requested()) {
+        while (!stop_guest_watchdog.load(std::memory_order_relaxed)) {
             std::this_thread::sleep_for(250ms);
-            if (stop_token.stop_requested())
+            if (stop_guest_watchdog.load(std::memory_order_relaxed))
                 break;
 
             const Uint64 now_ms = SDL_GetTicks();
@@ -429,7 +431,7 @@ int main(int argc, char *argv[]) {
     }
 
     LOG_INFO("Shutting down game");
-    guest_watchdog.request_stop();
+    stop_guest_watchdog.store(true, std::memory_order_relaxed);
     guest_watchdog.join();
     session_controller.stop(app::AppSessionStopReason::FrontendShutdown);
     return 0;
