@@ -334,18 +334,20 @@ int main(int argc, char *argv[]) {
 
     // Run the guest watchdog on its own host thread. Keeping it in the SDL
     // event loop meant a blocked frontend call could suppress the very dump
-    // needed to diagnose the hang. The early three-second sample catches the
-    // CRI filesystem worker boundary before iOS is backgrounded to copy logs.
+    // needed to diagnose the hang. The early two-second sample catches the
+    // first CRI filesystem worker even if iOS is backgrounded soon afterward.
     std::atomic_bool stop_guest_watchdog = false;
     std::thread guest_watchdog([&] {
         using namespace std::chrono_literals;
 
         const Uint64 watchdog_start_ms = SDL_GetTicks();
-        constexpr Uint64 scheduled_dump_at_ms[] = { 3000, 10000, 30000, 60000, 180000 };
+        constexpr Uint64 scheduled_dump_at_ms[] = { 2000, 3000, 10000, 30000, 60000, 180000 };
         std::size_t next_scheduled_dump = 0;
         uint64_t last_setframe_seen = emuenv->display.last_setframe_vblank_count.load();
         Uint64 last_setframe_change_ms = watchdog_start_ms;
         Uint64 next_stall_dump_ms = watchdog_start_ms + 8000;
+
+        LOG_INFO("iOS guest watchdog started: first snapshot at {}ms", scheduled_dump_at_ms[0]);
 
         while (!stop_guest_watchdog.load(std::memory_order_relaxed)) {
             std::this_thread::sleep_for(250ms);
@@ -361,6 +363,7 @@ int main(int argc, char *argv[]) {
 
             if (next_scheduled_dump < std::size(scheduled_dump_at_ms)
                 && now_ms - watchdog_start_ms >= scheduled_dump_at_ms[next_scheduled_dump]) {
+                LOG_INFO("iOS guest watchdog snapshot firing at {}ms", scheduled_dump_at_ms[next_scheduled_dump]);
                 app::dump_guest_state(*emuenv, "scheduled iOS boot diagnostic");
                 ++next_scheduled_dump;
             }

@@ -22,6 +22,7 @@
 #include <kernel/state.h>
 #include <kernel/sync_primitives.h>
 #include <kernel/types.h>
+#include <mem/functions.h>
 #include <packages/functions.h>
 
 #include <util/lock_and_find.h>
@@ -729,8 +730,33 @@ EXPORT(int, _sceKernelStartThread, SceUID thid, SceSize arglen, Ptr<void> argp) 
         return RET_ERROR(SCE_KERNEL_ERROR_RUNNING);
     }
 
-    LOG_DEBUG("Guest thread starting: '{}' (TID {}) entry=0x{:08X} by TID {}",
-        thread->name, thread->id, thread->entry_point, thread_id);
+    LOG_DEBUG("Guest thread starting: '{}' (TID {}) entry=0x{:08X} by TID {} arglen=0x{:X} argp=0x{:08X}",
+        thread->name, thread->id, thread->entry_point, thread_id, arglen, argp.address());
+
+#if defined(VITA3K_PLATFORM_IOS)
+    // Some middleware uses a shared entry wrapper whose first argument is an
+    // indirect context containing the real callback. Record that target before
+    // the new guest thread runs so an early iOS suspension/crash still leaves
+    // an actionable pre-I/O boundary in the file log. This is diagnostic only:
+    // no guest memory or control flow is changed.
+    if (argp && arglen >= sizeof(uint32_t)
+        && is_valid_addr_range(emuenv.mem, argp.address(), argp.address() + sizeof(uint32_t))) {
+        const Address indirect_context = *argp.cast<const uint32_t>().get(emuenv.mem);
+        LOG_DEBUG("iOS guest thread start arg0: '{}' (TID {}) indirect_context=0x{:08X}",
+            thread->name, thread->id, indirect_context);
+
+        constexpr uint32_t context_bytes = 9 * sizeof(uint32_t);
+        if (indirect_context != 0 && indirect_context <= 0xFFFFFFFFU - context_bytes
+            && is_valid_addr_range(emuenv.mem, indirect_context, indirect_context + context_bytes)) {
+            const uint32_t *context = Ptr<const uint32_t>(indirect_context).get(emuenv.mem);
+            const Address callback = context[1];
+            const SceKernelModuleInfo *callback_module = emuenv.kernel.find_module_by_addr(callback & ~1U);
+            LOG_DEBUG("iOS guest thread indirect context: '{}' (TID {}) base=0x{:08X} word0=0x{:08X} callback=0x{:08X} ({}) callback_arg=0x{:08X} flags_1c=0x{:08X} flags_20=0x{:08X}",
+                thread->name, thread->id, indirect_context, context[0], callback,
+                callback_module ? callback_module->module_name : "unmapped", context[2], context[7], context[8]);
+        }
+    }
+#endif
 
     const int res = thread->start(arglen, argp, true);
     LOG_DEBUG("Guest thread start returned: '{}' (TID {}) result={}", thread->name, thread->id, res);
