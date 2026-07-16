@@ -27,6 +27,12 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
         "-framework QuartzCore"
         "-framework UIKit"
     )
+    # The renderer loads its screen-filter SPIR-V from
+    # <static assets>/shaders-builtin at runtime; ship it inside the bundle.
+    add_custom_command(TARGET Vita3KiOS POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/vita3k/shaders-builtin"
+            "$<TARGET_BUNDLE_CONTENT_DIR:Vita3KiOS>/shaders-builtin")
 else()
     add_subdirectory(core)
 

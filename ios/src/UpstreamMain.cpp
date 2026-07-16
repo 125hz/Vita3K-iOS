@@ -105,7 +105,11 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
     try {
         const fs::path vita_path = storage_path / "vita" / "";
 
-        root_paths.set_static_assets_path({});
+        // The app bundle carries shaders-builtin (and future static assets);
+        // SDL_GetBasePath resolves to the bundle resource directory on iOS.
+        const char *bundle_path = SDL_GetBasePath();
+        root_paths.set_static_assets_path(
+            bundle_path ? fs::path(bundle_path) : fs::path{});
         root_paths.set_vita_fs_path(vita_path);
         root_paths.set_log_path(storage_path);
         root_paths.set_config_path(storage_path);
