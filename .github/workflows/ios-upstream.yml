@@ -43,6 +43,13 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
+      - name: Apply iOS submodule patches
+        run: |
+          # dynarmic/oaknut is a nested submodule; CI restores its pinned
+          # commit, so iOS-specific fixes live as patches applied here.
+          git -C external/dynarmic/externals/oaknut apply --verbose \
+            "${GITHUB_WORKSPACE}/ios/patches/0001-oaknut-ios-rwx-jit.patch"
+
       - name: Show Apple toolchain
         run: |
           xcodebuild -version
