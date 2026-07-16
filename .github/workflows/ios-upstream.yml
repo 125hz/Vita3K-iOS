@@ -53,6 +53,8 @@ jobs:
           git -C external/dynarmic diff --name-only | grep -Fx \
             "externals/oaknut/include/oaknut/code_block.hpp"
           git -C external/dynarmic diff --name-only | grep -Fx \
+            "src/dynarmic/backend/arm64/address_space.cpp"
+          git -C external/dynarmic diff --name-only | grep -Fx \
             "src/dynarmic/common/spin_lock_arm64.cpp"
 
       - name: Show Apple toolchain

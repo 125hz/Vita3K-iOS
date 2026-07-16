@@ -1,21 +1,212 @@
 diff --git a/externals/oaknut/include/oaknut/code_block.hpp b/externals/oaknut/include/oaknut/code_block.hpp
-index bfa87d96..bdba9516 100644
+index bfa87d96..ffe59052 100644
 --- a/externals/oaknut/include/oaknut/code_block.hpp
 +++ b/externals/oaknut/include/oaknut/code_block.hpp
-@@ -32,7 +32,12 @@ public:
+@@ -6,6 +6,7 @@
+ #include <algorithm>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstdlib>
+ #include <new>
+ 
+ #if defined(_WIN32)
+@@ -14,8 +15,11 @@
+ #elif defined(__APPLE__)
+ #    include <TargetConditionals.h>
+ #    include <libkern/OSCacheControl.h>
++#    include <mach/mach.h>
++#    include <mach/vm_map.h>
+ #    include <pthread.h>
+ #    include <sys/mman.h>
++#    include <sys/sysctl.h>
+ #    include <unistd.h>
+ #else
+ #    include <sys/mman.h>
+@@ -23,6 +27,31 @@
+ 
+ namespace oaknut {
+ 
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++namespace detail {
++
++inline bool requires_universal_jit()
++{
++    char version[32]{};
++    std::size_t version_size = sizeof(version);
++    if (sysctlbyname("kern.osproductversion", version, &version_size, nullptr, 0) != 0)
++        return false;
++    return std::strtoul(version, nullptr, 10) >= 26;
++}
++
++// StikDebug's iOS 26+ universal script handles this breakpoint and marks the
++// exact RX mapping as debugger-written executable memory. Keep the debugger
++// attached: Vita3K creates another Dynarmic cache for each guest thread.
++__attribute__((noinline, optnone, naked)) inline void* prepare_universal_jit_region(void*, std::size_t)
++{
++    __asm__("mov x16, #1\n"
++            "brk #0xf00d\n"
++            "ret");
++}
++
++}  // namespace detail
++#endif
++
+ class CodeBlock {
+ public:
+     explicit CodeBlock(std::size_t size)
+@@ -32,7 +61,52 @@ public:
          m_memory = (std::uint32_t*)VirtualAlloc(nullptr, size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
  #elif defined(__APPLE__)
  #    if TARGET_OS_IPHONE
 -        m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
-+        // Debugger-based sideload JIT sets CS_DEBUGGED but does not grant the
-+        // MAP_JIT entitlement. Request executable anonymous memory directly;
-+        // protect()/unprotect() then maintain the existing W^X transitions.
-+        m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
-+        if (m_memory == MAP_FAILED)
-+            throw std::bad_alloc{};
++        if (detail::requires_universal_jit()) {
++            // iOS 26+ rejects protection flipping even for CS_DEBUGGED tasks.
++            // StikDebug prepares a permanent RX view, then vm_remap creates a
++            // writable alias of the same physical pages for Oaknut emission.
++            m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
++            if (m_memory == MAP_FAILED)
++                throw std::bad_alloc{};
++
++            std::uint32_t* const prepared_memory =
++                (std::uint32_t*)detail::prepare_universal_jit_region(m_memory, size);
++            if (prepared_memory == nullptr) {
++                munmap(m_memory, m_size);
++                m_memory = nullptr;
++                throw std::bad_alloc{};
++            }
++            m_memory = prepared_memory;
++
++            vm_prot_t current_protection = 0;
++            vm_prot_t maximum_protection = 0;
++            vm_address_t writable = 0;
++            const kern_return_t remap_result = vm_remap(
++                mach_task_self(), &writable, size, 0, VM_FLAGS_ANYWHERE | VM_FLAGS_RANDOM_ADDR,
++                mach_task_self(), (vm_address_t)m_memory, false,
++                &current_protection, &maximum_protection, VM_INHERIT_NONE);
++            if (remap_result != KERN_SUCCESS) {
++                munmap(m_memory, m_size);
++                m_memory = nullptr;
++                throw std::bad_alloc{};
++            }
++            m_write_memory = (std::uint32_t*)writable;
++
++            if (vm_protect(mach_task_self(), writable, size, false, VM_PROT_READ | VM_PROT_WRITE) != KERN_SUCCESS) {
++                munmap(m_write_memory, m_size);
++                munmap(m_memory, m_size);
++                m_write_memory = nullptr;
++                m_memory = nullptr;
++                throw std::bad_alloc{};
++            }
++        } else {
++            // The traditional debugger JIT used by iOS 17/18 allows W^X
++            // protection transitions on one anonymous mapping.
++            m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
++            if (m_memory == MAP_FAILED)
++                throw std::bad_alloc{};
++            m_write_memory = m_memory;
++        }
  #    else
          m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE | MAP_JIT, -1, 0);
  #    endif
+@@ -56,6 +130,10 @@ public:
+ #if defined(_WIN32)
+         VirtualFree((void*)m_memory, 0, MEM_RELEASE);
+ #else
++#    if defined(__APPLE__) && TARGET_OS_IPHONE
++        if (m_write_memory != nullptr && m_write_memory != m_memory)
++            munmap(m_write_memory, m_size);
++#    endif
+         munmap(m_memory, m_size);
+ #endif
+     }
+@@ -70,10 +148,27 @@ public:
+         return m_memory;
+     }
+ 
++    std::uint32_t* xptr() const
++    {
++        return m_memory;
++    }
++
++    std::uint32_t* wptr() const
++    {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++        return m_write_memory;
++#else
++        return m_memory;
++#endif
++    }
++
+     void protect()
+     {
+ #if defined(__APPLE__) && !TARGET_OS_IPHONE
+         pthread_jit_write_protect_np(1);
++#elif defined(__APPLE__) && TARGET_OS_IPHONE
++        if (m_write_memory == m_memory)
++            mprotect(m_memory, m_size, PROT_READ | PROT_EXEC);
+ #elif defined(__APPLE__) || defined(__NetBSD__) || defined(__OpenBSD__)
+         mprotect(m_memory, m_size, PROT_READ | PROT_EXEC);
+ #endif
+@@ -83,6 +178,9 @@ public:
+     {
+ #if defined(__APPLE__) && !TARGET_OS_IPHONE
+         pthread_jit_write_protect_np(0);
++#elif defined(__APPLE__) && TARGET_OS_IPHONE
++        if (m_write_memory == m_memory)
++            mprotect(m_memory, m_size, PROT_READ | PROT_WRITE);
+ #elif defined(__APPLE__) || defined(__NetBSD__) || defined(__OpenBSD__)
+         mprotect(m_memory, m_size, PROT_READ | PROT_WRITE);
+ #endif
+@@ -137,6 +235,9 @@ public:
+ 
+ protected:
+     std::uint32_t* m_memory;
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    std::uint32_t* m_write_memory = nullptr;
++#endif
+     std::size_t m_size = 0;
+ };
+ 
+diff --git a/src/dynarmic/backend/arm64/address_space.cpp b/src/dynarmic/backend/arm64/address_space.cpp
+index 2c7ae777..84df25cc 100644
+--- a/src/dynarmic/backend/arm64/address_space.cpp
++++ b/src/dynarmic/backend/arm64/address_space.cpp
+@@ -23,7 +23,7 @@ namespace Dynarmic::Backend::Arm64 {
+ AddressSpace::AddressSpace(size_t code_cache_size)
+         : code_cache_size(code_cache_size)
+         , mem(code_cache_size)
+-        , code(mem.ptr(), mem.ptr())
++        , code(mem.wptr(), mem.xptr())
+         , fastmem_manager(exception_handler) {
+     ASSERT_MSG(code_cache_size <= 128 * 1024 * 1024, "code_cache_size > 128 MiB not currently supported");
+ 
+@@ -98,7 +98,7 @@ void AddressSpace::ClearCache() {
+ }
+ 
+ void AddressSpace::DumpDisassembly() const {
+-    for (u32* ptr = mem.ptr(); ptr < code.xptr<u32*>(); ptr++) {
++    for (u32* ptr = mem.xptr(); ptr < code.xptr<u32*>(); ptr++) {
+         std::printf("%s", Common::DisassembleAArch64(*ptr, mcl::bit_cast<u64>(ptr)).c_str());
+     }
+ }
+@@ -136,7 +136,7 @@ void AddressSpace::Link(EmittedBlockInfo& block_info) {
+     using namespace oaknut::util;
+ 
+     for (auto [ptr_offset, target] : block_info.relocations) {
+-        CodeGenerator c{mem.ptr(), mem.ptr()};
++        CodeGenerator c{mem.wptr(), mem.xptr()};
+         c.set_xptr(reinterpret_cast<u32*>(block_info.entry_point + ptr_offset));
+ 
+         switch (target) {
+@@ -276,7 +276,7 @@ void AddressSpace::LinkBlockLinks(const CodePtr entry_point, const CodePtr targe
+     using namespace oaknut::util;
+ 
+     for (auto [ptr_offset, type] : block_relocations_list) {
+-        CodeGenerator c{mem.ptr(), mem.ptr()};
++        CodeGenerator c{mem.wptr(), mem.xptr()};
+         c.set_xptr(reinterpret_cast<u32*>(entry_point + ptr_offset));
+ 
+         switch (type) {
 diff --git a/src/dynarmic/common/spin_lock_arm64.cpp b/src/dynarmic/common/spin_lock_arm64.cpp
 index ccf807e2..19e57822 100644
 --- a/src/dynarmic/common/spin_lock_arm64.cpp
