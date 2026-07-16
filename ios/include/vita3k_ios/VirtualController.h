@@ -21,5 +21,9 @@ void vita3k_ios_present_controller_options();
 // in ios_controls.json, only the touch controls auto-hide; the menu stays.
 void vita3k_ios_set_physical_controller_connected(bool connected);
 
+// Updated by the UIKit overlay during layout and safe to read from the
+// Vulkan render thread. The value is in drawable pixels.
+float vita3k_ios_safe_area_top_pixels();
+
 // Releases all buttons and removes the SDL virtual gamepad.
 void vita3k_ios_detach_virtual_controller();

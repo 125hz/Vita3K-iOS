@@ -74,13 +74,13 @@ static int SDLCALL thread_function(void *data) {
     thread->run_loop();
     const uint32_t r0 = read_reg(*thread->cpu, 0);
 
+    params.kernel->untrack_thread_for_diagnostics(thread->id);
     {
         std::lock_guard<std::mutex> lock(params.kernel->mutex);
         params.kernel->threads.erase(thread->id);
         params.kernel->corenum_allocator.free_corenum(get_processor_id(*thread->cpu));
         params.kernel->thread_deleted_cond.notify_all();
     }
-
     return r0;
 }
 
@@ -158,6 +158,10 @@ ThreadStatePtr KernelState::create_thread(MemState &mem, const char *name, Ptr<c
         const std::lock_guard<std::mutex> lock(mutex);
         threads.emplace(thread->id, thread);
     }
+    {
+        const std::lock_guard<std::mutex> lock(thread_snapshot_mutex);
+        diagnostic_thread_snapshot.emplace(thread->id, thread);
+    }
 
     ThreadParams params;
     params.kernel = this;
@@ -169,6 +173,16 @@ ThreadStatePtr KernelState::create_thread(MemState &mem, const char *name, Ptr<c
     SDL_DestroySemaphore(params.host_may_destroy_params);
 
     return thread;
+}
+
+ThreadStatePtrs KernelState::snapshot_threads_for_diagnostics() {
+    const std::lock_guard<std::mutex> lock(thread_snapshot_mutex);
+    return diagnostic_thread_snapshot;
+}
+
+void KernelState::untrack_thread_for_diagnostics(const SceUID thread_id) {
+    const std::lock_guard<std::mutex> lock(thread_snapshot_mutex);
+    diagnostic_thread_snapshot.erase(thread_id);
 }
 
 Ptr<Ptr<void>> KernelState::get_thread_tls_addr(MemState &mem, SceUID thread_id, int key) {
@@ -222,6 +236,10 @@ void KernelState::resume_threads() {
 void KernelState::deinit(MemState &mem) {
     process_exit();
     threads.clear();
+    {
+        const std::lock_guard<std::mutex> lock(thread_snapshot_mutex);
+        diagnostic_thread_snapshot.clear();
+    }
 
     simple_events.clear();
     timers.clear();

@@ -225,6 +225,19 @@ EXPORT(int, sceAudiodecCreateDecoderResident) {
 
 static int decode_audio_frames(EmuEnvState &emuenv, const char *export_name, SceAudiodecCtrl *ctrl, SceUInt32 nb_frames) {
     const auto state = emuenv.kernel.obj_store.get<AudiodecState>();
+    SceAudiodecCodec codec = static_cast<SceAudiodecCodec>(UINT32_MAX);
+    {
+        const std::lock_guard<std::mutex> lock(state->mutex);
+        for (const auto &[candidate, handles] : state->codecs) {
+            if (handles.contains(ctrl->handle)) {
+                codec = candidate;
+                break;
+            }
+        }
+    }
+    LOG_INFO_ONCE("First {} call: codec={} handle={} frames={} es_size_max={} pcm_size_max={}",
+        export_name, static_cast<uint32_t>(codec), ctrl->handle, nb_frames,
+        ctrl->es_size_max, ctrl->pcm_size_max);
     const DecoderPtr &decoder = lock_and_find(ctrl->handle, state->decoders, state->mutex);
 
     uint8_t *es_data = ctrl->es_data.get(emuenv.mem);

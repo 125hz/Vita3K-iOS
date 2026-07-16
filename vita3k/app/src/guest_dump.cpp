@@ -18,8 +18,9 @@
 // Diagnostic snapshot of the guest runtime: every guest thread's PC/LR/status,
 // every kernel sync primitive with waiters, display/vblank progress, audio and
 // NGS scheduler state. Frontends call this from a watchdog when a title stops
-// making display progress, so it must never block on a contended lock: state
-// owned by other threads is read with try_lock and skipped when unavailable.
+// making display progress. Thread collection retries the central kernel lock
+// for one second before using an independent snapshot; other contended state
+// is read with try_lock and skipped when unavailable.
 
 #include <app/functions.h>
 
@@ -39,9 +40,12 @@
 
 #include <fmt/format.h>
 
+#include <chrono>
 #include <iterator>
+#include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace app {
@@ -95,14 +99,30 @@ static void dump_display_state(EmuEnvState &emuenv) {
 
 static void dump_threads(EmuEnvState &emuenv) {
     std::vector<ThreadStatePtr> threads;
+    std::vector<SceKernelModulePtr> modules;
+    bool used_independent_snapshot = false;
     {
-        std::unique_lock<std::mutex> lock(emuenv.kernel.mutex, std::try_to_lock);
+        std::unique_lock<std::mutex> lock(emuenv.kernel.mutex, std::defer_lock);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!lock.try_lock() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         if (!lock.owns_lock()) {
-            LOG_INFO("Guest threads: kernel.mutex busy, thread list skipped");
-            return;
+            LOG_ERROR("Guest threads: kernel.mutex held >1s during stall - probable deadlock on kernel.mutex; using independent thread snapshot");
+            used_independent_snapshot = true;
+        } else {
+            threads.reserve(emuenv.kernel.threads.size());
+            for (const auto &[id, thread] : emuenv.kernel.threads)
+                threads.push_back(thread);
+            modules.reserve(emuenv.kernel.loaded_modules.size());
+            for (const auto &[id, module] : emuenv.kernel.loaded_modules)
+                modules.push_back(module);
         }
-        threads.reserve(emuenv.kernel.threads.size());
-        for (const auto &[id, thread] : emuenv.kernel.threads)
+    }
+
+    if (used_independent_snapshot) {
+        const ThreadStatePtrs snapshot = emuenv.kernel.snapshot_threads_for_diagnostics();
+        threads.reserve(snapshot.size());
+        for (const auto &[id, thread] : snapshot)
             threads.push_back(thread);
     }
 
@@ -116,8 +136,20 @@ static void dump_threads(EmuEnvState &emuenv) {
         const uint32_t pc = read_pc(*thread->cpu);
         const uint32_t lr = read_lr(*thread->cpu);
         const uint32_t sp = read_sp(*thread->cpu);
-        const SceKernelModuleInfo *pc_module = emuenv.kernel.find_module_by_addr(pc);
-        const SceKernelModuleInfo *lr_module = emuenv.kernel.find_module_by_addr(lr);
+        const auto module_for_address = [&modules](const Address address) -> const SceKernelModuleInfo * {
+            for (const auto &module : modules) {
+                if (!module)
+                    continue;
+                for (const auto &segment : module->info.segments) {
+                    if (segment.size && segment.vaddr.address() <= address
+                        && address <= segment.vaddr.address() + segment.memsz)
+                        return &module->info;
+                }
+            }
+            return nullptr;
+        };
+        const SceKernelModuleInfo *pc_module = module_for_address(pc);
+        const SceKernelModuleInfo *lr_module = module_for_address(lr);
         LOG_INFO("Thread {:>4} '{}': status={} priority={} PC=0x{:08X}{} LR=0x{:08X}{} SP=0x{:08X} entry=0x{:08X}",
             thread->id, thread->name, thread_status_str(thread->status), thread->priority,
             pc, pc_module ? fmt::format(" ({})", pc_module->module_name) : "",
@@ -204,6 +236,8 @@ static void dump_audio_state(EmuEnvState &emuenv) {
 }
 
 static void dump_ngs_state(EmuEnvState &emuenv) {
+    static std::mutex busy_observations_mutex;
+    static std::map<ngs::System *, std::chrono::steady_clock::time_point> busy_observations;
     LOG_INFO("NGS: enabled={} systems={}", emuenv.cfg.current_config.ngs_enable, emuenv.ngs.systems.size());
     for (ngs::System *system : emuenv.ngs.systems) {
         if (!system)
@@ -211,13 +245,32 @@ static void dump_ngs_state(EmuEnvState &emuenv) {
         ngs::VoiceScheduler &scheduler = system->voice_scheduler;
         std::unique_lock<std::recursive_mutex> lock(scheduler.mutex, std::try_to_lock);
         if (lock.owns_lock()) {
+            {
+                const std::lock_guard observation_lock(busy_observations_mutex);
+                busy_observations.erase(system);
+            }
             LOG_INFO("NGS system: racks={} max_voices={} granularity={} sample_rate={} queued_voices={} pending_ops={} is_updating={}",
                 system->racks.size(), system->max_voices, system->granularity, system->sample_rate,
-                scheduler.queue.size(), scheduler.operations_pending.size(), scheduler.is_updating);
+                scheduler.queue.size(), scheduler.operations_pending.size(), scheduler.is_updating.load(std::memory_order_acquire));
         } else {
-            LOG_INFO("NGS system: racks={} max_voices={} granularity={} sample_rate={} (scheduler busy, is_updating={})",
-                system->racks.size(), system->max_voices, system->granularity, system->sample_rate,
-                scheduler.is_updating);
+            const auto now = std::chrono::steady_clock::now();
+            std::chrono::milliseconds busy_for{ 0 };
+            bool consecutive = false;
+            {
+                const std::lock_guard observation_lock(busy_observations_mutex);
+                const auto [it, inserted] = busy_observations.emplace(system, now);
+                consecutive = !inserted;
+                busy_for = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second);
+            }
+            if (consecutive) {
+                LOG_ERROR("NGS system: racks={} max_voices={} granularity={} sample_rate={} (scheduler busy for at least {}ms across consecutive dumps, is_updating={})",
+                    system->racks.size(), system->max_voices, system->granularity, system->sample_rate,
+                    busy_for.count(), scheduler.is_updating.load(std::memory_order_acquire));
+            } else {
+                LOG_INFO("NGS system: racks={} max_voices={} granularity={} sample_rate={} (scheduler busy first observed, is_updating={})",
+                    system->racks.size(), system->max_voices, system->granularity, system->sample_rate,
+                    scheduler.is_updating.load(std::memory_order_acquire));
+            }
         }
     }
 }

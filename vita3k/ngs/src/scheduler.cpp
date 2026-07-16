@@ -19,12 +19,28 @@
 #include <ngs/system.h>
 
 #include <kernel/state.h>
+#include <util/log.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
+
 #include <util/vector_utils.h>
 
 namespace ngs {
+
+namespace {
+
+const char *atrac9_buss_name(const BussType type) {
+    switch (type) {
+    case BussType::BUSS_ATRAC9: return "ATRAC9";
+    case BussType::BUSS_SIMPLE_ATRAC9: return "Simple ATRAC9";
+    case BussType::BUSS_SCREAM_ATRAC9: return "Scream ATRAC9";
+    default: return nullptr;
+    }
+}
+
+} // namespace
 
 bool VoiceScheduler::deque_voice(Voice *voice) {
     const std::lock_guard<std::recursive_mutex> guard(mutex);
@@ -70,6 +86,17 @@ bool VoiceScheduler::play(const MemState &mem, Voice *voice) {
     // Should Enqueue
     if (!voice->is_paused)
         deque_insert(mem, voice);
+
+    if (voice->rack && voice->rack->vdef) {
+        const BussType type = voice->rack->vdef->type;
+        if (const char *name = atrac9_buss_name(type)) {
+            static std::atomic_uint32_t logged_types = 0;
+            const uint32_t bit = 1u << static_cast<uint32_t>(type);
+            if (!(logged_types.fetch_or(bit, std::memory_order_relaxed) & bit))
+                LOG_INFO("First NGS {} voice play: rack={} voice={}", name,
+                    static_cast<const void *>(voice->rack), static_cast<const void *>(voice));
+        }
+    }
 
     return true;
 }
@@ -122,7 +149,7 @@ bool VoiceScheduler::off(const MemState &mem, Voice *voice) {
 
 void VoiceScheduler::update(KernelState &kern, const MemState &mem, const SceUID thread_id) {
     std::unique_lock<std::recursive_mutex> scheduler_lock(mutex);
-    is_updating = true;
+    is_updating.store(true, std::memory_order_release);
 
     // make a copy of the queue, this way we have no issue if it is modified in a callback
     std::vector<ngs::Voice *> queue_copy = queue;
@@ -185,7 +212,7 @@ void VoiceScheduler::update(KernelState &kern, const MemState &mem, const SceUID
         operations_pending.pop();
     }
 
-    is_updating = false;
+    is_updating.store(false, std::memory_order_release);
     condvar.notify_all();
 }
 

@@ -18,6 +18,7 @@
 #include "renderer/vulkan/screen_filters.h"
 #include "renderer/vulkan/screen_renderer.h"
 
+#include "renderer/frame_host.h"
 #include "renderer/vulkan/state.h"
 
 namespace renderer::vulkan {
@@ -279,7 +280,9 @@ void SinglePassScreenFilter::render(bool is_pre_renderpass, vk::ImageView src_im
         const float window_aspect = static_cast<float>(screen.extent.width) / screen.extent.height;
         constexpr float vita_aspect = static_cast<float>(DEFAULT_RES_WIDTH) / DEFAULT_RES_HEIGHT;
         const bool fullscreen_hd_res_pixel_perfect_en = screen.state.fullscreen_hd_res_pixel_perfect && screen.state.fullscreen && !(screen.extent.width % DEFAULT_RES_WIDTH) && !(screen.extent.height % (DEFAULT_RES_HEIGHT - 4));
-        if (screen.state.stretch_the_display_area && !fullscreen_hd_res_pixel_perfect_en) {
+        if (screen.state.frame && screen.state.frame->custom_screen_viewport(static_cast<int>(screen.extent.width), static_cast<int>(screen.extent.height), vk_viewport.x, vk_viewport.y, vk_viewport.width, vk_viewport.height)) {
+            // The frontend supplied a safe-area-aware viewport.
+        } else if (screen.state.stretch_the_display_area && !fullscreen_hd_res_pixel_perfect_en) {
             // Match the aspect ratio to the screen size.
             vk_viewport.width = static_cast<float>(screen.extent.width);
             vk_viewport.height = static_cast<float>(screen.extent.height);
@@ -511,7 +514,16 @@ void FSRScreenFilter::on_resize() {
     const float window_aspect = static_cast<float>(screen.extent.width) / screen.extent.height;
     const float vita_aspect = static_cast<float>(DEFAULT_RES_WIDTH) / DEFAULT_RES_HEIGHT;
     const bool fullscreen_hd_res_pixel_perfect_en = screen.state.fullscreen_hd_res_pixel_perfect & screen.state.fullscreen & !(screen.extent.width % DEFAULT_RES_WIDTH) & !(screen.extent.height % (DEFAULT_RES_HEIGHT - 4));
-    if (screen.state.stretch_the_display_area && !fullscreen_hd_res_pixel_perfect_en) {
+    float custom_x = 0.0f;
+    float custom_y = 0.0f;
+    float custom_width = 0.0f;
+    float custom_height = 0.0f;
+    if (screen.state.frame && screen.state.frame->custom_screen_viewport(static_cast<int>(screen.extent.width), static_cast<int>(screen.extent.height), custom_x, custom_y, custom_width, custom_height)) {
+        output_size.width = static_cast<uint32_t>(std::round(custom_width));
+        output_size.height = static_cast<uint32_t>(std::round(custom_height));
+        output_offset.width = static_cast<uint32_t>(std::round(custom_x));
+        output_offset.height = static_cast<uint32_t>(std::round(custom_y));
+    } else if (screen.state.stretch_the_display_area && !fullscreen_hd_res_pixel_perfect_en) {
         // Match the aspect ratio to the screen size.
         output_size.width = static_cast<float>(screen.extent.width);
         output_size.height = static_cast<float>(screen.extent.height);

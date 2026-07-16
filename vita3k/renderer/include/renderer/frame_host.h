@@ -64,6 +64,13 @@ public:
     virtual int drawable_height() const = 0;
     virtual std::vector<std::string> font_dirs() const = 0;
 
+    // Frontends with nonstandard layouts can provide the exact drawable
+    // viewport for the game image. Returning false keeps the normal desktop
+    // aspect-fit/stretch behavior.
+    virtual bool custom_screen_viewport(int, int, float &, float &, float &, float &) const {
+        return false;
+    }
+
     virtual void *get_proc_address(const char *name) const {
         return nullptr;
     }

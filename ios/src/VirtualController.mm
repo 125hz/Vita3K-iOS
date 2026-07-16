@@ -14,6 +14,7 @@
 static SDL_JoystickID g_virtual_joystick_id = 0;
 static SDL_Joystick *g_virtual_joystick = nullptr;
 static std::atomic_bool g_physical_controller_connected = false;
+static std::atomic<float> g_safe_area_top_pixels = 0.0f;
 static NSMutableDictionary *g_controls_config = nil;
 
 @class Vita3KVirtualControllerView;
@@ -34,20 +35,32 @@ static UIWindow *activeWindow() {
     return nil;
 }
 
-static UIVisualEffect *glassEffect() {
-    Class glassClass = NSClassFromString(@"UIGlassEffect");
-    SEL selector = NSSelectorFromString(@"effectWithStyle:");
-    if (glassClass && [glassClass respondsToSelector:selector]) {
-        using Factory = id (*)(id, SEL, NSInteger);
-        Factory factory = reinterpret_cast<Factory>([glassClass methodForSelector:selector]);
-        id effect = factory(glassClass, selector, 0);
-        @try {
-            [effect setValue:@YES forKey:@"interactive"];
-        } @catch (__unused NSException *exception) {
-        }
+static UIVisualEffect *glassEffect(const BOOL interactive = YES) {
+    if (@available(iOS 26.0, *)) {
+        UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+        effect.interactive = interactive;
+        effect.tintColor = [UIColor colorWithWhite:0.04 alpha:0.12];
         return effect;
     }
     return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
+}
+
+static constexpr NSInteger glassBackgroundTag = 0x3301;
+
+static void installGlassBackground(UIView *view, const BOOL interactive = YES) {
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect(interactive)];
+    glass.tag = glassBackgroundTag;
+    glass.userInteractionEnabled = NO;
+    glass.frame = view.bounds;
+    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [view insertSubview:glass atIndex:0];
+}
+
+static void layoutGlassBackground(UIView *view) {
+    UIView *glass = [view viewWithTag:glassBackgroundTag];
+    glass.frame = view.bounds;
+    glass.layer.cornerRadius = view.layer.cornerRadius;
+    glass.clipsToBounds = YES;
 }
 
 static NSString *configPath() {
@@ -55,8 +68,34 @@ static NSString *configPath() {
     return [[documents stringByAppendingPathComponent:@"Vita3K"] stringByAppendingPathComponent:@"ios_controls.json"];
 }
 
-static NSDictionary *element(CGFloat x, CGFloat y, BOOL visible) {
-    return @{@"x": @(x), @"y": @(y), @"visible": @(visible)};
+static NSMutableDictionary *element(CGFloat x, CGFloat y, BOOL visible) {
+    return [@{@"x": @(x), @"y": @(y), @"visible": @(visible)} mutableCopy];
+}
+
+static NSMutableDictionary *landscapeElements() {
+    return [@{
+        @"dpad_up": element(0.14, 0.66, YES), @"dpad_down": element(0.14, 0.86, YES),
+        @"dpad_left": element(0.08, 0.76, YES), @"dpad_right": element(0.20, 0.76, YES),
+        @"triangle": element(0.86, 0.66, YES), @"cross": element(0.86, 0.86, YES),
+        @"square": element(0.80, 0.76, YES), @"circle": element(0.92, 0.76, YES),
+        @"left_shoulder": element(0.09, 0.10, YES), @"right_shoulder": element(0.91, 0.10, YES),
+        @"select": element(0.43, 0.91, YES), @"start": element(0.57, 0.91, YES),
+        @"left_stick": element(0.29, 0.73, YES), @"right_stick": element(0.71, 0.73, YES),
+        @"menu": element(0.95, 0.17, YES),
+    } mutableCopy];
+}
+
+static NSMutableDictionary *portraitElements() {
+    return [@{
+        @"dpad_up": element(0.22, 0.59, YES), @"dpad_down": element(0.22, 0.71, YES),
+        @"dpad_left": element(0.13, 0.65, YES), @"dpad_right": element(0.31, 0.65, YES),
+        @"triangle": element(0.78, 0.59, YES), @"cross": element(0.78, 0.71, YES),
+        @"square": element(0.69, 0.65, YES), @"circle": element(0.87, 0.65, YES),
+        @"left_shoulder": element(0.15, 0.53, YES), @"right_shoulder": element(0.85, 0.53, YES),
+        @"select": element(0.40, 0.94, YES), @"start": element(0.60, 0.94, YES),
+        @"left_stick": element(0.20, 0.84, YES), @"right_stick": element(0.80, 0.84, YES),
+        @"menu": element(0.94, 0.54, YES),
+    } mutableCopy];
 }
 
 static NSMutableDictionary *defaultConfig() {
@@ -65,17 +104,22 @@ static NSMutableDictionary *defaultConfig() {
         @"scale": @1.0,
         @"hideWhenPhysical": @YES,
         @"haptics": @YES,
-        @"elements": [@{
-            @"dpad_up": element(0.14, 0.66, YES), @"dpad_down": element(0.14, 0.86, YES),
-            @"dpad_left": element(0.08, 0.76, YES), @"dpad_right": element(0.20, 0.76, YES),
-            @"triangle": element(0.86, 0.66, YES), @"cross": element(0.86, 0.86, YES),
-            @"square": element(0.80, 0.76, YES), @"circle": element(0.92, 0.76, YES),
-            @"left_shoulder": element(0.09, 0.10, YES), @"right_shoulder": element(0.91, 0.10, YES),
-            @"select": element(0.43, 0.91, YES), @"start": element(0.57, 0.91, YES),
-            @"left_stick": element(0.29, 0.73, YES), @"right_stick": element(0.71, 0.73, YES),
-            @"menu": element(0.95, 0.17, YES),
-        } mutableCopy],
+        @"layouts": [@{@"landscape": landscapeElements(), @"portrait": portraitElements()} mutableCopy],
     } mutableCopy];
+}
+
+static void loadConfig();
+
+static NSString *orientationKey() {
+    UIView *layoutView = (UIView *)g_overlay;
+    UIWindow *window = activeWindow();
+    const CGRect bounds = layoutView ? layoutView.bounds : window.bounds;
+    return CGRectGetHeight(bounds) > CGRectGetWidth(bounds) ? @"portrait" : @"landscape";
+}
+
+static NSMutableDictionary *currentElementsConfig() {
+    loadConfig();
+    return g_controls_config[@"layouts"][orientationKey()];
 }
 
 static void loadConfig() {
@@ -93,13 +137,25 @@ static void loadConfig() {
         if (saved[key])
             g_controls_config[key] = saved[key];
     }
-    NSDictionary *savedElements = saved[@"elements"];
-    if ([savedElements isKindOfClass:NSDictionary.class]) {
-        NSMutableDictionary *elements = g_controls_config[@"elements"];
-        [savedElements enumerateKeysAndObjectsUsingBlock:^(id keyObject, id valueObject, __unused BOOL *stop) {
+    NSDictionary *savedLayouts = saved[@"layouts"];
+    if ([savedLayouts isKindOfClass:NSDictionary.class]) {
+        for (NSString *layoutKey in @[@"landscape", @"portrait"]) {
+            NSDictionary *savedElements = savedLayouts[layoutKey];
+            NSMutableDictionary *elements = g_controls_config[@"layouts"][layoutKey];
+            [savedElements enumerateKeysAndObjectsUsingBlock:^(id keyObject, id valueObject, __unused BOOL *stop) {
+                NSString *key = [keyObject isKindOfClass:NSString.class] ? keyObject : nil;
+                NSDictionary *value = [valueObject isKindOfClass:NSDictionary.class] ? valueObject : nil;
+                if (value && elements[key])
+                    elements[key] = [value mutableCopy];
+            }];
+        }
+    } else if ([saved[@"elements"] isKindOfClass:NSDictionary.class]) {
+        // Migrate the original single landscape layout without discarding it.
+        NSMutableDictionary *elements = g_controls_config[@"layouts"][@"landscape"];
+        [saved[@"elements"] enumerateKeysAndObjectsUsingBlock:^(id keyObject, id valueObject, __unused BOOL *stop) {
             NSString *key = [keyObject isKindOfClass:NSString.class] ? keyObject : nil;
             NSDictionary *value = [valueObject isKindOfClass:NSDictionary.class] ? valueObject : nil;
-            if ([value isKindOfClass:NSDictionary.class] && elements[key])
+            if (value && elements[key])
                 elements[key] = [value mutableCopy];
         }];
     }
@@ -114,8 +170,7 @@ static void saveConfig() {
 }
 
 static NSMutableDictionary *elementConfig(NSString *identifier) {
-    loadConfig();
-    return g_controls_config[@"elements"][identifier];
+    return currentElementsConfig()[identifier];
 }
 
 static void hapticTick() {
@@ -131,6 +186,7 @@ static void hapticTick() {
 @property(nonatomic) SDL_GamepadAxis verticalAxis;
 @property(nonatomic, copy) NSString *elementIdentifier;
 @property(nonatomic, strong) UIView *thumb;
+@property(nonatomic, strong) UIVisualEffectView *glass;
 @property(nonatomic) BOOL layoutEditing;
 - (void)resetAxes;
 @end
@@ -142,9 +198,12 @@ static void hapticTick() {
     if (!self)
         return nil;
     self.multipleTouchEnabled = YES;
-    self.backgroundColor = [UIColor colorWithWhite:0.04 alpha:0.52];
+    self.backgroundColor = UIColor.clearColor;
     self.layer.borderWidth = 1.5;
     self.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.55].CGColor;
+    self.glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect()];
+    self.glass.userInteractionEnabled = NO;
+    [self addSubview:self.glass];
     self.thumb = [[UIView alloc] init];
     self.thumb.backgroundColor = [UIColor colorWithWhite:0.9 alpha:0.56];
     self.thumb.layer.borderWidth = 1;
@@ -156,6 +215,9 @@ static void hapticTick() {
 - (void)layoutSubviews {
     [super layoutSubviews];
     self.layer.cornerRadius = CGRectGetWidth(self.bounds) / 2;
+    self.glass.frame = self.bounds;
+    self.glass.layer.cornerRadius = self.layer.cornerRadius;
+    self.glass.clipsToBounds = YES;
     const CGFloat thumbSize = CGRectGetWidth(self.bounds) * 0.46;
     self.thumb.bounds = CGRectMake(0, 0, thumbSize, thumbSize);
     self.thumb.layer.cornerRadius = thumbSize / 2;
@@ -260,10 +322,11 @@ static void presentGameMenu();
     self.menuButton.accessibilityLabel = @"In-game menu";
     [self.menuButton setImage:[UIImage systemImageNamed:@"ellipsis"] forState:UIControlStateNormal];
     self.menuButton.tintColor = UIColor.whiteColor;
-    self.menuButton.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.72];
+    self.menuButton.backgroundColor = UIColor.clearColor;
     self.menuButton.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.55].CGColor;
     self.menuButton.layer.borderWidth = 1;
     [self.menuButton addTarget:self action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
+    installGlassBackground(self.menuButton);
     [self addSubview:self.menuButton];
 
     self.verticalGuide = [[UIView alloc] init];
@@ -301,7 +364,7 @@ static void presentGameMenu();
     button.accessibilityLabel = accessibility;
     button.multipleTouchEnabled = YES;
     button.exclusiveTouch = NO;
-    button.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.65];
+    button.backgroundColor = UIColor.clearColor;
     button.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.62].CGColor;
     button.layer.borderWidth = 1.25;
     button.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
@@ -311,6 +374,7 @@ static void presentGameMenu();
     [button setTitleColor:UIColor.systemCyanColor forState:UIControlStateHighlighted];
     [button addTarget:self action:@selector(buttonPressed:) forControlEvents:UIControlEventTouchDown | UIControlEventTouchDragEnter];
     [button addTarget:self action:@selector(buttonReleased:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
+    installGlassBackground(button);
     [self addSubview:button];
     [self.controllerElements addObject:button];
 }
@@ -330,13 +394,13 @@ static void presentGameMenu();
     if (self.layoutEditing)
         return;
     hapticTick();
-    sender.backgroundColor = [UIColor colorWithRed:0.2 green:0.65 blue:1 alpha:0.72];
+    sender.backgroundColor = [UIColor colorWithRed:0.2 green:0.65 blue:1 alpha:0.28];
     if (g_virtual_joystick)
         SDL_SetJoystickVirtualButton(g_virtual_joystick, static_cast<int>(sender.tag), true);
 }
 
 - (void)buttonReleased:(UIButton *)sender {
-    sender.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.65];
+    sender.backgroundColor = UIColor.clearColor;
     if (g_virtual_joystick)
         SDL_SetJoystickVirtualButton(g_virtual_joystick, static_cast<int>(sender.tag), false);
 }
@@ -344,6 +408,9 @@ static void presentGameMenu();
 - (void)layoutSubviews {
     [super layoutSubviews];
     const UIEdgeInsets safe = self.safeAreaInsets;
+    const CGFloat nativeScale = self.window.screen.nativeScale > 0
+        ? self.window.screen.nativeScale : UIScreen.mainScreen.scale;
+    g_safe_area_top_pixels.store(static_cast<float>(safe.top * nativeScale), std::memory_order_release);
     self.verticalGuide.frame = CGRectMake(CGRectGetMidX(self.bounds), safe.top, 1, CGRectGetHeight(self.bounds) - safe.top - safe.bottom);
     self.horizontalGuide.frame = CGRectMake(safe.left, CGRectGetMidY(self.bounds), CGRectGetWidth(self.bounds) - safe.left - safe.right, 1);
     self.editDoneButton.frame = CGRectMake(CGRectGetMidX(self.bounds) - 68, safe.top + 10, 136, 36);
@@ -377,12 +444,14 @@ static void presentGameMenu();
         elementView.bounds = (CGRect){CGPointZero, size};
         elementView.center = CGPointMake([settings[@"x"] doubleValue] * width, [settings[@"y"] doubleValue] * height);
         elementView.layer.cornerRadius = MIN(size.width, size.height) / 2;
+        layoutGlassBackground(elementView);
     }
     NSMutableDictionary *menuSettings = elementConfig(@"menu");
     self.menuButton.hidden = ![menuSettings[@"visible"] boolValue];
     self.menuButton.bounds = CGRectMake(0, 0, 46, 46);
     self.menuButton.center = CGPointMake([menuSettings[@"x"] doubleValue] * width, [menuSettings[@"y"] doubleValue] * height);
     self.menuButton.layer.cornerRadius = 23;
+    layoutGlassBackground(self.menuButton);
 }
 
 - (void)setLayoutEditing:(BOOL)editing {
@@ -505,6 +574,7 @@ static void presentGameMenu();
         [glass.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
         [glass.widthAnchor constraintLessThanOrEqualToConstant:560],
         preferredWidth,
+        [glass.heightAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.heightAnchor multiplier:0.86],
         [glass.heightAnchor constraintLessThanOrEqualToAnchor:self.heightAnchor multiplier:0.88],
     ]];
 
@@ -640,7 +710,9 @@ static void presentGameMenu();
     [g_overlay setLayoutEditing:YES];
 }
 - (void)resetLayout {
-    g_controls_config = defaultConfig();
+    NSMutableDictionary *defaults = defaultConfig();
+    NSString *key = orientationKey();
+    g_controls_config[@"layouts"][key] = defaults[@"layouts"][key];
     saveConfig();
     [g_overlay applyConfiguration];
     [self close];
@@ -812,13 +884,20 @@ void vita3k_ios_present_controller_options() {
         if (g_options_view)
             return;
         UIWindow *window = activeWindow();
-        if (!window)
+        if (!window) {
+            SDL_Log("Vita3K iOS: controller options presentation failed: no active window");
             return;
+        }
         Vita3KControllerOptionsView *options = [[Vita3KControllerOptionsView alloc] initWithFrame:window.bounds];
         g_options_view = options;
         [window addSubview:options];
         [window bringSubviewToFront:options];
+        SDL_Log("Vita3K iOS: controller options visible (orientation=%s)", orientationKey().UTF8String);
     });
+}
+
+float vita3k_ios_safe_area_top_pixels() {
+    return g_safe_area_top_pixels.load(std::memory_order_acquire);
 }
 
 void vita3k_ios_set_physical_controller_connected(bool connected) {

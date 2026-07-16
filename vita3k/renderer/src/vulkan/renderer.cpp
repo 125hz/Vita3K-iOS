@@ -1132,7 +1132,10 @@ void VKState::render_frame(DisplayState &display, const GxmState &gxm, MemState 
             const bool pixel_perfect = fullscreen_hd_res_pixel_perfect && fullscreen
                 && !(screen_renderer.extent.width % DEFAULT_RES_WIDTH)
                 && !(screen_renderer.extent.height % (DEFAULT_RES_HEIGHT - 4));
-            if (stretch_the_display_area && !pixel_perfect) {
+            if (frame->custom_screen_viewport(static_cast<int>(fb_w), static_cast<int>(fb_h),
+                    display.viewport_x, display.viewport_y, display.viewport_w, display.viewport_h)) {
+                // The frontend supplied a safe-area-aware viewport.
+            } else if (stretch_the_display_area && !pixel_perfect) {
                 display.viewport_x = 0.0f;
                 display.viewport_y = 0.0f;
                 display.viewport_w = fb_w;

@@ -21,6 +21,7 @@
 
 #include <mem/ptr.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <queue>
 #include <vector>
@@ -62,7 +63,7 @@ struct VoiceScheduler {
 
     std::recursive_mutex mutex;
     std::condition_variable_any condvar;
-    bool is_updating = false;
+    std::atomic_bool is_updating = false;
 
 protected:
     void deque_insert(const MemState &mem, Voice *voice);

@@ -334,6 +334,8 @@ EXPORT(SceInt32, sceAtracResetNextOutputPosition, SceInt32 atracHandle, SceUInt3
 
 EXPORT(SceInt32, sceAtracSetDataAndAcquireHandle, Ptr<SceUChar8> pucBuffer, SceUInt32 uiReadSize, SceUInt32 uiBufferSize) {
     TRACY_FUNC(sceAtracSetDataAndAcquireHandle, pucBuffer, uiReadSize, uiBufferSize);
+    LOG_INFO_ONCE("First sceAtracSetDataAndAcquireHandle call: codec=ATRAC9 read_size={} buffer_size={}",
+        uiReadSize, uiBufferSize);
     if (!pucBuffer) {
         return RET_ERROR(SCE_ATRAC_ERROR_INVALID_POINTER);
     }

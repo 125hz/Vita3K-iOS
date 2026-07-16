@@ -3,7 +3,9 @@
 
 #include <vita3k_ios/NativeFrontend.h>
 #include <vita3k_ios/VirtualController.h>
+#include <util/log.h>
 
+#import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 
 #include <cmath>
@@ -40,17 +42,11 @@ void perform_on_main(dispatch_block_t block) {
         dispatch_async(dispatch_get_main_queue(), block);
 }
 
-UIVisualEffect *glass_effect() {
-    Class glassClass = NSClassFromString(@"UIGlassEffect");
-    SEL selector = NSSelectorFromString(@"effectWithStyle:");
-    if (glassClass && [glassClass respondsToSelector:selector]) {
-        using Factory = id (*)(id, SEL, NSInteger);
-        Factory factory = reinterpret_cast<Factory>([glassClass methodForSelector:selector]);
-        id effect = factory(glassClass, selector, 0); // UIGlassEffectStyleRegular
-        @try {
-            [effect setValue:@YES forKey:@"interactive"];
-        } @catch (__unused NSException *exception) {
-        }
+UIVisualEffect *glass_effect(const BOOL interactive = YES) {
+    if (@available(iOS 26.0, *)) {
+        UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+        effect.interactive = interactive;
+        effect.tintColor = [UIColor colorWithWhite:0.04 alpha:0.12];
         return effect;
     }
     return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
@@ -65,9 +61,29 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
         [button setTitle:fallback forState:UIControlStateNormal];
     button.tintColor = UIColor.whiteColor;
     button.accessibilityLabel = accessibility;
-    button.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+    button.backgroundColor = UIColor.clearColor;
     button.layer.cornerRadius = 22;
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect()];
+    glass.userInteractionEnabled = NO;
+    glass.frame = CGRectMake(0, 0, 44, 44);
+    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    glass.layer.cornerRadius = 22;
+    glass.clipsToBounds = YES;
+    [button insertSubview:glass atIndex:0];
     return button;
+}
+
+std::string hex_bytes(const std::string &value) {
+    constexpr char digits[] = "0123456789ABCDEF";
+    std::string result;
+    result.reserve(value.size() * 3);
+    for (const unsigned char byte : value) {
+        if (!result.empty())
+            result.push_back(' ');
+        result.push_back(digits[byte >> 4]);
+        result.push_back(digits[byte & 0x0F]);
+    }
+    return result;
 }
 
 } // namespace
@@ -115,11 +131,11 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
 - (void)layoutSubviews {
     [super layoutSubviews];
     const CGFloat inset = 12;
-    const CGFloat labelHeight = 58;
+    const CGFloat labelHeight = 70;
     self.icon.frame = CGRectMake(inset, inset, CGRectGetWidth(self.bounds) - inset * 2,
         CGRectGetHeight(self.bounds) - labelHeight - inset * 2);
     self.titleLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.icon.frame) + 7,
-        CGRectGetWidth(self.bounds) - inset * 2, 32);
+        CGRectGetWidth(self.bounds) - inset * 2, 44);
     self.identifierLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.titleLabel.frame),
         CGRectGetWidth(self.bounds) - inset * 2, 18);
 }
@@ -136,6 +152,8 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
     self.titleLabel.text = title;
     self.identifierLabel.text = identifier;
     UIImage *image = iconPath.length ? [UIImage imageWithContentsOfFile:iconPath] : nil;
+    if (iconPath.length && !image)
+        LOG_ERROR("iOS library art could not be decoded at '{}'", iconPath.UTF8String);
     self.icon.image = image ?: [UIImage systemImageNamed:@"gamecontroller.fill"];
     self.icon.tintColor = UIColor.systemPinkColor;
     self.icon.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.55];
@@ -364,6 +382,7 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
 @property(nonatomic, strong) UICollectionView *collectionView;
 @property(nonatomic, strong) UILabel *emptyLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) CAGradientLayer *backgroundGradient;
 - (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings;
 @end
 
@@ -375,6 +394,15 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
         return nil;
     self.backgroundColor = [UIColor colorWithRed:0.02 green:0.025 blue:0.05 alpha:1];
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.backgroundGradient = [CAGradientLayer layer];
+    self.backgroundGradient.colors = @[
+        (id)[UIColor colorWithRed:0.02 green:0.035 blue:0.09 alpha:1].CGColor,
+        (id)[UIColor colorWithRed:0.14 green:0.035 blue:0.16 alpha:1].CGColor,
+        (id)[UIColor colorWithRed:0.015 green:0.08 blue:0.11 alpha:1].CGColor,
+    ];
+    self.backgroundGradient.startPoint = CGPointMake(0, 0);
+    self.backgroundGradient.endPoint = CGPointMake(1, 1);
+    [self.layer insertSublayer:self.backgroundGradient atIndex:0];
 
     UILabel *title = [[UILabel alloc] init];
     title.text = @"Vita3K";
@@ -423,6 +451,7 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
 
 - (void)layoutSubviews {
     [super layoutSubviews];
+    self.backgroundGradient.frame = self.bounds;
     const UIEdgeInsets safe = self.safeAreaInsets;
     UILabel *title = [self viewWithTag:101];
     UIButton *refresh = [self viewWithTag:102];
@@ -455,9 +484,14 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
 - (__kindof UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     Vita3KGameCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"game" forIndexPath:indexPath];
     const auto &game = _games.at(static_cast<std::size_t>(indexPath.item));
-    [cell configureTitle:[NSString stringWithUTF8String:game.title.c_str()]
-        identifier:[NSString stringWithUTF8String:game.title_id.c_str()]
-        iconPath:[NSString stringWithUTF8String:game.icon_path.c_str()]];
+    NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"Unknown title ID";
+    NSString *title = [NSString stringWithUTF8String:game.title.c_str()];
+    if (!title) {
+        LOG_ERROR("iOS library title is invalid UTF-8: title_id={} bytes={}", game.title_id, hex_bytes(game.title));
+        title = [NSString stringWithFormat:@"Unknown title (%@)", identifier];
+    }
+    NSString *iconPath = [NSString stringWithUTF8String:game.icon_path.c_str()];
+    [cell configureTitle:title identifier:identifier iconPath:iconPath];
     return cell;
 }
 

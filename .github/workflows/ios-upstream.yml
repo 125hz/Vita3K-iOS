@@ -43,6 +43,18 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
+      - name: Select Xcode 26 toolchain
+        run: |
+          xcode_apps=(/Applications/Xcode_26*.app)
+          if [[ ! -d "${xcode_apps[0]}" ]]; then
+            echo "::error::No Xcode 26 installation is present on this macos-15 runner."
+            ls -1 /Applications | grep '^Xcode' || true
+            exit 1
+          fi
+          selected_xcode="${xcode_apps[${#xcode_apps[@]}-1]}"
+          echo "Selecting ${selected_xcode}"
+          sudo xcode-select --switch "${selected_xcode}/Contents/Developer"
+
       - name: Apply iOS submodule patches
         run: |
           # dynarmic/oaknut is a nested submodule; CI restores its pinned
@@ -60,7 +72,12 @@ jobs:
       - name: Show Apple toolchain
         run: |
           xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
+          sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iPhoneOS SDK ${sdk_version}"
+          [[ "${sdk_version%%.*}" -ge 26 ]] || {
+            echo "::error::Selected Xcode does not provide an iOS 26 SDK (found ${sdk_version})."
+            exit 1
+          }
           cmake --version
 
       - name: Bootstrap pinned vcpkg

@@ -92,6 +92,26 @@ public:
         return {};
     }
 
+    bool custom_screen_viewport(const int drawable_width, const int drawable_height,
+        float &x, float &y, float &width, float &height) const override {
+        if (drawable_width <= 0 || drawable_height <= drawable_width)
+            return false;
+
+        constexpr float vita_width = 960.0f;
+        constexpr float vita_height = 544.0f;
+        const float safe_top = std::clamp(vita3k_ios_safe_area_top_pixels(),
+            0.0f, static_cast<float>(drawable_height) * 0.2f);
+        const float game_zone_height = std::max(1.0f,
+            static_cast<float>(drawable_height) * 0.5f - safe_top);
+        const float scale = std::min(static_cast<float>(drawable_width) / vita_width,
+            game_zone_height / vita_height);
+        width = vita_width * scale;
+        height = vita_height * scale;
+        x = (static_cast<float>(drawable_width) - width) * 0.5f;
+        y = safe_top;
+        return true;
+    }
+
 private:
     SDL_Window *m_window = nullptr;
 };
@@ -218,13 +238,22 @@ std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
     for (const auto &entry : apps) {
         LOG_INFO("Installed title: {} ({}) category={} path={}",
             entry.title, entry.title_id, entry.category, entry.path);
-        fs::path icon = emuenv.vita_fs_path / "ux0/app" / entry.title_id / "sce_sys/icon0.png";
+        const fs::path art_directory = emuenv.vita_fs_path / "ux0/app" / entry.title_id / "sce_sys";
+        const fs::path icon = art_directory / "icon0.png";
+        const fs::path banner = art_directory / "pic0.png";
+        std::error_code icon_error;
+        std::error_code banner_error;
+        const bool icon_exists = fs::exists(icon, icon_error);
+        const bool banner_exists = fs::exists(banner, banner_error);
+        LOG_INFO("iOS library art: title_id={} icon='{}' exists={} pic0='{}' exists={}",
+            entry.title_id, icon, icon_exists, banner, banner_exists);
+        const fs::path selected_art = banner_exists ? banner : icon;
         games.push_back({
             .title = entry.title,
             .title_id = entry.title_id,
             .category = entry.category,
             .app_path = entry.path.empty() ? entry.title_id : entry.path,
-            .icon_path = fs_utils::path_to_utf8(icon),
+            .icon_path = fs_utils::path_to_utf8(selected_art),
         });
     }
     return games;
@@ -350,6 +379,7 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "Portrait LandscapeLeft LandscapeRight");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         LOG_ERROR("SDL_Init failed: {}", SDL_GetError());
         return -1;
@@ -493,6 +523,17 @@ int main(int argc, char *argv[]) {
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                 running = false;
                 break;
+
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            case SDL_EVENT_WINDOW_RESIZED: {
+                int drawable_width = 0;
+                int drawable_height = 0;
+                SDL_GetWindowSizeInPixels(window, &drawable_width, &drawable_height);
+                LOG_INFO("iOS window resized: drawable={}x{} layout={}",
+                    drawable_width, drawable_height,
+                    drawable_height > drawable_width ? "portrait" : "landscape");
+                break;
+            }
 
             case SDL_EVENT_FINGER_DOWN:
             case SDL_EVENT_FINGER_MOTION:
