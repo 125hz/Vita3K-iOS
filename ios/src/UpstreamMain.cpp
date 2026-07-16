@@ -15,12 +15,14 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-// iOS upstream-core frontend. Boots the first installed title through the
-// real emulator. Modeled on vita3k/android/jni/main_android.cpp and the
-// bootstrap sequence in vita3k/android/jni/native_bootstrap.cpp.
+// iOS upstream-core frontend. Lets the user choose an installed title, then
+// boots it through the real emulator. Modeled on
+// vita3k/android/jni/main_android.cpp and the bootstrap sequence in
+// vita3k/android/jni/native_bootstrap.cpp.
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#include <SDL3/SDL_messagebox.h>
 
 #include <app/functions.h>
 #include <app/session_controller.h>
@@ -185,30 +187,65 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
     }
 }
 
-std::optional<AppLaunchRequest> pick_boot_title(EmuEnvState &emuenv) {
+std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv, SDL_Window *window) {
     const auto apps = app::get_apps(emuenv);
     if (apps.empty()) {
         LOG_ERROR("No installed titles were found under {}. Copy a working "
                   "desktop Vita3K data directory (vita/ux0/app/<TITLE_ID>, "
                   "firmware os0/vs0/sa0) into Documents/Vita3K via file sharing.",
             emuenv.vita_fs_path / "ux0/app");
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "No games installed",
+            "No installed Vita titles were found in Documents/Vita3K/vita/ux0/app.", window);
         return std::nullopt;
     }
 
-    const app::AppEntry *chosen = nullptr;
     for (const auto &entry : apps) {
         LOG_INFO("Installed title: {} ({}) category={} path={}",
             entry.title, entry.title_id, entry.category, entry.path);
-        // Prefer the first game ("gd" = game digital) over system content.
-        if (!chosen && entry.category.rfind("gd", 0) == 0)
-            chosen = &entry;
     }
-    if (!chosen)
-        chosen = &apps.front();
 
-    LOG_INFO("Booting title: {} ({})", chosen->title, chosen->title_id);
+    std::vector<std::string> labels;
+    labels.reserve(apps.size() + 1);
+    for (const auto &entry : apps)
+        labels.emplace_back(entry.title + " (" + entry.title_id + ")");
+    labels.emplace_back("Cancel");
+
+    std::vector<SDL_MessageBoxButtonData> buttons;
+    buttons.reserve(labels.size());
+    for (std::size_t index = 0; index < apps.size(); ++index) {
+        SDL_MessageBoxButtonData button{};
+        button.buttonID = static_cast<int>(index);
+        button.text = labels[index].c_str();
+        buttons.push_back(button);
+    }
+    SDL_MessageBoxButtonData cancel{};
+    cancel.flags = SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
+    cancel.buttonID = -1;
+    cancel.text = labels.back().c_str();
+    buttons.push_back(cancel);
+
+    SDL_MessageBoxData dialog{};
+    dialog.flags = SDL_MESSAGEBOX_INFORMATION;
+    dialog.window = window;
+    dialog.title = "Vita3K iOS";
+    dialog.message = "Choose a game to boot";
+    dialog.numbuttons = static_cast<int>(buttons.size());
+    dialog.buttons = buttons.data();
+
+    int selection = -1;
+    if (!SDL_ShowMessageBox(&dialog, &selection)) {
+        LOG_ERROR("Could not show game picker: {}", SDL_GetError());
+        return std::nullopt;
+    }
+    if (selection < 0 || static_cast<std::size_t>(selection) >= apps.size()) {
+        LOG_INFO("Game selection cancelled.");
+        return std::nullopt;
+    }
+
+    const auto &chosen = apps[static_cast<std::size_t>(selection)];
+    LOG_INFO("Booting title: {} ({})", chosen.title, chosen.title_id);
     return AppLaunchRequest{
-        .app_path = chosen->path.empty() ? chosen->title_id : chosen->path,
+        .app_path = chosen.path.empty() ? chosen.title_id : chosen.path,
     };
 }
 
@@ -229,20 +266,6 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    auto launch_request = pick_boot_title(*emuenv);
-    if (!launch_request) {
-        // Keep the process alive so the user can attach the folder through
-        // the Files app and relaunch; nothing to emulate yet.
-        return -1;
-    }
-
-    app::AppSessionController session_controller(*emuenv);
-    SDL_Log("Vita3K iOS: begin_launch '%s'", launch_request->app_path.c_str());
-    if (!session_controller.begin_launch(*launch_request)) {
-        LOG_ERROR("Could not find app '{}' in apps list.", launch_request->app_path);
-        return -1;
-    }
-
     SDL_PropertiesID window_props = SDL_CreateProperties();
     if (!window_props) {
         LOG_ERROR("SDL_CreateProperties failed: {}", SDL_GetError());
@@ -258,6 +281,20 @@ int main(int argc, char *argv[]) {
     SDL_DestroyProperties(window_props);
     if (!window) {
         LOG_ERROR("SDL_CreateWindowWithProperties failed: {}", SDL_GetError());
+        return -1;
+    }
+
+    auto launch_request = choose_boot_title(*emuenv, window);
+    if (!launch_request) {
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 0;
+    }
+
+    app::AppSessionController session_controller(*emuenv);
+    SDL_Log("Vita3K iOS: begin_launch '%s'", launch_request->app_path.c_str());
+    if (!session_controller.begin_launch(*launch_request)) {
+        LOG_ERROR("Could not find app '{}' in apps list.", launch_request->app_path);
         return -1;
     }
 

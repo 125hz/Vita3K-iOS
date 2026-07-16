@@ -1,18 +1,16 @@
 diff --git a/externals/oaknut/include/oaknut/code_block.hpp b/externals/oaknut/include/oaknut/code_block.hpp
-index bfa87d96..875aa26c 100644
+index bfa87d96..bdba9516 100644
 --- a/externals/oaknut/include/oaknut/code_block.hpp
 +++ b/externals/oaknut/include/oaknut/code_block.hpp
-@@ -32,7 +32,14 @@ public:
+@@ -32,7 +32,12 @@ public:
          m_memory = (std::uint32_t*)VirtualAlloc(nullptr, size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
  #elif defined(__APPLE__)
  #    if TARGET_OS_IPHONE
 -        m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
-+        // Dynarmic's arm64 backend stores its 128 MiB JIT cache in CodeBlock.
-+        // iOS silently strips execute permission from anonymous mappings that
-+        // are not marked as JIT, even when PROT_EXEC was requested. MAP_JIT
-+        // gives the cache an executable maximum protection so the existing
-+        // protect()/unprotect() W^X transitions can succeed.
-+        m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE | MAP_JIT, -1, 0);
++        // Debugger-based sideload JIT sets CS_DEBUGGED but does not grant the
++        // MAP_JIT entitlement. Request executable anonymous memory directly;
++        // protect()/unprotect() then maintain the existing W^X transitions.
++        m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
 +        if (m_memory == MAP_FAILED)
 +            throw std::bad_alloc{};
  #    else
