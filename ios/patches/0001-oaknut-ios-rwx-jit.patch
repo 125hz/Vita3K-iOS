@@ -1,7 +1,7 @@
-diff --git a/include/oaknut/code_block.hpp b/include/oaknut/code_block.hpp
+diff --git a/externals/oaknut/include/oaknut/code_block.hpp b/externals/oaknut/include/oaknut/code_block.hpp
 index bfa87d96..875aa26c 100644
---- a/include/oaknut/code_block.hpp
-+++ b/include/oaknut/code_block.hpp
+--- a/externals/oaknut/include/oaknut/code_block.hpp
++++ b/externals/oaknut/include/oaknut/code_block.hpp
 @@ -32,7 +32,14 @@ public:
          m_memory = (std::uint32_t*)VirtualAlloc(nullptr, size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
  #elif defined(__APPLE__)
