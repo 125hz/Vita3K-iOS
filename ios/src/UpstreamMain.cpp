@@ -43,12 +43,14 @@
 #include <util/fs.h>
 #include <util/log.h>
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -269,6 +271,12 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    // SDL may not emit GAMEPAD_ADDED for a controller that was already
+    // connected before Vita3K launched. Match the Android frontend by doing
+    // an initial enumeration so guest sceCtrl polling works from frame one.
+    refresh_controllers(emuenv->ctrl, *emuenv);
+    LOG_INFO("iOS controller discovery: {} connected controller(s)", emuenv->ctrl.controllers_num);
+
     SDL_PropertiesID window_props = SDL_CreateProperties();
     if (!window_props) {
         LOG_ERROR("SDL_CreateProperties failed: {}", SDL_GetError());
@@ -323,16 +331,44 @@ int main(int argc, char *argv[]) {
 
     LOG_INFO("Game started: {} ({})", emuenv->current_app_title, launch_request->app_path);
 
-    // Hang watchdog: if the title stops calling sceDisplaySetFrameBuf, dump the
-    // guest state so the log names the blocked thread/wait instead of going
-    // silent. A few scheduled dumps also fire early after boot so a title that
-    // keeps re-submitting a static frame is still diagnosed.
-    const Uint64 watchdog_start_ms = SDL_GetTicks();
-    constexpr Uint64 scheduled_dump_at_ms[] = { 20000, 60000, 180000 };
-    std::size_t next_scheduled_dump = 0;
-    uint64_t last_setframe_seen = emuenv->display.last_setframe_vblank_count.load();
-    Uint64 last_setframe_change_ms = watchdog_start_ms;
-    Uint64 next_stall_dump_ms = 0;
+    // Run the guest watchdog on its own host thread. Keeping it in the SDL
+    // event loop meant a blocked frontend call could suppress the very dump
+    // needed to diagnose the hang. The early three-second sample catches the
+    // CRI filesystem worker boundary before iOS is backgrounded to copy logs.
+    std::jthread guest_watchdog([&](const std::stop_token stop_token) {
+        using namespace std::chrono_literals;
+
+        const Uint64 watchdog_start_ms = SDL_GetTicks();
+        constexpr Uint64 scheduled_dump_at_ms[] = { 3000, 10000, 30000, 60000, 180000 };
+        std::size_t next_scheduled_dump = 0;
+        uint64_t last_setframe_seen = emuenv->display.last_setframe_vblank_count.load();
+        Uint64 last_setframe_change_ms = watchdog_start_ms;
+        Uint64 next_stall_dump_ms = watchdog_start_ms + 8000;
+
+        while (!stop_token.stop_requested()) {
+            std::this_thread::sleep_for(250ms);
+            if (stop_token.stop_requested())
+                break;
+
+            const Uint64 now_ms = SDL_GetTicks();
+            const uint64_t setframe_count = emuenv->display.last_setframe_vblank_count.load();
+            if (setframe_count != last_setframe_seen) {
+                last_setframe_seen = setframe_count;
+                last_setframe_change_ms = now_ms;
+            }
+
+            if (next_scheduled_dump < std::size(scheduled_dump_at_ms)
+                && now_ms - watchdog_start_ms >= scheduled_dump_at_ms[next_scheduled_dump]) {
+                app::dump_guest_state(*emuenv, "scheduled iOS boot diagnostic");
+                ++next_scheduled_dump;
+            }
+
+            if (now_ms - last_setframe_change_ms >= 8000 && now_ms >= next_stall_dump_ms) {
+                app::dump_guest_state(*emuenv, "no sceDisplaySetFrameBuf progress for 8s");
+                next_stall_dump_ms = now_ms + 30000;
+            }
+        }
+    });
 
     bool running = true;
     while (running) {
@@ -358,6 +394,14 @@ int main(int argc, char *argv[]) {
             case SDL_EVENT_GAMEPAD_ADDED:
             case SDL_EVENT_GAMEPAD_REMOVED:
                 refresh_controllers(emuenv->ctrl, *emuenv);
+                LOG_INFO("iOS controller refresh: {} connected controller(s)", emuenv->ctrl.controllers_num);
+                break;
+
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+                // Vita inputs are polled from SDL by sceCtrl; this breadcrumb
+                // proves the host controller event reached the iOS frontend.
+                LOG_DEBUG("iOS gamepad button down: gamepad={} button={}",
+                    event.gbutton.which, static_cast<int>(event.gbutton.button));
                 break;
 
             case SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN:
@@ -368,24 +412,6 @@ int main(int argc, char *argv[]) {
 
             default:
                 break;
-            }
-        }
-
-        {
-            const Uint64 now_ms = SDL_GetTicks();
-            const uint64_t setframe_count = emuenv->display.last_setframe_vblank_count.load();
-            if (setframe_count != last_setframe_seen) {
-                last_setframe_seen = setframe_count;
-                last_setframe_change_ms = now_ms;
-            }
-            if (next_scheduled_dump < std::size(scheduled_dump_at_ms)
-                && now_ms - watchdog_start_ms >= scheduled_dump_at_ms[next_scheduled_dump]) {
-                app::dump_guest_state(*emuenv, "scheduled boot diagnostic");
-                ++next_scheduled_dump;
-            }
-            if (now_ms - last_setframe_change_ms >= 8000 && now_ms >= next_stall_dump_ms) {
-                app::dump_guest_state(*emuenv, "no sceDisplaySetFrameBuf progress for 8s");
-                next_stall_dump_ms = now_ms + 30000;
             }
         }
 
@@ -403,6 +429,8 @@ int main(int argc, char *argv[]) {
     }
 
     LOG_INFO("Shutting down game");
+    guest_watchdog.request_stop();
+    guest_watchdog.join();
     session_controller.stop(app::AppSessionStopReason::FrontendShutdown);
     return 0;
 }

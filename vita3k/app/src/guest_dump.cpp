@@ -96,7 +96,11 @@ static void dump_display_state(EmuEnvState &emuenv) {
 static void dump_threads(EmuEnvState &emuenv) {
     std::vector<ThreadStatePtr> threads;
     {
-        const std::lock_guard<std::mutex> lock(emuenv.kernel.mutex);
+        std::unique_lock<std::mutex> lock(emuenv.kernel.mutex, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            LOG_INFO("Guest threads: kernel.mutex busy, thread list skipped");
+            return;
+        }
         threads.reserve(emuenv.kernel.threads.size());
         for (const auto &[id, thread] : emuenv.kernel.threads)
             threads.push_back(thread);
@@ -145,7 +149,11 @@ static void dump_primitives(EmuEnvState &emuenv, const char *kind, PrimMap &prim
 
     std::vector<PrimPtr> prims;
     {
-        const std::lock_guard<std::mutex> lock(emuenv.kernel.mutex);
+        std::unique_lock<std::mutex> lock(emuenv.kernel.mutex, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            LOG_INFO("{}: kernel.mutex busy, primitive list skipped", kind);
+            return;
+        }
         prims.reserve(prim_map.size());
         for (const auto &[uid, prim] : prim_map)
             prims.push_back(prim);
@@ -157,6 +165,10 @@ static void dump_primitives(EmuEnvState &emuenv, const char *kind, PrimMap &prim
 
         // Never block the dump on a primitive that is being operated on.
         std::unique_lock<std::mutex> prim_lock(prim->mutex, std::try_to_lock);
+        if (!prim_lock.owns_lock()) {
+            LOG_INFO("{} uid={} '{}': primitive busy, state skipped", kind, prim->uid, prim->name);
+            continue;
+        }
 
         std::string extra;
         if constexpr (requires { prim->owner; prim->lock_count; }) {
@@ -174,13 +186,12 @@ static void dump_primitives(EmuEnvState &emuenv, const char *kind, PrimMap &prim
             const std::string senders = format_waiters(prim->senders.get(), false);
             const std::string receivers = format_waiters(prim->receivers.get(), false);
             if (!senders.empty() || !receivers.empty())
-                LOG_INFO("{} uid={} '{}'{}{}: senders: {} receivers: {}", kind, prim->uid, prim->name, extra,
-                    prim_lock.owns_lock() ? "" : " (busy)", senders, receivers);
+                LOG_INFO("{} uid={} '{}'{}: senders: {} receivers: {}", kind, prim->uid, prim->name, extra,
+                    senders, receivers);
         } else {
             const std::string waiters = format_waiters(prim->waiting_threads.get(), is_eventflag);
             if (!waiters.empty())
-                LOG_INFO("{} uid={} '{}'{}{}: waiters: {}", kind, prim->uid, prim->name, extra,
-                    prim_lock.owns_lock() ? "" : " (busy)", waiters);
+                LOG_INFO("{} uid={} '{}'{}: waiters: {}", kind, prim->uid, prim->name, extra, waiters);
         }
     }
 }

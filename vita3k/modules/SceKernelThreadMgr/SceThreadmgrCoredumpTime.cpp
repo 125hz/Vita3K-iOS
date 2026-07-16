@@ -19,12 +19,14 @@
 
 #include <kernel/state.h>
 
+#include <util/log.h>
 #include <util/tracy.h>
 TRACY_MODULE_NAME(SceThreadmgrCoredumpTime);
 
 EXPORT(int, sceKernelExitThread, int status) {
     TRACY_FUNC(sceKernelExitThread, status);
     const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+    LOG_DEBUG("Guest thread exiting: '{}' (TID {}) status={}", thread->name, thread->id, status);
     thread->exit(status);
 
     // the thread exits, the return value is not read anyway

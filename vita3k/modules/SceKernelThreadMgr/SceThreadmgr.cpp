@@ -733,6 +733,7 @@ EXPORT(int, _sceKernelStartThread, SceUID thid, SceSize arglen, Ptr<void> argp) 
         thread->name, thread->id, thread->entry_point, thread_id);
 
     const int res = thread->start(arglen, argp, true);
+    LOG_DEBUG("Guest thread start returned: '{}' (TID {}) result={}", thread->name, thread->id, res);
     if (res < 0) {
         return RET_ERROR(res);
     }
