@@ -15,4 +15,4 @@ src/external/*	linguist-vendored
 *.sh			eol=lf
 
 *.bat			eol=crlf
-ios/patches/*.patch -text
+ios/patches/*.patch -text whitespace=-blank-at-eol
