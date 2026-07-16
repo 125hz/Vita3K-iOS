@@ -147,6 +147,12 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
         // MoltenVK-backed Vulkan is the only renderer on iOS.
         cfg.backend_renderer = "Vulkan";
 
+        // iOS assigns the app container a new absolute path on every
+        // reinstall while keeping Documents' contents, so an absolute path
+        // persisted in config.yml points into the previous container. Always
+        // use the freshly resolved sandbox location instead.
+        cfg.set_vita_fs_path(root_paths.get_vita_fs_path());
+
         fs::create_directories(cfg.get_vita_fs_path());
 
         if (!app::init(*emuenv, cfg, root_paths)) {
