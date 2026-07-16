@@ -185,7 +185,7 @@ std::optional<AppLaunchRequest> pick_boot_title(EmuEnvState &emuenv) {
         return std::nullopt;
     }
 
-    const AppEntry *chosen = nullptr;
+    const app::AppEntry *chosen = nullptr;
     for (const auto &entry : apps) {
         LOG_INFO("Installed title: {} ({}) category={} path={}",
             entry.title, entry.title_id, entry.category, entry.path);
