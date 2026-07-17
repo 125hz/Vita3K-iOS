@@ -22,7 +22,10 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/opt.h>
+#include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
 
 #ifndef VITA3K_PLATFORM_IOS
@@ -84,17 +87,51 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
     av_frame_unref(frame);
 
 #ifdef VITA3K_PLATFORM_IOS
-    // The public API consumes the complete access unit handed in by
-    // SceAudiodec, so the consumed elementary-stream size is the packet size.
+    // Emit one AAC frame of silence into `frame` so `receive()` still produces
+    // valid PCM and the guest movie/audio clock keeps advancing. Without this,
+    // a single decode failure permanently wedged the avPlayer intro (the
+    // endless-EAGAIN loop seen booting Persona 4 Golden on device).
+    const auto emit_silence = [this]() {
+        av_frame_unref(frame);
+        frame->format = AV_SAMPLE_FMT_FLTP;
+        av_channel_layout_copy(&frame->ch_layout, &context->ch_layout);
+        frame->sample_rate = context->sample_rate;
+        // AAC-LC produces 1024 samples per frame; SBR/HE-AAC would be 2048, but
+        // a single short silent frame is a benign clock nudge either way.
+        frame->nb_samples = 1024;
+        if (av_frame_get_buffer(frame, 0) < 0)
+            return false;
+        av_samples_set_silence(frame->extended_data, 0, frame->nb_samples,
+            frame->ch_layout.nb_channels, AV_SAMPLE_FMT_FLTP);
+        return true;
+    };
+
+    // The public send/receive API requires the caller to drain decoded frames
+    // before the decoder will accept a new packet. If a prior packet decoded
+    // but its frame was never received (e.g. after an earlier error), the next
+    // send returns EAGAIN forever unless we drain first, then resend.
     int err = avcodec_send_packet(context, packet);
-    if (err == 0)
-        err = avcodec_receive_frame(context, frame);
+    if (err == AVERROR(EAGAIN)) {
+        avcodec_receive_frame(context, frame);
+        av_frame_unref(frame);
+        err = avcodec_send_packet(context, packet);
+    }
     av_packet_free(&packet);
+
+    if (err >= 0)
+        err = avcodec_receive_frame(context, frame);
+
     if (err < 0) {
-        LOG_WARN("Error sending Aac packet: {}.", codec_error_name(err));
-        return false;
+        LOG_WARN_ONCE("Aac decode error ({}); emitting silence. ffmpeg '{}', packet {} bytes, extradata {} bytes.",
+            codec_error_name(err), av_version_info(), size, context->extradata_size);
+        if (!emit_silence()) {
+            LOG_WARN("Failed to allocate AAC silence frame: {}.", codec_error_name(err));
+            return false;
+        }
     }
 
+    // The public API consumes the complete access unit handed in by
+    // SceAudiodec, so the consumed elementary-stream size is the packet size.
     es_size_used = size;
 
     return true;

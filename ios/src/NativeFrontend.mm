@@ -31,7 +31,7 @@ void queue_action(Vita3KIOSFrontendAction action) {
     g_pending_action = std::move(action);
 }
 
-void present_import_menu();
+void present_import_picker(BOOL firmware);
 
 UIWindow *active_window() {
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -53,14 +53,33 @@ void perform_on_main(dispatch_block_t block) {
         dispatch_async(dispatch_get_main_queue(), block);
 }
 
+void present_alert(NSString *title, NSString *message) {
+    UIViewController *root = active_window().rootViewController;
+    if (!root)
+        return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                  message:message
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [root presentViewController:alert animated:YES completion:nil];
+}
+
 UIVisualEffect *glass_effect(const BOOL interactive = YES) {
     if (@available(iOS 26.0, *)) {
         UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
         effect.interactive = interactive;
-        effect.tintColor = [UIColor colorWithWhite:0.04 alpha:0.12];
+        // A subtle tint that follows the interface style: a fixed dark tint
+        // washed the glass out in light mode.
+        effect.tintColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+            return traits.userInterfaceStyle == UIUserInterfaceStyleDark
+                ? [UIColor colorWithWhite:0.04 alpha:0.12]
+                : [UIColor colorWithWhite:1.0 alpha:0.10];
+        }];
         return effect;
     }
-    return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
+    // Adaptive material (not the ...Dark variant) so the pre-iOS 26 fallback
+    // also tracks light/dark mode.
+    return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
 }
 
 UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessibility) {
@@ -74,7 +93,9 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
         [button setImage:image forState:UIControlStateNormal];
     else
         [button setTitle:fallback forState:UIControlStateNormal];
-    button.tintColor = UIColor.whiteColor;
+    // labelColor adapts (white on dark, near-black on light) so glyphs stay
+    // legible on the glass capsule in both interface styles.
+    button.tintColor = UIColor.labelColor;
     button.accessibilityLabel = accessibility;
     button.backgroundColor = UIColor.clearColor;
     button.layer.cornerRadius = 22;
@@ -118,7 +139,9 @@ std::string hex_bytes(const std::string &value) {
     self = [super initWithFrame:frame];
     if (!self)
         return nil;
-    self.glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect()];
+    // Non-interactive glass: live refraction on every visible cell made the
+    // library grid scroll stutter. Cells only need the static material.
+    self.glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
     self.glass.frame = self.contentView.bounds;
     self.glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.glass.layer.cornerRadius = 26;
@@ -133,7 +156,7 @@ std::string hex_bytes(const std::string &value) {
 
     self.titleLabel = [[UILabel alloc] init];
     self.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-    self.titleLabel.textColor = UIColor.whiteColor;
+    self.titleLabel.textColor = UIColor.labelColor;
     self.titleLabel.numberOfLines = 2;
     [self.glass.contentView addSubview:self.titleLabel];
 
@@ -200,7 +223,9 @@ std::string hex_bytes(const std::string &value) {
     if (!self)
         return nil;
     self.values = values;
-    self.backgroundColor = [UIColor colorWithRed:0.025 green:0.03 blue:0.055 alpha:0.98];
+    // Adaptive base (white in light mode, near-black in dark) instead of the
+    // old fixed navy; the settings panel now matches the rest of the UI.
+    self.backgroundColor = UIColor.systemBackgroundColor;
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
     self.scrollView = [[UIScrollView alloc] initWithFrame:self.bounds];
@@ -230,7 +255,7 @@ std::string hex_bytes(const std::string &value) {
     UILabel *title = [[UILabel alloc] init];
     title.text = @"Settings";
     title.font = [UIFont systemFontOfSize:32 weight:UIFontWeightBold];
-    title.textColor = UIColor.whiteColor;
+    title.textColor = UIColor.labelColor;
     UIButton *save = [UIButton buttonWithType:UIButtonTypeSystem];
     [save setTitle:@"Save" forState:UIControlStateNormal];
     save.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
@@ -363,10 +388,11 @@ std::string hex_bytes(const std::string &value) {
     [content addArrangedSubview:label];
     for (UIView *row in rows)
         [content addArrangedSubview:row];
-    // Plain blur, not interactive glass: live glass refraction on every
-    // section made the settings scroll visibly stutter.
+    // Plain adaptive material, not interactive glass: live glass refraction on
+    // every section made the settings scroll visibly stutter. The ...Dark
+    // variant was also wrong in light mode.
     UIVisualEffectView *glass = [[UIVisualEffectView alloc]
-        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
     glass.layer.cornerRadius = 24;
     glass.clipsToBounds = YES;
     [glass.contentView addSubview:content];
@@ -421,13 +447,20 @@ std::string hex_bytes(const std::string &value) {
 @public
     std::vector<Vita3KIOSGameEntry> _games;
     Vita3KIOSSettings _settings;
+    BOOL _jitAvailable;
 }
 @property(nonatomic, strong) UICollectionView *collectionView;
 @property(nonatomic, strong) UILabel *emptyLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UIView *busyOverlay;
 @property(nonatomic, strong) CAGradientLayer *backgroundGradient;
+@property(nonatomic, strong) UIVisualEffectView *firmwareGlass;
+@property(nonatomic, strong) UILabel *firmwareLabel;
+@property(nonatomic, strong) UIVisualEffectView *jitBanner;
+@property(nonatomic, strong) UILabel *jitBannerLabel;
 - (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings;
+- (void)setJitAvailable:(BOOL)available;
+- (BOOL)jitAvailable;
 @end
 
 @implementation Vita3KLibraryView
@@ -436,22 +469,19 @@ std::string hex_bytes(const std::string &value) {
     self = [super initWithFrame:frame];
     if (!self)
         return nil;
-    self.backgroundColor = [UIColor colorWithRed:0.02 green:0.025 blue:0.05 alpha:1];
+    _jitAvailable = YES;
+    self.backgroundColor = UIColor.systemBackgroundColor;
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.backgroundGradient = [CAGradientLayer layer];
-    self.backgroundGradient.colors = @[
-        (id)[UIColor colorWithRed:0.02 green:0.035 blue:0.09 alpha:1].CGColor,
-        (id)[UIColor colorWithRed:0.14 green:0.035 blue:0.16 alpha:1].CGColor,
-        (id)[UIColor colorWithRed:0.015 green:0.08 blue:0.11 alpha:1].CGColor,
-    ];
     self.backgroundGradient.startPoint = CGPointMake(0, 0);
     self.backgroundGradient.endPoint = CGPointMake(1, 1);
     [self.layer insertSublayer:self.backgroundGradient atIndex:0];
+    [self updateGradientColors];
 
     UILabel *title = [[UILabel alloc] init];
     title.text = @"Tsubomi";
     title.font = [UIFont systemFontOfSize:38 weight:UIFontWeightBlack];
-    title.textColor = UIColor.whiteColor;
+    title.textColor = UIColor.labelColor;
     title.tag = 101;
     [self addSubview:title];
 
@@ -465,15 +495,49 @@ std::string hex_bytes(const std::string &value) {
     [self addSubview:settings];
     UIButton *importButton = symbol_button(@"plus", @"Add", @"Import game or firmware");
     importButton.tag = 104;
-    [importButton addTarget:self action:@selector(importContent) forControlEvents:UIControlEventTouchUpInside];
+    // Attach the choices directly to the + button so iOS morphs the menu out
+    // of the glass control itself instead of sliding an action sheet up from
+    // the bottom of the screen.
+    UIAction *importGame = [UIAction actionWithTitle:@"Import game (.vpk / .zip)"
+        image:[UIImage systemImageNamed:@"arrow.down.doc"]
+        identifier:nil
+        handler:^(__unused UIAction *action) { present_import_picker(NO); }];
+    UIAction *importFirmware = [UIAction actionWithTitle:@"Import firmware (.PUP)"
+        image:[UIImage systemImageNamed:@"cpu"]
+        identifier:nil
+        handler:^(__unused UIAction *action) { present_import_picker(YES); }];
+    importButton.menu = [UIMenu menuWithChildren:@[importGame, importFirmware]];
+    importButton.showsMenuAsPrimaryAction = YES;
     [self addSubview:importButton];
 
-    UILabel *firmware = [[UILabel alloc] init];
-    firmware.tag = 105;
-    firmware.textColor = UIColor.secondaryLabelColor;
-    firmware.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightSemibold];
-    firmware.textAlignment = NSTextAlignmentRight;
-    [self addSubview:firmware];
+    // Firmware version indicator, wrapped in a small glass capsule.
+    self.firmwareGlass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
+    self.firmwareGlass.layer.cornerRadius = 11;
+    self.firmwareGlass.clipsToBounds = YES;
+    self.firmwareGlass.hidden = YES;
+    self.firmwareLabel = [[UILabel alloc] init];
+    self.firmwareLabel.textColor = UIColor.secondaryLabelColor;
+    self.firmwareLabel.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightSemibold];
+    self.firmwareLabel.textAlignment = NSTextAlignmentCenter;
+    [self.firmwareGlass.contentView addSubview:self.firmwareLabel];
+    [self addSubview:self.firmwareGlass];
+
+    // Persistent notice shown when JIT is not enabled; games cannot boot.
+    self.jitBanner = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
+    self.jitBanner.layer.cornerRadius = 16;
+    self.jitBanner.clipsToBounds = YES;
+    self.jitBanner.hidden = YES;
+    self.jitBannerLabel = [[UILabel alloc] init];
+    self.jitBannerLabel.text = @"JIT is not enabled — games can’t be launched. Enable JIT (e.g. StikDebug), then relaunch Tsubomi.";
+    self.jitBannerLabel.textColor = UIColor.labelColor;
+    self.jitBannerLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+    self.jitBannerLabel.numberOfLines = 0;
+    UIImageView *jitIcon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"exclamationmark.triangle.fill"]];
+    jitIcon.tintColor = UIColor.systemYellowColor;
+    jitIcon.tag = 201;
+    [self.jitBanner.contentView addSubview:jitIcon];
+    [self.jitBanner.contentView addSubview:self.jitBannerLabel];
+    [self addSubview:self.jitBanner];
 
     UICollectionViewFlowLayout *layout = [[UICollectionViewFlowLayout alloc] init];
     layout.minimumInteritemSpacing = 14;
@@ -487,7 +551,7 @@ std::string hex_bytes(const std::string &value) {
     [self addSubview:self.collectionView];
 
     self.emptyLabel = [[UILabel alloc] init];
-    self.emptyLabel.text = @"No games found\n\nIn Files, copy your working desktop Vita3K data folder into\nDocuments/Vita3K/vita, then tap Refresh.";
+    self.emptyLabel.text = @"No games yet\n\nTap + to import a game (.vpk / .zip),\nor copy your desktop Vita3K data into\nTsubomi’s Documents/Vita3K/vita folder in Files.";
     self.emptyLabel.textColor = UIColor.secondaryLabelColor;
     self.emptyLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle3];
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
@@ -512,18 +576,67 @@ std::string hex_bytes(const std::string &value) {
     UIButton *refresh = [self viewWithTag:102];
     UIButton *settings = [self viewWithTag:103];
     UIButton *importButton = [self viewWithTag:104];
-    UILabel *firmware = [self viewWithTag:105];
     title.frame = CGRectMake(safe.left + 22, safe.top + 14, 240, 50);
     settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 58, safe.top + 17, 44, 44);
     refresh.frame = CGRectMake(CGRectGetMinX(settings.frame) - 54, safe.top + 17, 44, 44);
     importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - 54, safe.top + 17, 44, 44);
-    firmware.frame = CGRectMake(CGRectGetMinX(settings.frame) - 120, CGRectGetMaxY(settings.frame) + 4, 164, 14);
+
+    [self.firmwareLabel sizeToFit];
+    const CGFloat firmwareWidth = MIN(CGRectGetWidth(self.firmwareLabel.bounds) + 22, 200);
+    const CGFloat firmwareHeight = 22;
+    self.firmwareGlass.frame = CGRectMake(CGRectGetMaxX(settings.frame) - firmwareWidth,
+        CGRectGetMaxY(settings.frame) + 6, firmwareWidth, firmwareHeight);
+    self.firmwareLabel.frame = self.firmwareGlass.bounds;
+
     self.statusLabel.frame = CGRectMake(CGRectGetMaxX(title.frame), safe.top + 20,
         MAX(0, CGRectGetMinX(importButton.frame) - CGRectGetMaxX(title.frame) - 10), 38);
-    self.collectionView.frame = CGRectMake(safe.left + 18, safe.top + 78,
+
+    CGFloat contentTop = safe.top + 78;
+    if (!self.jitBanner.hidden) {
+        const CGFloat bannerX = safe.left + 18;
+        const CGFloat bannerWidth = CGRectGetWidth(self.bounds) - safe.left - safe.right - 36;
+        const CGFloat labelX = 48;
+        const CGFloat labelWidth = MAX(1, bannerWidth - labelX - 16);
+        const CGSize textSize = [self.jitBannerLabel sizeThatFits:CGSizeMake(labelWidth, CGFLOAT_MAX)];
+        const CGFloat bannerHeight = MAX(54, textSize.height + 24);
+        self.jitBanner.frame = CGRectMake(bannerX, contentTop, bannerWidth, bannerHeight);
+        UIImageView *jitIcon = [self.jitBanner.contentView viewWithTag:201];
+        jitIcon.frame = CGRectMake(16, (bannerHeight - 24) / 2, 24, 24);
+        self.jitBannerLabel.frame = CGRectMake(labelX, 12, labelWidth, bannerHeight - 24);
+        contentTop = CGRectGetMaxY(self.jitBanner.frame) + 10;
+    }
+
+    self.collectionView.frame = CGRectMake(safe.left + 18, contentTop,
         CGRectGetWidth(self.bounds) - safe.left - safe.right - 36,
-        CGRectGetHeight(self.bounds) - safe.top - safe.bottom - 88);
+        MAX(1, CGRectGetHeight(self.bounds) - contentTop - safe.bottom - 10));
     self.emptyLabel.frame = CGRectInset(self.collectionView.frame, 40, 40);
+}
+
+// The gradient uses CGColors, which do not auto-resolve to the current trait
+// collection; refresh them whenever light/dark mode changes.
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    if ([self.traitCollection hasDifferentColorAppearanceComparedToTraitCollection:previous])
+        [self updateGradientColors];
+}
+
+- (void)updateGradientColors {
+    const BOOL dark = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+    // Dark: deep navy → plum → teal. Light: near-white with a faint pink/cyan
+    // wash so the brand feel survives without a heavy tint.
+    if (dark) {
+        self.backgroundGradient.colors = @[
+            (id)[UIColor colorWithRed:0.02 green:0.035 blue:0.09 alpha:1].CGColor,
+            (id)[UIColor colorWithRed:0.14 green:0.035 blue:0.16 alpha:1].CGColor,
+            (id)[UIColor colorWithRed:0.015 green:0.08 blue:0.11 alpha:1].CGColor,
+        ];
+    } else {
+        self.backgroundGradient.colors = @[
+            (id)[UIColor colorWithRed:0.99 green:0.97 blue:0.99 alpha:1].CGColor,
+            (id)[UIColor colorWithRed:0.98 green:0.95 blue:0.99 alpha:1].CGColor,
+            (id)[UIColor colorWithRed:0.95 green:0.99 blue:1.00 alpha:1].CGColor,
+        ];
+    }
 }
 
 - (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings {
@@ -531,9 +644,23 @@ std::string hex_bytes(const std::string &value) {
     _settings = settings;
     self.emptyLabel.hidden = !_games.empty();
     self.collectionView.hidden = _games.empty();
-    UILabel *firmware = [self viewWithTag:105];
-    firmware.text = [NSString stringWithUTF8String:settings.firmware_version.c_str()] ?: @"";
+    NSString *firmware = [NSString stringWithUTF8String:settings.firmware_version.c_str()] ?: @"";
+    self.firmwareLabel.text = firmware;
+    self.firmwareGlass.hidden = (firmware.length == 0);
+    [self setNeedsLayout];
     [self.collectionView reloadData];
+}
+
+- (BOOL)jitAvailable {
+    return _jitAvailable;
+}
+
+- (void)setJitAvailable:(BOOL)available {
+    if (_jitAvailable == available && self.jitBanner.hidden == available)
+        return; // No visible change (banner hidden iff JIT available).
+    _jitAvailable = available;
+    self.jitBanner.hidden = available;
+    [self setNeedsLayout];
 }
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
@@ -567,6 +694,14 @@ std::string hex_bytes(const std::string &value) {
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     (void)collectionView;
+    if (!_jitAvailable) {
+        // Guest execution needs JIT; refuse the boot and explain why instead of
+        // letting the launch path hit the missing-debugger crash boundary.
+        [collectionView deselectItemAtIndexPath:indexPath animated:YES];
+        present_alert(@"JIT required",
+            @"JIT is not enabled, so games can’t be launched. Enable JIT (e.g. with StikDebug) and relaunch Tsubomi.");
+        return;
+    }
     UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
     [feedback impactOccurred];
     const auto &game = _games.at(static_cast<std::size_t>(indexPath.item));
@@ -628,10 +763,6 @@ std::string hex_bytes(const std::string &value) {
     [UIView animateWithDuration:0.2 animations:^{ dim.alpha = 1; }];
 }
 
-- (void)importContent {
-    present_import_menu();
-}
-
 - (void)refresh {
     Vita3KIOSFrontendAction action;
     action.kind = Vita3KIOSFrontendActionKind::Refresh;
@@ -657,10 +788,13 @@ std::string hex_bytes(const std::string &value) {
 
 
 static Vita3KLibraryView *g_library = nil;
+// Last-known JIT availability, applied whenever the library is (re)shown so the
+// banner is correct even across library rebuilds between game sessions.
+static BOOL g_jit_available = YES;
 
 // Presents the Files picker and hands the copied file to the emulator loop.
 @interface Vita3KImportPicker : NSObject <UIDocumentPickerDelegate>
-@property(nonatomic) BOOL firmware;
+@property(nonatomic) Vita3KIOSFrontendActionKind kind;
 @end
 
 @implementation Vita3KImportPicker
@@ -683,14 +817,26 @@ static Vita3KLibraryView *g_library = nil;
     if (scoped)
         [url stopAccessingSecurityScopedResource];
     if (!copied) {
-        LOG_ERROR("iOS import copy failed: {}", error.localizedDescription.UTF8String ?: "unknown");
-        vita3k_ios_report_import_result("Could not copy the selected file");
+        // A common cause is an iCloud-only file whose contents were never
+        // downloaded, or insufficient free space for the working copy. Surface
+        // the underlying reason instead of a bare "could not copy".
+        const char *reason = error.localizedDescription.UTF8String ?: "unknown error";
+        LOG_ERROR("iOS import copy failed for '{}': {}",
+            url.lastPathComponent.UTF8String ?: "?", reason);
+        vita3k_ios_report_import_result(
+            std::string("Could not read the selected file: ") + reason
+                + ". If it is stored in iCloud, download it in Files first.",
+            false);
         return;
     }
-    [g_library showBusyOverlay:self.firmware ? @"Installing firmware…" : @"Installing game…" blockInteraction:YES];
+    NSString *busy = @"Installing game…";
+    if (self.kind == Vita3KIOSFrontendActionKind::ImportFirmware)
+        busy = @"Installing firmware…";
+    else if (self.kind == Vita3KIOSFrontendActionKind::ImportLicense)
+        busy = @"Installing license…";
+    [g_library showBusyOverlay:busy blockInteraction:YES];
     Vita3KIOSFrontendAction action;
-    action.kind = self.firmware ? Vita3KIOSFrontendActionKind::ImportFirmware
-                                : Vita3KIOSFrontendActionKind::ImportGame;
+    action.kind = self.kind;
     action.app_path = destination.UTF8String;
     queue_action(std::move(action));
 }
@@ -701,46 +847,48 @@ static Vita3KImportPicker *g_import_picker = nil;
 
 namespace {
 
-void present_import_menu() {
+// Presents the Files picker for a game/firmware/license import. Attached to the
+// + button's UIMenu (games/firmware) and the post-install license prompt.
+void present_import_picker(BOOL firmware) {
     UIViewController *root = active_window().rootViewController;
     if (!root)
         return;
-    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Add content"
-                                                                  message:nil
-                                                           preferredStyle:UIAlertControllerStyleActionSheet];
-    const auto present_picker = [root](const BOOL firmware) {
-        if (!g_import_picker)
-            g_import_picker = [[Vita3KImportPicker alloc] init];
-        g_import_picker.firmware = firmware;
-        NSMutableArray<UTType *> *types = [NSMutableArray array];
-        if (firmware) {
-            UTType *pup = [UTType typeWithFilenameExtension:@"pup"];
-            if (pup)
-                [types addObject:pup];
-        } else {
-            [types addObject:UTTypeZIP];
-            UTType *vpk = [UTType typeWithFilenameExtension:@"vpk"];
-            if (vpk)
-                [types addObject:vpk];
-        }
-        [types addObject:UTTypeData];
-        UIDocumentPickerViewController *picker =
-            [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
-        picker.delegate = g_import_picker;
-        picker.allowsMultipleSelection = NO;
-        [root presentViewController:picker animated:YES completion:nil];
-    };
-    [menu addAction:[UIAlertAction actionWithTitle:@"Import game (.vpk / .zip)"
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(__unused UIAlertAction *action) { present_picker(NO); }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Import firmware (.PUP)"
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(__unused UIAlertAction *action) { present_picker(YES); }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    // iPad requires a popover anchor; on iPhone this is ignored.
-    menu.popoverPresentationController.sourceView = g_library;
-    menu.popoverPresentationController.sourceRect = CGRectMake(CGRectGetWidth(g_library.bounds) - 60, 60, 1, 1);
-    [root presentViewController:menu animated:YES completion:nil];
+    if (!g_import_picker)
+        g_import_picker = [[Vita3KImportPicker alloc] init];
+    g_import_picker.kind = firmware ? Vita3KIOSFrontendActionKind::ImportFirmware
+                                    : Vita3KIOSFrontendActionKind::ImportGame;
+    NSMutableArray<UTType *> *types = [NSMutableArray array];
+    if (firmware) {
+        UTType *pup = [UTType typeWithFilenameExtension:@"pup"];
+        if (pup)
+            [types addObject:pup];
+    } else {
+        [types addObject:UTTypeZIP];
+        UTType *vpk = [UTType typeWithFilenameExtension:@"vpk"];
+        if (vpk)
+            [types addObject:vpk];
+    }
+    [types addObject:UTTypeData];
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
+    picker.delegate = g_import_picker;
+    picker.allowsMultipleSelection = NO;
+    [root presentViewController:picker animated:YES completion:nil];
+}
+
+void present_license_picker() {
+    UIViewController *root = active_window().rootViewController;
+    if (!root)
+        return;
+    if (!g_import_picker)
+        g_import_picker = [[Vita3KImportPicker alloc] init];
+    g_import_picker.kind = Vita3KIOSFrontendActionKind::ImportLicense;
+    // A work.bin has no standard UTType; accept any file.
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]];
+    picker.delegate = g_import_picker;
+    picker.allowsMultipleSelection = NO;
+    [root presentViewController:picker animated:YES completion:nil];
 }
 
 } // namespace
@@ -758,6 +906,7 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
             [window addSubview:g_library];
         }
         [g_library updateGames:gamesCopy settings:settingsCopy];
+        [g_library setJitAvailable:g_jit_available];
         [window bringSubviewToFront:g_library];
     });
 }
@@ -803,8 +952,9 @@ void vita3k_ios_update_perf_overlay(const float guest_fps) {
         if (!window)
             return;
         if (!g_perf_hud) {
-            g_perf_hud = [[UIVisualEffectView alloc]
-                initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+            // Non-interactive glass: the HUD repaints every second, so live
+            // refraction would be wasted cost.
+            g_perf_hud = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
             g_perf_hud.layer.cornerRadius = 12;
             g_perf_hud.clipsToBounds = YES;
             g_perf_hud.userInteractionEnabled = NO;
@@ -851,14 +1001,58 @@ void vita3k_ios_hide_perf_overlay() {
     });
 }
 
-void vita3k_ios_report_import_result(const std::string &message) {
+void vita3k_ios_report_import_result(const std::string &message, const bool success) {
     NSString *text = [NSString stringWithUTF8String:message.c_str()] ?: @"Import finished";
     perform_on_main(^{
         [g_library hideBusyOverlay];
-        g_library.statusLabel.text = text;
-        g_library.statusLabel.alpha = 1;
-        [UIView animateWithDuration:0.3 delay:6 options:0 animations:^{ g_library.statusLabel.alpha = 0; } completion:nil];
+        if (success) {
+            g_library.statusLabel.text = text;
+            g_library.statusLabel.alpha = 1;
+            [UIView animateWithDuration:0.3 delay:6 options:0 animations:^{ g_library.statusLabel.alpha = 0; } completion:nil];
+        } else {
+            // Keep the precise installer detail on screen until dismissed.
+            present_alert(@"Import failed", text);
+        }
     });
+}
+
+void vita3k_ios_set_jit_available(const bool available) {
+    perform_on_main(^{
+        g_jit_available = available;
+        [g_library setJitAvailable:available];
+    });
+}
+
+void vita3k_ios_prompt_license_import(const std::string &title_id) {
+    NSString *identifier = [NSString stringWithUTF8String:title_id.c_str()] ?: @"this title";
+    perform_on_main(^{
+        UIViewController *root = active_window().rootViewController;
+        if (!root)
+            return;
+        UIAlertController *prompt = [UIAlertController
+            alertControllerWithTitle:@"License required?"
+                             message:[NSString stringWithFormat:@"%@ has no NoNpDrm license installed. If this is a NoNpDrm dump, import its work.bin now.", identifier]
+                      preferredStyle:UIAlertControllerStyleAlert];
+        [prompt addAction:[UIAlertAction actionWithTitle:@"Import work.bin"
+                                                   style:UIAlertActionStyleDefault
+                                                 handler:^(__unused UIAlertAction *action) { present_license_picker(); }]];
+        [prompt addAction:[UIAlertAction actionWithTitle:@"Not now" style:UIAlertActionStyleCancel handler:nil]];
+        [root presentViewController:prompt animated:YES completion:nil];
+    });
+}
+
+void vita3k_ios_pump_runloop(const double seconds) {
+    // On the main thread (where SDL runs main() on iOS) the run loop owns the
+    // UIKit event/timer sources, so running it for `seconds` keeps scrolling,
+    // sliders, and glass animations smooth instead of the blind SDL_Delay that
+    // starved them. returnAfterSourceHandled:false makes it block the full
+    // interval rather than spinning after each event. Off the main thread the
+    // run loop has no sources and would return instantly, so sleep instead to
+    // avoid a busy loop.
+    if (NSThread.isMainThread)
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, false);
+    else
+        [NSThread sleepForTimeInterval:seconds];
 }
 
 void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_required) {

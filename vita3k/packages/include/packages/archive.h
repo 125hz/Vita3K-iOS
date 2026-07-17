@@ -38,6 +38,10 @@ struct ArchiveInstallResult {
     std::size_t file_count{};
     std::uint64_t bytes_written{};
     std::vector<std::string> installed_targets;
+    // Metadata for the applications that were installed (title id, content id,
+    // category, ...). Used by frontends to offer follow-up steps such as a
+    // NoNpDrm work.bin license import for retail `gd` titles.
+    std::vector<ArchiveApplicationInfo> installed_applications;
     std::string detail;
 };
 

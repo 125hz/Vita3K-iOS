@@ -29,6 +29,7 @@
 #include <audio/state.h>
 #include <packages/archive.h>
 #include <packages/functions.h>
+#include <packages/license.h>
 #include <compat/functions.h>
 #include <compat/state.h>
 #include <config/functions.h>
@@ -49,6 +50,8 @@
 
 #include <csignal>
 #include <dlfcn.h>
+#include <sys/sysctl.h>
+#include <unistd.h>
 
 #include <vita3k_ios/NativeFrontend.h>
 #include <vita3k_ios/VirtualController.h>
@@ -122,6 +125,20 @@ public:
 private:
     SDL_Window *m_window = nullptr;
 };
+
+// True when a JIT-enabling debugger (StikDebug and similar) is attached.
+// Writable-executable guest memory is only granted to a traced process, so
+// this gates whether games can boot. Probing P_TRACED via sysctl is a cheap,
+// public, side-effect-free check — unlike the BRK #0xf00d bridge, which kills
+// the process outright when no debugger is present.
+bool ios_jit_available() {
+    struct kinfo_proc info{};
+    std::size_t size = sizeof(info);
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    if (sysctl(mib, 4, &info, &size, nullptr, 0) != 0)
+        return false;
+    return (info.kp_proc.p_flag & P_TRACED) != 0;
+}
 
 fs::path ios_storage_path() {
     // Documents/Vita3K inside the app sandbox. UIFileSharingEnabled is set,
@@ -254,13 +271,17 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
 struct ImportJob {
     std::atomic_bool done{ false };
     bool firmware = false;
+    bool success = false;
     std::string message;
+    // Populated for a successful game archive install so the frontend can offer
+    // a follow-up NoNpDrm work.bin import for retail titles that need one.
+    std::vector<packages::ArchiveApplicationInfo> installed_applications;
 };
 std::shared_ptr<ImportJob> g_import_job;
 
 void start_import(EmuEnvState &emuenv, const std::string &path, const bool firmware) {
     if (g_import_job && !g_import_job->done.load()) {
-        vita3k_ios_report_import_result("Another import is still running");
+        vita3k_ios_report_import_result("Another import is still running", false);
         return;
     }
     auto job = std::make_shared<ImportJob>();
@@ -276,23 +297,48 @@ void start_import(EmuEnvState &emuenv, const std::string &path, const bool firmw
                 } else {
                     fs::ofstream out(emuenv.log_path / "fw_version.txt");
                     out << version;
+                    job->success = true;
                     job->message = "Firmware " + version + " installed";
                 }
             } else {
                 const auto result = packages::install_archive_transactionally(
                     std::filesystem::path(path), std::filesystem::path(emuenv.vita_fs_path.string()));
+                job->success = result.success;
+                job->installed_applications = result.installed_applications;
                 job->message = result.success
                     ? "Installed " + std::to_string(result.application_count) + " application(s)"
                     : "Import failed: " + result.detail;
+                if (!result.success)
+                    LOG_ERROR("iOS archive install rejected: {}", result.detail);
             }
         } catch (const std::exception &error) {
             job->message = std::string("Import failed: ") + error.what();
         }
         boost::system::error_code cleanup_error;
         fs::remove(fs::path(path), cleanup_error);
-        LOG_INFO("iOS import finished: {}", job->message);
+        LOG_INFO("iOS import finished (success={}): {}", job->success, job->message);
         job->done.store(true);
     }).detach();
+}
+
+// After a successful game install, offer to import a NoNpDrm work.bin for the
+// first retail full-game (`gd`) root that has no `.rif` license yet. DLC and
+// patches ride on their base game's license, so they are skipped.
+void maybe_prompt_license_import(EmuEnvState &emuenv,
+    const std::vector<packages::ArchiveApplicationInfo> &applications) {
+    for (const auto &application : applications) {
+        if (application.category != "gd" || !application.title_id.starts_with("PCS"))
+            continue;
+        const fs::path rif = emuenv.vita_fs_path / "ux0/license" / application.title_id
+            / (application.content_id + ".rif");
+        boost::system::error_code exists_error;
+        if (fs::exists(rif, exists_error) && !exists_error)
+            continue;
+        LOG_INFO("iOS: installed retail title {} has no license at {}; prompting for work.bin",
+            application.title_id, rif);
+        vita3k_ios_prompt_license_import(application.title_id);
+        return; // One prompt at a time.
+    }
 }
 
 std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
@@ -402,18 +448,32 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
 
         if (g_import_job && g_import_job->done.load()) {
             const bool was_firmware = g_import_job->firmware;
+            const bool success = g_import_job->success;
             const std::string message = g_import_job->message;
+            const auto installed_applications = g_import_job->installed_applications;
             g_import_job.reset();
             if (!was_firmware && !app::init_apps_list(emuenv))
                 LOG_ERROR("Failed to rescan apps list after import.");
             games = native_games(emuenv);
             vita3k_ios_update_library(games, native_settings(emuenv));
-            vita3k_ios_report_import_result(message);
+            vita3k_ios_report_import_result(message, success);
+            if (success && !was_firmware)
+                maybe_prompt_license_import(emuenv, installed_applications);
         }
 
         if (auto action = vita3k_ios_take_frontend_action()) {
             switch (action->kind) {
             case Vita3KIOSFrontendActionKind::Launch:
+                // Defense in depth: the library already refuses launches without
+                // JIT, but re-probe here so a debugger attached after the probe
+                // is honored and one attached-then-detached is caught.
+                if (!ios_jit_available()) {
+                    LOG_WARN("Refusing launch of '{}': JIT is not available (no debugger attached).",
+                        action->app_path);
+                    vita3k_ios_set_jit_available(false);
+                    break;
+                }
+                vita3k_ios_set_jit_available(true);
                 LOG_INFO("Booting selected iOS library title: {}", action->app_path);
                 vita3k_ios_hide_library();
                 return AppLaunchRequest{.app_path = action->app_path};
@@ -436,12 +496,35 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                 LOG_INFO("Importing firmware PUP: {}", action->app_path);
                 start_import(emuenv, action->app_path, true);
                 break;
+            case Vita3KIOSFrontendActionKind::ImportLicense: {
+                LOG_INFO("Importing NoNpDrm work.bin license: {}", action->app_path);
+                const bool copied = copy_license(emuenv, fs::path(action->app_path));
+                boost::system::error_code cleanup_error;
+                fs::remove(fs::path(action->app_path), cleanup_error);
+                vita3k_ios_report_import_result(
+                    copied ? "License installed" : "License import failed (see vita3k.log)", copied);
+                break;
+            }
             case Vita3KIOSFrontendActionKind::Quit:
                 vita3k_ios_hide_library();
                 return std::nullopt;
             }
         }
-        SDL_Delay(16);
+
+        // Re-probe JIT roughly once a second so the banner clears live if the
+        // user attaches StikDebug while the library is on screen.
+        {
+            static Uint64 last_jit_probe_ms = 0;
+            const Uint64 now_ms = SDL_GetTicks();
+            if (now_ms - last_jit_probe_ms >= 1000) {
+                last_jit_probe_ms = now_ms;
+                vita3k_ios_set_jit_available(ios_jit_available());
+            }
+        }
+
+        // Service UIKit instead of a blind sleep so library scrolling and the
+        // settings sliders stay smooth on this SDL/UIKit-owning thread.
+        vita3k_ios_pump_runloop(0.016);
     }
 }
 
@@ -538,6 +621,13 @@ int main(int argc, char *argv[]) {
         LOG_ERROR("SDL_CreateWindowWithProperties failed: {}", SDL_GetError());
         return -1;
     }
+
+    // Probe JIT once up front so the library banner is correct on first show;
+    // choose_boot_title re-probes each second and gates launches.
+    const bool initial_jit_available = ios_jit_available();
+    vita3k_ios_set_jit_available(initial_jit_available);
+    LOG_INFO("iOS JIT availability probe: {}",
+        initial_jit_available ? "available (process is traced)" : "unavailable (no debugger attached)");
 
     // Library -> game -> library loop: quitting a game returns to the
     // library instead of leaving a dead process behind (the old "freeze").
@@ -743,8 +833,10 @@ int main(int argc, char *argv[]) {
         if (!session_controller.is_running())
             running = false;
 
+        // Service UIKit (virtual controller, in-game glass menu, perf overlay)
+        // instead of a blind sleep so touch controls stay responsive.
         if (running)
-            SDL_Delay(16);
+            vita3k_ios_pump_runloop(0.016);
     }
 
     LOG_INFO("Shutting down game");

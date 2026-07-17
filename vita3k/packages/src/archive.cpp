@@ -446,6 +446,7 @@ ArchiveInstallResult install_archive_transactionally(const std::filesystem::path
     cleanup();
     result.success = true;
     result.application_count = inspection.applications.size();
+    result.installed_applications = inspection.applications;
     std::ostringstream detail;
     detail << "Installed " << result.application_count << " application root"
            << (result.application_count == 1 ? "" : "s") << " transactionally; "
