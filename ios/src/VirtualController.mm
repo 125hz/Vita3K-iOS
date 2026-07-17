@@ -65,7 +65,7 @@ static void layoutGlassBackground(UIView *view) {
 
 static NSString *configPath() {
     NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    return [[documents stringByAppendingPathComponent:@"Vita3K"] stringByAppendingPathComponent:@"ios_controls.json"];
+    return [[documents stringByAppendingPathComponent:@"Tsubomi"] stringByAppendingPathComponent:@"ios_controls.json"];
 }
 
 static NSMutableDictionary *element(CGFloat x, CGFloat y, BOOL visible) {
@@ -281,6 +281,9 @@ static void hapticTick() {
 @property(nonatomic, strong) UIView *verticalGuide;
 @property(nonatomic, strong) UIView *horizontalGuide;
 @property(nonatomic) BOOL layoutEditing;
+// YES when the overlay was created solely to edit the layout from the homepage
+// (no game running); it is torn down again when editing finishes.
+@property(nonatomic) BOOL previewEditingOnly;
 - (void)applyConfiguration;
 - (void)setLayoutEditing:(BOOL)editing;
 - (void)releaseAllInputs;
@@ -479,10 +482,11 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     self.verticalGuide.hidden = recognizer.state == UIGestureRecognizerStateEnded || recognizer.state == UIGestureRecognizerStateCancelled;
     self.horizontalGuide.hidden = self.verticalGuide.hidden;
     if (recognizer.state == UIGestureRecognizerStateEnded) {
-        CGFloat x = std::round((elementView.center.x / CGRectGetWidth(self.bounds)) * 20.0) / 20.0;
-        CGFloat y = std::round((elementView.center.y / CGRectGetHeight(self.bounds)) * 20.0) / 20.0;
-        x = std::clamp(x, 0.04, 0.96);
-        y = std::clamp(y, 0.06, 0.94);
+        // Save the exact normalized position (no grid snapping) so elements
+        // stay exactly where they were dropped; only clamp to keep them fully
+        // on screen. The center guides above are unaffected.
+        CGFloat x = std::clamp(static_cast<CGFloat>(elementView.center.x / CGRectGetWidth(self.bounds)), 0.04, 0.96);
+        CGFloat y = std::clamp(static_cast<CGFloat>(elementView.center.y / CGRectGetHeight(self.bounds)), 0.06, 0.94);
         NSMutableDictionary *settings = elementConfig(elementView.accessibilityIdentifier);
         settings[@"x"] = @(x);
         settings[@"y"] = @(y);
@@ -531,6 +535,13 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
 - (void)finishEditing {
     [self setLayoutEditing:NO];
     saveConfig();
+    if (self.previewEditingOnly) {
+        // Homepage edit session: remove the preview overlay so it does not sit
+        // on top of the library once editing is done.
+        [self removeFromSuperview];
+        if (g_overlay == self)
+            g_overlay = nil;
+    }
 }
 
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
@@ -579,7 +590,9 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     glass.layer.cornerRadius = 28;
     glass.clipsToBounds = YES;
     [self addSubview:glass];
-    NSLayoutConstraint *preferredWidth = [glass.widthAnchor constraintEqualToAnchor:self.widthAnchor multiplier:0.88];
+    // Size against the safe-area width so the panel never slips under the
+    // dynamic island / notch in landscape.
+    NSLayoutConstraint *preferredWidth = [glass.widthAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.widthAnchor multiplier:0.92];
     preferredWidth.priority = UILayoutPriorityDefaultHigh;
     [NSLayoutConstraint activateConstraints:@[
         [glass.centerXAnchor constraintEqualToAnchor:self.centerXAnchor],
@@ -719,6 +732,22 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
 }
 - (void)editLayout {
     [self close];
+    if (!g_overlay) {
+        // Invoked from the homepage with no game running, so there is no live
+        // overlay yet. Spin one up purely for editing; finishEditing tears it
+        // back down. No SDL joystick is needed to reposition controls.
+        UIWindow *window = activeWindow();
+        if (!window)
+            return;
+        Vita3KVirtualControllerView *overlay = [[Vita3KVirtualControllerView alloc] initWithFrame:window.bounds];
+        overlay.previewEditingOnly = YES;
+        g_overlay = overlay;
+        [window addSubview:overlay];
+        [window bringSubviewToFront:overlay];
+        // Lay out once so elements are positioned before edit borders/handles
+        // turn on (and the menu button is hidden for good).
+        [overlay layoutIfNeeded];
+    }
     [g_overlay setLayoutEditing:YES];
 }
 - (void)resetLayout {

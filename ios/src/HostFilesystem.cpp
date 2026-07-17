@@ -47,7 +47,7 @@ void scan_imports(HostStorage &storage) {
 
 HostStorage initialize_host_storage(const std::filesystem::path &documents_root) {
     HostStorage storage;
-    storage.root = documents_root / "Vita3K";
+    storage.root = documents_root / "Tsubomi";
     storage.imports = storage.root / "imports";
 
     constexpr std::array directories{

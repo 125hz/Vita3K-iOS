@@ -12,13 +12,13 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - unified logging plus `Documents/vita3k.log`
 - a `vita3k_ios_core` static library containing Vita3K's ARM instruction encoder and NID database
 - on-device self-tests proving the upstream core slice is linked and executing
-- sandbox directories under `Documents/Vita3K`, with discovery of legal `.vpk`, `.self`, `.elf`, `.bin`, and `.sfo` import candidates
+- sandbox directories under `Documents/Tsubomi`, with discovery of legal `.vpk`, `.self`, `.elf`, `.bin`, and `.sfo` import candidates
 - bounded header probing for Vita SELF/ELF, VPK/ZIP, and PARAM.SFO candidates before any guest-memory mapping
 - a portable 4 GiB Vita guest-address-space reservation with one-page commit, read/write, decommit, and protection diagnostics
 - validated ELF `PT_LOAD` segment plans with 32-bit address-overflow and file-range checks
 - checked guest-segment mapping with file-byte copying, BSS zero-fill, final host-page protection, readback, and unmapping diagnostics
 - batch mapping that merges permissions when adjacent Vita segments share a 16 KiB iPhone host page
-- loading and full byte readback of the first valid fixed-address plain Vita ELF in `Documents/Vita3K/imports`
+- loading and full byte readback of the first valid fixed-address plain Vita ELF in `Documents/Tsubomi/imports`
 - extraction of the Vita module name/NID and inventory of `PT_SCE_RELA` relocation payloads
 - bounded application of Vita relocation formats 0–9 and common ARM/Thumb relocation codes, with verified writes to protected guest pages
 - bounded parsing of long/short import records, export records, and their function/variable/TLS NID tables

@@ -1842,7 +1842,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    const auto fixture = test_root / "Vita3K" / "imports" / "synthetic-homebrew.elf";
+    const auto fixture = test_root / "Tsubomi" / "imports" / "synthetic-homebrew.elf";
     std::ofstream fixture_stream(fixture, std::ios::binary);
     fixture_stream.write(reinterpret_cast<const char *>(elf.data()), elf.size());
     fixture_stream.close();
@@ -1905,7 +1905,7 @@ int main(int argc, char **argv) {
 
     if (!vitasdk_fixture.empty()) {
         std::filesystem::remove(fixture, error);
-        const auto real_fixture = test_root / "Vita3K" / "imports" / "milestone10-vitasdk-homebrew.velf";
+        const auto real_fixture = test_root / "Tsubomi" / "imports" / "milestone10-vitasdk-homebrew.velf";
         std::filesystem::copy_file(vitasdk_fixture, real_fixture,
             std::filesystem::copy_options::overwrite_existing, error);
         if (error) {
@@ -1921,7 +1921,7 @@ int main(int argc, char **argv) {
                   << real_status.summary << '\n';
     }
 
-    const auto imports = test_root / "Vita3K" / "imports";
+    const auto imports = test_root / "Tsubomi" / "imports";
     std::filesystem::remove_all(imports, error);
     std::filesystem::create_directories(imports, error);
     const auto imported_sfo = imports / "milestone13-synthetic-param.sfo";
@@ -1958,12 +1958,12 @@ int main(int argc, char **argv) {
     archive_stream.write(reinterpret_cast<const char *>(install_zip_fixture.data()),
         static_cast<std::streamsize>(install_zip_fixture.size()));
     archive_stream.close();
-    const auto previous_app = test_root / "Vita3K/ux0/app/M15TEST01/old.txt";
+    const auto previous_app = test_root / "Tsubomi/ux0/app/M15TEST01/old.txt";
     std::filesystem::create_directories(previous_app.parent_path(), error);
     std::ofstream(previous_app) << "previous installation";
     const auto install_result = vita3k::ios::install_game_archive(archive_path);
     const auto installed_status = vita3k::ios::query_core_status();
-    if (!install_result.success || install_result.application_count != 2 || install_result.file_count != 6 || install_result.installed_targets.size() != 2 || std::filesystem::exists(previous_app) || !std::filesystem::is_regular_file(test_root / "Vita3K/ux0/app/M15TEST01/eboot.bin") || !std::filesystem::is_regular_file(test_root / "Vita3K/ux0/patch/M15TEST01/assets/patch.dat") || installed_status.installed_titles.size() != 1 || installed_status.installed_titles.front().title_id != "M15TEST01" || !installed_status.installed_titles.front().patch_installed || installed_status.summary.find("Installed titles: 1") == std::string::npos || installed_status.summary.find("patch installed") == std::string::npos) {
+    if (!install_result.success || install_result.application_count != 2 || install_result.file_count != 6 || install_result.installed_targets.size() != 2 || std::filesystem::exists(previous_app) || !std::filesystem::is_regular_file(test_root / "Tsubomi/ux0/app/M15TEST01/eboot.bin") || !std::filesystem::is_regular_file(test_root / "Tsubomi/ux0/patch/M15TEST01/assets/patch.dat") || installed_status.installed_titles.size() != 1 || installed_status.installed_titles.front().title_id != "M15TEST01" || !installed_status.installed_titles.front().patch_installed || installed_status.summary.find("Installed titles: 1") == std::string::npos || installed_status.summary.find("patch installed") == std::string::npos) {
         std::cerr << installed_status.summary << '\n';
         return 32;
     }
@@ -1974,7 +1974,7 @@ int main(int argc, char **argv) {
         static_cast<std::streamsize>(unsafe_archive.size()));
     unsafe_stream.close();
     const auto unsafe_install = vita3k::ios::install_game_archive(unsafe_archive_path);
-    if (unsafe_install.success || !std::filesystem::is_regular_file(test_root / "Vita3K/ux0/app/M15TEST01/eboot.bin")) {
+    if (unsafe_install.success || !std::filesystem::is_regular_file(test_root / "Tsubomi/ux0/app/M15TEST01/eboot.bin")) {
         std::cerr << "An unsafe archive modified the installed title.\n";
         return 33;
     }
@@ -3120,7 +3120,7 @@ int main(int argc, char **argv) {
     auto encrypted_self = compiler_baseline_self;
     write_value(encrypted_self, static_cast<std::size_t>(276 + 24),
         static_cast<std::uint64_t>(1));
-    const auto installed_patch_eboot = test_root / "Vita3K/ux0/patch/M15TEST01/eboot.bin";
+    const auto installed_patch_eboot = test_root / "Tsubomi/ux0/patch/M15TEST01/eboot.bin";
     std::ofstream encrypted_stream(installed_patch_eboot, std::ios::binary | std::ios::trunc);
     encrypted_stream.write(reinterpret_cast<const char *>(encrypted_self.data()),
         static_cast<std::streamsize>(encrypted_self.size()));

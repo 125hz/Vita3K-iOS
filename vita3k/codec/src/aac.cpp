@@ -37,6 +37,9 @@ extern "C" {
 
 #include <util/log.h>
 
+#include <cstring>
+#include <iterator>
+
 AacDecoderState::AacDecoderState(uint32_t sample_rate, uint32_t channels) {
     codec = avcodec_find_decoder(AV_CODEC_ID_AAC);
     assert(codec);
@@ -49,6 +52,41 @@ AacDecoderState::AacDecoderState(uint32_t sample_rate, uint32_t channels) {
     context->codec_type = AVMEDIA_TYPE_AUDIO;
     av_channel_layout_default(&context->ch_layout, channels);
     context->sample_rate = sample_rate;
+
+#ifdef VITA3K_PLATFORM_IOS
+    // The desktop build decodes AAC through libavcodec's private ff_codec
+    // callback, which accepts a bare raw access unit. vcpkg's iOS ffmpeg does
+    // not ship codec_internal.h, so we use the public send/receive API — and
+    // that path rejects a raw AU with no extradata (AVERROR_INVALIDDATA on
+    // ffmpeg 8.1, exactly what Persona 4 Golden's intro movie hit). SceAudiodec
+    // provides the stream configuration out of band (sample rate + channels),
+    // so synthesise the 2-byte AudioSpecificConfig the decoder needs, matching
+    // what an MP4 'esds' box would carry.
+    static const int aac_freq_table[] = { 96000, 88200, 64000, 48000, 44100,
+        32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350 };
+    int freq_index = -1;
+    for (int i = 0; i < static_cast<int>(std::size(aac_freq_table)); ++i) {
+        if (aac_freq_table[i] == static_cast<int>(sample_rate)) {
+            freq_index = i;
+            break;
+        }
+    }
+    if (freq_index >= 0 && channels >= 1 && channels <= 7) {
+        constexpr int aac_lc_object_type = 2;
+        uint8_t asc[2];
+        asc[0] = static_cast<uint8_t>((aac_lc_object_type << 3) | (freq_index >> 1));
+        asc[1] = static_cast<uint8_t>(((freq_index & 1) << 7) | (channels << 3));
+        context->extradata = static_cast<uint8_t *>(
+            av_mallocz(sizeof(asc) + AV_INPUT_BUFFER_PADDING_SIZE));
+        if (context->extradata) {
+            memcpy(context->extradata, asc, sizeof(asc));
+            context->extradata_size = sizeof(asc);
+        }
+    } else {
+        LOG_WARN("AAC: no AudioSpecificConfig for sample_rate={} channels={}; "
+                 "raw access units may fail to decode.", sample_rate, channels);
+    }
+#endif
 
     int err = avcodec_open2(context, codec, nullptr);
     assert(err == 0);
@@ -122,17 +160,34 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
         err = avcodec_receive_frame(context, frame);
 
     if (err < 0) {
+        // With valid extradata this should no longer happen for P4G's raw AUs;
+        // keep the silent frame only as a last resort so one bad packet can't
+        // wedge the avPlayer clock, and log it so it is visible if it recurs.
         LOG_WARN_ONCE("Aac decode error ({}); emitting silence. ffmpeg '{}', packet {} bytes, extradata {} bytes.",
             codec_error_name(err), av_version_info(), size, context->extradata_size);
         if (!emit_silence()) {
             LOG_WARN("Failed to allocate AAC silence frame: {}.", codec_error_name(err));
             return false;
         }
+        es_size_used = size;
+        return true;
     }
 
-    // The public API consumes the complete access unit handed in by
-    // SceAudiodec, so the consumed elementary-stream size is the packet size.
+    LOG_INFO_ONCE("AAC decode ok on iOS (ffmpeg '{}', extradata {} bytes, {} samples/frame).",
+        av_version_info(), context->extradata_size, frame->nb_samples);
+
+    // Advance the guest ES read pointer by the bytes actually consumed. For an
+    // ADTS stream that is the 13-bit frame length in the header; for a raw AU
+    // (the MP4/avPlayer case) the whole packet is one access unit.
     es_size_used = size;
+    if (size >= 7 && data[0] == 0xFF && (data[1] & 0xF6) == 0xF0) {
+        const uint32_t adts_frame_length =
+            (static_cast<uint32_t>(data[3] & 0x03) << 11)
+            | (static_cast<uint32_t>(data[4]) << 3)
+            | (static_cast<uint32_t>(data[5]) >> 5);
+        if (adts_frame_length >= 7 && adts_frame_length <= size)
+            es_size_used = adts_frame_length;
+    }
 
     return true;
 }

@@ -239,8 +239,10 @@ std::string hex_bytes(const std::string &value) {
     self.stack.translatesAutoresizingMaskIntoConstraints = NO;
     [self.scrollView addSubview:self.stack];
     [NSLayoutConstraint activateConstraints:@[
-        [self.stack.leadingAnchor constraintEqualToAnchor:self.scrollView.frameLayoutGuide.leadingAnchor constant:20],
-        [self.stack.trailingAnchor constraintEqualToAnchor:self.scrollView.frameLayoutGuide.trailingAnchor constant:-20],
+        // Pin horizontally to the safe-area guide, not the raw scroll frame, so
+        // the dynamic island / notch does not clip the rows in landscape.
+        [self.stack.leadingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.leadingAnchor constant:20],
+        [self.stack.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-20],
         [self.stack.topAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.topAnchor constant:18],
         [self.stack.bottomAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.bottomAnchor constant:-30],
     ]];
@@ -301,7 +303,7 @@ std::string hex_bytes(const std::string &value) {
     ]];
 
     UIButton *controller = [UIButton buttonWithType:UIButtonTypeSystem];
-    [controller setTitle:@"Open Controller Options" forState:UIControlStateNormal];
+    [controller setTitle:@"Options" forState:UIControlStateNormal];
     controller.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     [controller addTarget:self action:@selector(controllerOptions) forControlEvents:UIControlEventTouchUpInside];
     [self addSection:@"System & Input" rows:@[
@@ -551,7 +553,7 @@ std::string hex_bytes(const std::string &value) {
     [self addSubview:self.collectionView];
 
     self.emptyLabel = [[UILabel alloc] init];
-    self.emptyLabel.text = @"No games yet\n\nTap + to import a game (.vpk / .zip),\nor copy your desktop Vita3K data into\nTsubomi’s Documents/Vita3K/vita folder in Files.";
+    self.emptyLabel.text = @"No games yet\n\nTap + to import a game (.vpk/.zip), or copy\nPC's Vita3K data into Documents/Tsubomi/vita";
     self.emptyLabel.textColor = UIColor.secondaryLabelColor;
     self.emptyLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle3];
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
@@ -591,7 +593,13 @@ std::string hex_bytes(const std::string &value) {
     self.statusLabel.frame = CGRectMake(CGRectGetMaxX(title.frame), safe.top + 20,
         MAX(0, CGRectGetMinX(importButton.frame) - CGRectGetMaxX(title.frame) - 10), 38);
 
-    CGFloat contentTop = safe.top + 78;
+    // Start the grid below the tallest header element so the firmware badge —
+    // which sits under the top-right buttons and can be wider/taller than the
+    // fixed 78pt used before — never overlaps the first row in portrait.
+    CGFloat headerBottom = MAX(CGRectGetMaxY(title.frame), CGRectGetMaxY(settings.frame));
+    if (!self.firmwareGlass.hidden)
+        headerBottom = MAX(headerBottom, CGRectGetMaxY(self.firmwareGlass.frame));
+    CGFloat contentTop = headerBottom + 14;
     if (!self.jitBanner.hidden) {
         const CGFloat bannerX = safe.left + 18;
         const CGFloat bannerWidth = CGRectGetWidth(self.bounds) - safe.left - safe.right - 36;
@@ -687,8 +695,14 @@ std::string hex_bytes(const std::string &value) {
     (void)layout;
     (void)indexPath;
     const CGFloat width = CGRectGetWidth(collectionView.bounds);
-    const NSInteger columns = width >= 900 ? 4 : (width >= 620 ? 3 : 2);
-    const CGFloat itemWidth = floor((width - (columns - 1) * 14) / columns);
+    const CGFloat spacing = 14;
+    // Choose the column count from a target cell width (~180pt) rather than a
+    // couple of fixed width thresholds. Phone landscape (~750-800pt of grid)
+    // then packs 4 sensible cells instead of 3 ballooned ones, while portrait
+    // still lands on 2 columns.
+    const CGFloat targetItemWidth = 180;
+    const NSInteger columns = MAX(2, static_cast<NSInteger>(floor((width + spacing) / (targetItemWidth + spacing))));
+    const CGFloat itemWidth = floor((width - (columns - 1) * spacing) / columns);
     return CGSizeMake(itemWidth, itemWidth * 0.9 + 58);
 }
 
@@ -806,7 +820,7 @@ static BOOL g_jit_available = YES;
         return;
     const BOOL scoped = [url startAccessingSecurityScopedResource];
     NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    NSString *importDir = [[documents stringByAppendingPathComponent:@"Vita3K"] stringByAppendingPathComponent:@"import"];
+    NSString *importDir = [[documents stringByAppendingPathComponent:@"Tsubomi"] stringByAppendingPathComponent:@"import"];
     [NSFileManager.defaultManager createDirectoryAtPath:importDir withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *destination = [importDir stringByAppendingPathComponent:url.lastPathComponent];
     [NSFileManager.defaultManager removeItemAtPath:destination error:nil];
@@ -901,13 +915,20 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         UIWindow *window = active_window();
         if (!window)
             return;
+        // Host the library under the root view controller's view, not directly
+        // on the window. UIButton context menus (the + import menu) need a view
+        // controller in the responder chain to present from; a view parented
+        // straight to the window has none, so taps did nothing.
+        UIView *host = window.rootViewController.view ?: window;
         if (!g_library) {
-            g_library = [[Vita3KLibraryView alloc] initWithFrame:window.bounds];
-            [window addSubview:g_library];
+            g_library = [[Vita3KLibraryView alloc] initWithFrame:host.bounds];
+            [host addSubview:g_library];
+        } else if (g_library.superview != host) {
+            [host addSubview:g_library];
         }
         [g_library updateGames:gamesCopy settings:settingsCopy];
         [g_library setJitAvailable:g_jit_available];
-        [window bringSubviewToFront:g_library];
+        [g_library.superview bringSubviewToFront:g_library];
     });
 }
 

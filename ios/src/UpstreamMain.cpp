@@ -30,6 +30,7 @@
 #include <packages/archive.h>
 #include <packages/functions.h>
 #include <packages/license.h>
+#include <packages/sfo.h>
 #include <compat/functions.h>
 #include <compat/state.h>
 #include <config/functions.h>
@@ -141,7 +142,7 @@ bool ios_jit_available() {
 }
 
 fs::path ios_storage_path() {
-    // Documents/Vita3K inside the app sandbox. UIFileSharingEnabled is set,
+    // Documents/Tsubomi inside the app sandbox. UIFileSharingEnabled is set,
     // so the user can inspect it and drop firmware/game data through the
     // Files app or Finder file sharing.
     char *pref = SDL_GetPrefPath(nullptr, nullptr);
@@ -154,7 +155,22 @@ fs::path ios_storage_path() {
     }
     if (documents.empty() || !fs::exists(documents.parent_path()))
         documents = fs::path(SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS) ? SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS) : "Documents");
-    return documents / "Vita3K" / "";
+
+    // The data root was renamed Vita3K -> Tsubomi. Migrate an existing install
+    // once so games/saves/firmware carry over; only when the new name does not
+    // already exist. Failure is non-fatal (fall back to whichever exists).
+    const fs::path legacy_root = documents / "Vita3K";
+    const fs::path current_root = documents / "Tsubomi";
+    boost::system::error_code migrate_error;
+    if (fs::exists(legacy_root, migrate_error) && !fs::exists(current_root, migrate_error)) {
+        fs::rename(legacy_root, current_root, migrate_error);
+        if (migrate_error)
+            LOG_ERROR("iOS storage migration Vita3K -> Tsubomi failed: {}", migrate_error.message());
+        else
+            LOG_INFO("iOS storage migrated: '{}' -> '{}'", legacy_root, current_root);
+    }
+
+    return current_root / "";
 }
 
 bool initialize_session(const fs::path &storage_path, Root &root_paths,
@@ -242,6 +258,44 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
     }
 }
 
+// Built-in firmware apps record the shipping firmware in their param.sfo
+// PSP2_SYSTEM_VER key, BCD-encoded (0x03650000 == 3.65). Derive the number
+// from one of them so firmware copied in manually (not via the app's PUP
+// importer, which writes fw_version.txt) still shows a real "FW 3.65".
+std::optional<std::string> derive_firmware_version(EmuEnvState &emuenv) {
+    static const char *const firmware_app_sfos[] = {
+        "vs0/app/NPXS10015/sce_sys/param.sfo", // Settings
+        "vs0/app/NPXS10013/sce_sys/param.sfo", // PS Store
+        "vs0/app/NPXS10008/sce_sys/param.sfo", // Trophy Collection
+    };
+    for (const char *relative : firmware_app_sfos) {
+        fs::ifstream file(emuenv.vita_fs_path / relative, std::ios::binary);
+        if (!file.is_open())
+            continue;
+        const std::vector<uint8_t> content((std::istreambuf_iterator<char>(file)),
+            std::istreambuf_iterator<char>());
+        SfoFile sfo;
+        if (!sfo::load(sfo, content))
+            continue;
+        std::string raw;
+        if (!sfo::get_data_by_key(raw, sfo, "PSP2_SYSTEM_VER"))
+            continue;
+        uint32_t value = 0;
+        try {
+            value = static_cast<uint32_t>(std::stoul(raw));
+        } catch (const std::exception &) {
+            continue;
+        }
+        const uint32_t major = (value >> 24) & 0xFF;
+        const uint32_t minor = (value >> 16) & 0xFF;
+        // Reject non-BCD / implausible values instead of showing garbage.
+        if (value == 0 || major > 0x09 || (minor & 0x0F) > 0x09 || ((minor >> 4) & 0x0F) > 0x09)
+            continue;
+        return fmt::format("{:X}.{:02X}", major, minor);
+    }
+    return std::nullopt;
+}
+
 std::string firmware_version_display(EmuEnvState &emuenv) {
     // install_pup returns the version string; the frontend persists it here
     // because the extracted firmware does not keep version.txt around.
@@ -251,6 +305,15 @@ std::string firmware_version_display(EmuEnvState &emuenv) {
         std::getline(file, version);
     if (!version.empty())
         return "FW " + version;
+
+    // Firmware present but no PUP-recorded version (manually copied). Derive it
+    // from the installed content and cache it so later boots are instant.
+    if (const auto derived = derive_firmware_version(emuenv)) {
+        fs::ofstream out(emuenv.log_path / "fw_version.txt");
+        out << *derived;
+        LOG_INFO("Derived firmware version from installed content: {}", *derived);
+        return "FW " + *derived;
+    }
     return app::get_firmware_state(emuenv).main_firmware ? "FW installed" : "No firmware";
 }
 
