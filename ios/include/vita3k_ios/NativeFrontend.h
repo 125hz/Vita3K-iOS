@@ -47,3 +47,9 @@ void vita3k_ios_update_library(const std::vector<Vita3KIOSGameEntry> &games,
 void vita3k_ios_hide_library();
 std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action();
 void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_required);
+
+// In-game performance HUD. Called ~once per second from the frontend loop
+// with the guest frame rate; battery/RAM are sampled on the UIKit side. The
+// HUD only appears when the user enabled at least one metric in settings.
+void vita3k_ios_update_perf_overlay(float guest_fps);
+void vita3k_ios_hide_perf_overlay();

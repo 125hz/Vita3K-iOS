@@ -13,6 +13,7 @@
 #define Ptr MacTypesPtr
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
+#include <mach/mach.h>
 #undef Ptr
 
 #include <cmath>
@@ -61,6 +62,10 @@ UIVisualEffect *glass_effect(const BOOL interactive = YES) {
 
 UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessibility) {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    // Size the button BEFORE adding the autoresizing glass child: adding a
+    // 44pt child to a zero-sized parent made autoresizing inflate the glass
+    // past the button (the oversized top-right blobs on the home screen).
+    button.frame = CGRectMake(0, 0, 44, 44);
     UIImage *image = [UIImage systemImageNamed:symbol];
     if (image)
         [button setImage:image forState:UIControlStateNormal];
@@ -70,9 +75,10 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
     button.accessibilityLabel = accessibility;
     button.backgroundColor = UIColor.clearColor;
     button.layer.cornerRadius = 22;
-    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect()];
+    button.clipsToBounds = YES;
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
     glass.userInteractionEnabled = NO;
-    glass.frame = CGRectMake(0, 0, 44, 44);
+    glass.frame = button.bounds;
     glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     glass.layer.cornerRadius = 22;
     glass.clipsToBounds = YES;
@@ -274,7 +280,31 @@ std::string hex_bytes(const std::string &value) {
         [self switchRow:@"CPU optimisation" hint:@"Faster JIT execution with rare accuracy tradeoffs." value:values.cpu_opt output:&_cpuSwitch],
         [self row:@"Virtual controls" hint:@"Opacity, scale, layout, visibility, and physical-pad auto-hide." accessory:controller],
     ]];
+
+    // Performance-overlay toggles live in NSUserDefaults (frontend-only
+    // state); they apply immediately without Save.
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [self addSection:@"Performance overlay" rows:@[
+        [self row:@"Show FPS" hint:@"Guest frames per second, sampled every second."
+            accessory:[self defaultsSwitch:@"vita3k.perf.fps" defaults:defaults]],
+        [self row:@"Show RAM usage" hint:@"This app's physical memory footprint."
+            accessory:[self defaultsSwitch:@"vita3k.perf.ram" defaults:defaults]],
+        [self row:@"Show battery %" hint:@"Device battery level while playing."
+            accessory:[self defaultsSwitch:@"vita3k.perf.battery" defaults:defaults]],
+    ]];
     return self;
+}
+
+- (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
+    UISwitch *control = [[UISwitch alloc] init];
+    control.on = [defaults boolForKey:key];
+    control.accessibilityIdentifier = key;
+    [control addTarget:self action:@selector(perfToggleChanged:) forControlEvents:UIControlEventValueChanged];
+    return control;
+}
+
+- (void)perfToggleChanged:(UISwitch *)sender {
+    [NSUserDefaults.standardUserDefaults setBool:sender.on forKey:sender.accessibilityIdentifier];
 }
 
 - (UILabel *)valueLabel:(NSString *)value {
@@ -330,7 +360,10 @@ std::string hex_bytes(const std::string &value) {
     [content addArrangedSubview:label];
     for (UIView *row in rows)
         [content addArrangedSubview:row];
-    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect()];
+    // Plain blur, not interactive glass: live glass refraction on every
+    // section made the settings scroll visibly stutter.
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc]
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
     glass.layer.cornerRadius = 24;
     glass.clipsToBounds = YES;
     [glass.contentView addSubview:content];
@@ -515,10 +548,51 @@ std::string hex_bytes(const std::string &value) {
     (void)collectionView;
     UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
     [feedback impactOccurred];
+    const auto &game = _games.at(static_cast<std::size_t>(indexPath.item));
+    [self showBootingOverlay:[NSString stringWithUTF8String:game.title.c_str()] ?: @"game"];
     Vita3KIOSFrontendAction action;
     action.kind = Vita3KIOSFrontendActionKind::Launch;
-    action.app_path = _games.at(static_cast<std::size_t>(indexPath.item)).app_path;
+    action.app_path = game.app_path;
     queue_action(std::move(action));
+}
+
+- (void)showBootingOverlay:(NSString *)title {
+    // Block further taps and make the boot visibly in progress; the whole
+    // library view is removed once the emulator takes over the screen.
+    self.userInteractionEnabled = NO;
+    UIView *dim = [[UIView alloc] initWithFrame:self.bounds];
+    dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+    dim.alpha = 0;
+
+    UIVisualEffectView *panel = [[UIVisualEffectView alloc]
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+    panel.frame = CGRectMake(0, 0, 260, 130);
+    panel.center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+    panel.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin
+        | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
+    panel.layer.cornerRadius = 26;
+    panel.clipsToBounds = YES;
+
+    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
+        initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+    spinner.color = UIColor.whiteColor;
+    spinner.center = CGPointMake(130, 48);
+    [spinner startAnimating];
+    [panel.contentView addSubview:spinner];
+
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(14, 82, 232, 36)];
+    label.text = [NSString stringWithFormat:@"Booting %@…", title];
+    label.textColor = UIColor.whiteColor;
+    label.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    label.textAlignment = NSTextAlignmentCenter;
+    label.numberOfLines = 2;
+    label.adjustsFontSizeToFitWidth = YES;
+    [panel.contentView addSubview:label];
+
+    [dim addSubview:panel];
+    [self addSubview:dim];
+    [UIView animateWithDuration:0.2 animations:^{ dim.alpha = 1; }];
 }
 
 - (void)refresh {
@@ -585,6 +659,72 @@ std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action() {
     auto action = std::move(g_pending_action);
     g_pending_action.reset();
     return action;
+}
+
+static UIVisualEffectView *g_perf_hud = nil;
+static UILabel *g_perf_label = nil;
+
+void vita3k_ios_update_perf_overlay(const float guest_fps) {
+    perform_on_main(^{
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        const BOOL show_fps = [defaults boolForKey:@"vita3k.perf.fps"];
+        const BOOL show_ram = [defaults boolForKey:@"vita3k.perf.ram"];
+        const BOOL show_battery = [defaults boolForKey:@"vita3k.perf.battery"];
+        if (!show_fps && !show_ram && !show_battery) {
+            g_perf_hud.hidden = YES;
+            return;
+        }
+
+        UIWindow *window = active_window();
+        if (!window)
+            return;
+        if (!g_perf_hud) {
+            g_perf_hud = [[UIVisualEffectView alloc]
+                initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+            g_perf_hud.layer.cornerRadius = 12;
+            g_perf_hud.clipsToBounds = YES;
+            g_perf_hud.userInteractionEnabled = NO;
+            g_perf_label = [[UILabel alloc] init];
+            g_perf_label.textColor = UIColor.whiteColor;
+            g_perf_label.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
+            [g_perf_hud.contentView addSubview:g_perf_label];
+        }
+        if (g_perf_hud.superview != window)
+            [window addSubview:g_perf_hud];
+        g_perf_hud.hidden = NO;
+        [window bringSubviewToFront:g_perf_hud];
+
+        NSMutableArray<NSString *> *parts = [NSMutableArray array];
+        if (show_fps)
+            [parts addObject:[NSString stringWithFormat:@"%.0f FPS", guest_fps]];
+        if (show_ram) {
+            task_vm_info_data_t vm_info{};
+            mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+            if (task_info(mach_task_self(), TASK_VM_INFO,
+                    reinterpret_cast<task_info_t>(&vm_info), &count) == KERN_SUCCESS)
+                [parts addObject:[NSString stringWithFormat:@"%.0f MB", vm_info.phys_footprint / (1024.0 * 1024.0)]];
+        }
+        if (show_battery) {
+            UIDevice.currentDevice.batteryMonitoringEnabled = YES;
+            const float level = UIDevice.currentDevice.batteryLevel;
+            if (level >= 0)
+                [parts addObject:[NSString stringWithFormat:@"%.0f%%", level * 100.0f]];
+        }
+        g_perf_label.text = [parts componentsJoinedByString:@"  ·  "];
+        [g_perf_label sizeToFit];
+        const CGFloat width = CGRectGetWidth(g_perf_label.bounds) + 20;
+        const UIEdgeInsets safe = window.safeAreaInsets;
+        g_perf_hud.frame = CGRectMake(safe.left + 10, safe.top + 6, width, 24);
+        g_perf_label.frame = CGRectMake(10, 3, width - 20, 18);
+    });
+}
+
+void vita3k_ios_hide_perf_overlay() {
+    perform_on_main(^{
+        [g_perf_hud removeFromSuperview];
+        g_perf_hud = nil;
+        g_perf_label = nil;
+    });
 }
 
 void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_required) {

@@ -39,9 +39,14 @@
 #include <modules/module_parent.h>
 #include <renderer/frame_host.h>
 #include <renderer/functions.h>
+#include <renderer/state.h>
+#include <renderer/vulkan/state.h>
 #include <touch/functions.h>
 #include <util/fs.h>
 #include <util/log.h>
+
+#include <csignal>
+#include <dlfcn.h>
 
 #include <vita3k_ios/NativeFrontend.h>
 #include <vita3k_ios/VirtualController.h>
@@ -361,6 +366,45 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
     }
 }
 
+// Fatal-signal logger: several device deaths left no trace in vita3k.log
+// because they were not SEGV/BUS data faults (mem.cpp already logs those).
+// Log the signal, fault address, PC and its owning image, then re-raise with
+// the default action so the OS still writes its crash report.
+void fatal_signal_handler(int sig, siginfo_t *info, void *uct) {
+    uintptr_t pc = 0;
+#if defined(__APPLE__) && defined(__aarch64__)
+    if (uct)
+        pc = static_cast<ucontext_t *>(uct)->uc_mcontext->__ss.__pc;
+#endif
+    Dl_info dl_info{};
+    const char *image = "?";
+    uintptr_t image_base = 0;
+    if (pc && dladdr(reinterpret_cast<void *>(pc), &dl_info) && dl_info.dli_fname) {
+        image = dl_info.dli_fname;
+        image_base = reinterpret_cast<uintptr_t>(dl_info.dli_fbase);
+    }
+    // Not async-signal-safe, but the process is dying anyway and this is the
+    // only channel that reaches vita3k.log before the kill.
+    LOG_CRITICAL("FATAL SIGNAL {}: PC=0x{:X} (image '{}' +0x{:X}) fault_addr=0x{:X}",
+        sig, pc, image, image_base ? pc - image_base : 0,
+        info ? reinterpret_cast<uintptr_t>(info->si_addr) : 0);
+    if (auto logger = spdlog::default_logger())
+        logger->flush();
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+void install_fatal_signal_logger() {
+    struct sigaction sa{};
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_sigaction = fatal_signal_handler;
+    // SIGSEGV/SIGBUS belong to mem.cpp's guest-fault handler; it raises
+    // SIGTRAP for anything it cannot handle, which lands here and gets logged.
+    for (const int sig : { SIGABRT, SIGILL, SIGTRAP, SIGFPE })
+        sigaction(sig, &sa, nullptr);
+}
+
 bool has_physical_controller(CtrlState &state) {
     const std::lock_guard lock(state.mutex);
     return std::any_of(state.controllers.begin(), state.controllers.end(), [](const auto &entry) {
@@ -380,6 +424,8 @@ int main(int argc, char *argv[]) {
         SDL_Log("Vita3K iOS: session initialisation failed.");
         return -1;
     }
+
+    install_fatal_signal_logger();
 
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "Portrait LandscapeLeft LandscapeRight");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
@@ -516,6 +562,9 @@ int main(int argc, char *argv[]) {
         }
     });
 
+    Uint64 perf_last_ms = SDL_GetTicks();
+    std::size_t perf_last_frame_count = emuenv->frame_count;
+
     bool running = true;
     while (running) {
         SDL_Event event;
@@ -534,6 +583,14 @@ int main(int argc, char *argv[]) {
                 LOG_INFO("iOS window resized: drawable={}x{} layout={}",
                     drawable_width, drawable_height,
                     drawable_height > drawable_width ? "portrait" : "landscape");
+                // MoltenVK does not reliably report the swapchain as
+                // out-of-date after a rotation; it scales the stale-extent
+                // swapchain to the layer instead (nearest-filtered, visibly
+                // pixelated). Force a rebuild at the new drawable size.
+                if (emuenv->renderer && emuenv->renderer->current_backend == renderer::Backend::Vulkan) {
+                    auto &vk_state = static_cast<renderer::vulkan::VKState &>(*emuenv->renderer);
+                    vk_state.screen_renderer.need_rebuild = true;
+                }
                 break;
             }
 
@@ -573,6 +630,18 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        {
+            const Uint64 now_ms = SDL_GetTicks();
+            if (now_ms - perf_last_ms >= 1000) {
+                const std::size_t frames = emuenv->frame_count;
+                const float fps = static_cast<float>(frames - perf_last_frame_count) * 1000.0f
+                    / static_cast<float>(now_ms - perf_last_ms);
+                perf_last_frame_count = frames;
+                perf_last_ms = now_ms;
+                vita3k_ios_update_perf_overlay(fps);
+            }
+        }
+
         if (auto request = emuenv->take_app_launch_request()) {
             // In-process relaunch (LoadExec) is not supported yet on iOS.
             LOG_WARN("Title requested relaunch of '{}'; stopping instead.", request->self_path);
@@ -589,6 +658,7 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Shutting down game");
     stop_guest_watchdog.store(true, std::memory_order_relaxed);
     guest_watchdog.join();
+    vita3k_ios_hide_perf_overlay();
     vita3k_ios_hide_virtual_controller();
     session_controller.stop(app::AppSessionStopReason::FrontendShutdown);
     if (has_virtual_controller)
