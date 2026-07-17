@@ -5,8 +5,15 @@
 #include <vita3k_ios/VirtualController.h>
 #include <util/log.h>
 
+// Apple's MacTypes.h declares `typedef char *Ptr;`, which collides with the
+// emulator's global Ptr<T> template forward-declared by util/log.h above.
+// Rename the MacTypes alias for the framework includes; nothing in this file
+// uses it. MacTypes.h is fully included (and include-guarded) inside this
+// region, so later transitive includes are no-ops.
+#define Ptr MacTypesPtr
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
+#undef Ptr
 
 #include <cmath>
 #include <mutex>

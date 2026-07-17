@@ -241,8 +241,10 @@ std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
         const fs::path art_directory = emuenv.vita_fs_path / "ux0/app" / entry.title_id / "sce_sys";
         const fs::path icon = art_directory / "icon0.png";
         const fs::path banner = art_directory / "pic0.png";
-        std::error_code icon_error;
-        std::error_code banner_error;
+        // util/fs.h maps fs:: to boost::filesystem, whose non-throwing
+        // overloads take boost::system::error_code, not std::error_code.
+        boost::system::error_code icon_error;
+        boost::system::error_code banner_error;
         const bool icon_exists = fs::exists(icon, icon_error);
         const bool banner_exists = fs::exists(banner, banner_error);
         LOG_INFO("iOS library art: title_id={} icon='{}' exists={} pic0='{}' exists={}",
