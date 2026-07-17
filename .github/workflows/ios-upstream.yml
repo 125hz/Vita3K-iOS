@@ -54,6 +54,11 @@ jobs:
           selected_xcode="${xcode_apps[${#xcode_apps[@]}-1]}"
           echo "Selecting ${selected_xcode}"
           sudo xcode-select --switch "${selected_xcode}/Contents/Developer"
+          # vcpkg keys its binary archives on the compiler hash, so the
+          # Actions cache key must roll whenever the toolchain changes or
+          # every run silently rebuilds all dependencies from source.
+          xcode_ver="$(xcodebuild -version | head -1 | tr ' ' '-')"
+          echo "XCODE_VER=${xcode_ver}" >> "$GITHUB_ENV"
 
       - name: Apply iOS submodule patches
         run: |
@@ -93,9 +98,13 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/vcpkg/archives
-          key: vcpkg-arm64-ios-77df67c-${{ hashFiles('vcpkg.json') }}
+          # The run_id suffix makes the primary key unique so the save step
+          # below always persists updated archives; restores match on the
+          # prefixes and pick the newest entry.
+          key: vcpkg-arm64-ios-77df67c-${{ env.XCODE_VER }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
           restore-keys: |
-            vcpkg-arm64-ios-77df67c-
+            vcpkg-arm64-ios-77df67c-${{ env.XCODE_VER }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-arm64-ios-77df67c-${{ env.XCODE_VER }}-
 
       - name: Install pinned MoltenVK iOS package
         run: |
@@ -138,12 +147,14 @@ jobs:
 
       - name: Save iOS vcpkg binary archive
         # vcpkg populates its archives during configure; save them even when a
-        # later configure/build step fails so iteration runs stay fast.
-        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        # later configure/build step fails so iteration runs stay fast. The
+        # unique run_id key means this always persists (GitHub cache entries
+        # are immutable per key); old entries are evicted by LRU.
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/vcpkg/archives
-          key: vcpkg-arm64-ios-77df67c-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-arm64-ios-77df67c-${{ env.XCODE_VER }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
 
       - name: Build unsigned upstream-core device application
         run: |
