@@ -23,6 +23,8 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
     target_compile_definitions(Vita3KiOS PRIVATE VITA3K_IOS_UPSTREAM_CORE=1)
     target_link_libraries(Vita3KiOS PRIVATE
         vita3k
+        audio
+        packages
         SDL3::SDL3
         "-framework CoreGraphics"
         "-framework Foundation"
