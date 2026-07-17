@@ -170,6 +170,9 @@ struct State {
 
     virtual void render_frame(DisplayState &display, const GxmState &gxm, MemState &mem) = 0;
     virtual void swap_window() = 0;
+    // Ask the backend to rebuild its swapchain at the current drawable size
+    // (used by frontends whose window can resize/rotate, e.g. iOS).
+    virtual void request_screen_rebuild() {}
     virtual bool set_current() { return true; }
     virtual void done_current() {}
     // perform a screenshot of the (upscaled) frame to be rendered and return it in a vector in its rgba8 format

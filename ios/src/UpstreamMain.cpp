@@ -40,7 +40,6 @@
 #include <renderer/frame_host.h>
 #include <renderer/functions.h>
 #include <renderer/state.h>
-#include <renderer/vulkan/state.h>
 #include <touch/functions.h>
 #include <util/fs.h>
 #include <util/log.h>
@@ -587,10 +586,8 @@ int main(int argc, char *argv[]) {
                 // out-of-date after a rotation; it scales the stale-extent
                 // swapchain to the layer instead (nearest-filtered, visibly
                 // pixelated). Force a rebuild at the new drawable size.
-                if (emuenv->renderer && emuenv->renderer->current_backend == renderer::Backend::Vulkan) {
-                    auto &vk_state = static_cast<renderer::vulkan::VKState &>(*emuenv->renderer);
-                    vk_state.screen_renderer.need_rebuild = true;
-                }
+                if (emuenv->renderer)
+                    emuenv->renderer->request_screen_rebuild();
                 break;
             }
 

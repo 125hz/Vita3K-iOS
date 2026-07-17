@@ -64,6 +64,10 @@ struct VKState : public renderer::State {
     ScreenRenderer screen_renderer;
     OverlayRenderer overlay_renderer;
 
+    void request_screen_rebuild() override {
+        screen_renderer.need_rebuild = true;
+    }
+
     // Used for memory allocation and general query later.
     vk::PhysicalDevice physical_device;
     vk::PhysicalDeviceProperties physical_device_properties;
