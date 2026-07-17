@@ -289,6 +289,7 @@ static void hapticTick() {
 
 static void dismissGameMenu();
 static void presentGameMenu();
+static UITapGestureRecognizer *g_three_finger_tap = nil;
 
 @implementation Vita3KVirtualControllerView
 
@@ -302,7 +303,7 @@ static void presentGameMenu();
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.controllerElements = [NSMutableArray array];
 
-    [self addButton:@"▲" key:@"triangle" button:SDL_GAMEPAD_BUTTON_NORTH accessibility:@"Triangle"];
+    [self addButton:@"△" key:@"triangle" button:SDL_GAMEPAD_BUTTON_NORTH accessibility:@"Triangle"];
     [self addButton:@"○" key:@"circle" button:SDL_GAMEPAD_BUTTON_EAST accessibility:@"Circle"];
     [self addButton:@"×" key:@"cross" button:SDL_GAMEPAD_BUTTON_SOUTH accessibility:@"Cross"];
     [self addButton:@"□" key:@"square" button:SDL_GAMEPAD_BUTTON_WEST accessibility:@"Square"];
@@ -514,6 +515,17 @@ static void presentGameMenu();
 - (void)menuTapped {
     if (!self.layoutEditing)
         presentGameMenu();
+}
+
+- (void)threeFingerTap {
+    // Restores the in-game menu button after "Hide Menu Button".
+    NSMutableDictionary *settings = elementConfig(@"menu");
+    if ([settings[@"visible"] boolValue])
+        return;
+    settings[@"visible"] = @YES;
+    saveConfig();
+    [self applyConfiguration];
+    hapticTick();
 }
 
 - (void)finishEditing {
@@ -747,6 +759,17 @@ static UIButton *menuAction(NSString *title, SEL selector, id target) {
     [g_overlay applyConfiguration];
     saveConfig();
 }
+- (void)togglePerfHud {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults setBool:![defaults boolForKey:@"vita3k.perf.hidden"] forKey:@"vita3k.perf.hidden"];
+    dismissGameMenu();
+}
+- (void)hideMenuButton {
+    elementConfig(@"menu")[@"visible"] = @NO;
+    saveConfig();
+    [g_overlay applyConfiguration];
+    dismissGameMenu();
+}
 - (void)quit {
     dismissGameMenu();
     SDL_Event event{};
@@ -803,6 +826,11 @@ static void presentGameMenu() {
     [stack addArrangedSubview:opacity];
     [stack addArrangedSubview:menuAction(@"Resume", @selector(resume), g_game_menu_target)];
     [stack addArrangedSubview:menuAction(@"Controller Layout", @selector(layout), g_game_menu_target)];
+    NSString *hudTitle = [NSUserDefaults.standardUserDefaults boolForKey:@"vita3k.perf.hidden"]
+        ? @"Show Performance HUD"
+        : @"Hide Performance HUD";
+    [stack addArrangedSubview:menuAction(hudTitle, @selector(togglePerfHud), g_game_menu_target)];
+    [stack addArrangedSubview:menuAction(@"Hide Menu Button (3-finger tap restores)", @selector(hideMenuButton), g_game_menu_target)];
     UIButton *quit = menuAction(@"Quit Game", @selector(quit), g_game_menu_target);
     [quit setTitleColor:UIColor.systemRedColor forState:UIControlStateNormal];
     [stack addArrangedSubview:quit];
@@ -864,12 +892,20 @@ void vita3k_ios_show_virtual_controller() {
         g_overlay = [[Vita3KVirtualControllerView alloc] initWithFrame:window.bounds];
         [window addSubview:g_overlay];
         [window bringSubviewToFront:g_overlay];
+        UITapGestureRecognizer *restore = [[UITapGestureRecognizer alloc] initWithTarget:g_overlay
+                                                                                  action:@selector(threeFingerTap)];
+        restore.numberOfTouchesRequired = 3;
+        restore.cancelsTouchesInView = NO;
+        [window addGestureRecognizer:restore];
+        g_three_finger_tap = restore;
         SDL_Log("Vita3K iOS: virtual touch controller visible (layout=%s)", configPath().UTF8String);
     });
 }
 
 void vita3k_ios_hide_virtual_controller() {
     performOnMainThread(^{
+        [g_three_finger_tap.view removeGestureRecognizer:g_three_finger_tap];
+        g_three_finger_tap = nil;
         [g_overlay releaseAllInputs];
         dismissGameMenu();
         [g_options_view removeFromSuperview];

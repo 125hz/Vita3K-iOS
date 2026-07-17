@@ -26,9 +26,11 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
         SDL3::SDL3
         "-framework CoreGraphics"
         "-framework Foundation"
+        "-framework GameController"
         "-framework Metal"
         "-framework QuartzCore"
         "-framework UIKit"
+        "-framework UniformTypeIdentifiers"
     )
     # The renderer loads its screen-filter SPIR-V from
     # <static assets>/shaders-builtin at runtime; ship it inside the bundle.

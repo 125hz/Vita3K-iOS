@@ -13,6 +13,7 @@
 #define Ptr MacTypesPtr
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <mach/mach.h>
 #undef Ptr
 
@@ -29,6 +30,8 @@ void queue_action(Vita3KIOSFrontendAction action) {
     const std::lock_guard lock(g_action_mutex);
     g_pending_action = std::move(action);
 }
+
+void present_import_menu();
 
 UIWindow *active_window() {
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -422,6 +425,7 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UICollectionView *collectionView;
 @property(nonatomic, strong) UILabel *emptyLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UIView *busyOverlay;
 @property(nonatomic, strong) CAGradientLayer *backgroundGradient;
 - (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings;
 @end
@@ -445,7 +449,7 @@ std::string hex_bytes(const std::string &value) {
     [self.layer insertSublayer:self.backgroundGradient atIndex:0];
 
     UILabel *title = [[UILabel alloc] init];
-    title.text = @"Vita3K";
+    title.text = @"Tsubomi";
     title.font = [UIFont systemFontOfSize:38 weight:UIFontWeightBlack];
     title.textColor = UIColor.whiteColor;
     title.tag = 101;
@@ -459,6 +463,17 @@ std::string hex_bytes(const std::string &value) {
     settings.tag = 103;
     [settings addTarget:self action:@selector(settings) forControlEvents:UIControlEventTouchUpInside];
     [self addSubview:settings];
+    UIButton *importButton = symbol_button(@"plus", @"Add", @"Import game or firmware");
+    importButton.tag = 104;
+    [importButton addTarget:self action:@selector(importContent) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:importButton];
+
+    UILabel *firmware = [[UILabel alloc] init];
+    firmware.tag = 105;
+    firmware.textColor = UIColor.secondaryLabelColor;
+    firmware.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightSemibold];
+    firmware.textAlignment = NSTextAlignmentRight;
+    [self addSubview:firmware];
 
     UICollectionViewFlowLayout *layout = [[UICollectionViewFlowLayout alloc] init];
     layout.minimumInteritemSpacing = 14;
@@ -496,11 +511,15 @@ std::string hex_bytes(const std::string &value) {
     UILabel *title = [self viewWithTag:101];
     UIButton *refresh = [self viewWithTag:102];
     UIButton *settings = [self viewWithTag:103];
+    UIButton *importButton = [self viewWithTag:104];
+    UILabel *firmware = [self viewWithTag:105];
     title.frame = CGRectMake(safe.left + 22, safe.top + 14, 240, 50);
     settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 58, safe.top + 17, 44, 44);
     refresh.frame = CGRectMake(CGRectGetMinX(settings.frame) - 54, safe.top + 17, 44, 44);
+    importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - 54, safe.top + 17, 44, 44);
+    firmware.frame = CGRectMake(CGRectGetMinX(settings.frame) - 120, CGRectGetMaxY(settings.frame) + 4, 164, 14);
     self.statusLabel.frame = CGRectMake(CGRectGetMaxX(title.frame), safe.top + 20,
-        MAX(0, CGRectGetMinX(refresh.frame) - CGRectGetMaxX(title.frame) - 10), 38);
+        MAX(0, CGRectGetMinX(importButton.frame) - CGRectGetMaxX(title.frame) - 10), 38);
     self.collectionView.frame = CGRectMake(safe.left + 18, safe.top + 78,
         CGRectGetWidth(self.bounds) - safe.left - safe.right - 36,
         CGRectGetHeight(self.bounds) - safe.top - safe.bottom - 88);
@@ -512,6 +531,8 @@ std::string hex_bytes(const std::string &value) {
     _settings = settings;
     self.emptyLabel.hidden = !_games.empty();
     self.collectionView.hidden = _games.empty();
+    UILabel *firmware = [self viewWithTag:105];
+    firmware.text = [NSString stringWithUTF8String:settings.firmware_version.c_str()] ?: @"";
     [self.collectionView reloadData];
 }
 
@@ -557,9 +578,20 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)showBootingOverlay:(NSString *)title {
-    // Block further taps and make the boot visibly in progress; the whole
-    // library view is removed once the emulator takes over the screen.
-    self.userInteractionEnabled = NO;
+    [self showBusyOverlay:[NSString stringWithFormat:@"Booting %@…", title] blockInteraction:YES];
+}
+
+- (void)hideBusyOverlay {
+    self.userInteractionEnabled = YES;
+    [self.busyOverlay removeFromSuperview];
+    self.busyOverlay = nil;
+}
+
+- (void)showBusyOverlay:(NSString *)text blockInteraction:(BOOL)block {
+    [self hideBusyOverlay];
+    // Block further taps and make the work visibly in progress; for boots the
+    // whole library view is removed once the emulator takes over the screen.
+    self.userInteractionEnabled = !block;
     UIView *dim = [[UIView alloc] initWithFrame:self.bounds];
     dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
@@ -582,7 +614,7 @@ std::string hex_bytes(const std::string &value) {
     [panel.contentView addSubview:spinner];
 
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(14, 82, 232, 36)];
-    label.text = [NSString stringWithFormat:@"Booting %@…", title];
+    label.text = text;
     label.textColor = UIColor.whiteColor;
     label.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
     label.textAlignment = NSTextAlignmentCenter;
@@ -592,7 +624,12 @@ std::string hex_bytes(const std::string &value) {
 
     [dim addSubview:panel];
     [self addSubview:dim];
+    self.busyOverlay = dim;
     [UIView animateWithDuration:0.2 animations:^{ dim.alpha = 1; }];
+}
+
+- (void)importContent {
+    present_import_menu();
 }
 
 - (void)refresh {
@@ -620,6 +657,93 @@ std::string hex_bytes(const std::string &value) {
 
 
 static Vita3KLibraryView *g_library = nil;
+
+// Presents the Files picker and hands the copied file to the emulator loop.
+@interface Vita3KImportPicker : NSObject <UIDocumentPickerDelegate>
+@property(nonatomic) BOOL firmware;
+@end
+
+@implementation Vita3KImportPicker
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    (void)controller;
+    NSURL *url = urls.firstObject;
+    if (!url)
+        return;
+    const BOOL scoped = [url startAccessingSecurityScopedResource];
+    NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *importDir = [[documents stringByAppendingPathComponent:@"Vita3K"] stringByAppendingPathComponent:@"import"];
+    [NSFileManager.defaultManager createDirectoryAtPath:importDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *destination = [importDir stringByAppendingPathComponent:url.lastPathComponent];
+    [NSFileManager.defaultManager removeItemAtPath:destination error:nil];
+    NSError *error = nil;
+    const BOOL copied = [NSFileManager.defaultManager copyItemAtURL:url
+                                                              toURL:[NSURL fileURLWithPath:destination]
+                                                              error:&error];
+    if (scoped)
+        [url stopAccessingSecurityScopedResource];
+    if (!copied) {
+        LOG_ERROR("iOS import copy failed: {}", error.localizedDescription.UTF8String ?: "unknown");
+        vita3k_ios_report_import_result("Could not copy the selected file");
+        return;
+    }
+    [g_library showBusyOverlay:self.firmware ? @"Installing firmware…" : @"Installing game…" blockInteraction:YES];
+    Vita3KIOSFrontendAction action;
+    action.kind = self.firmware ? Vita3KIOSFrontendActionKind::ImportFirmware
+                                : Vita3KIOSFrontendActionKind::ImportGame;
+    action.app_path = destination.UTF8String;
+    queue_action(std::move(action));
+}
+
+@end
+
+static Vita3KImportPicker *g_import_picker = nil;
+
+namespace {
+
+void present_import_menu() {
+    UIViewController *root = active_window().rootViewController;
+    if (!root)
+        return;
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"Add content"
+                                                                  message:nil
+                                                           preferredStyle:UIAlertControllerStyleActionSheet];
+    const auto present_picker = [root](const BOOL firmware) {
+        if (!g_import_picker)
+            g_import_picker = [[Vita3KImportPicker alloc] init];
+        g_import_picker.firmware = firmware;
+        NSMutableArray<UTType *> *types = [NSMutableArray array];
+        if (firmware) {
+            UTType *pup = [UTType typeWithFilenameExtension:@"pup"];
+            if (pup)
+                [types addObject:pup];
+        } else {
+            [types addObject:UTTypeZIP];
+            UTType *vpk = [UTType typeWithFilenameExtension:@"vpk"];
+            if (vpk)
+                [types addObject:vpk];
+        }
+        [types addObject:UTTypeData];
+        UIDocumentPickerViewController *picker =
+            [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
+        picker.delegate = g_import_picker;
+        picker.allowsMultipleSelection = NO;
+        [root presentViewController:picker animated:YES completion:nil];
+    };
+    [menu addAction:[UIAlertAction actionWithTitle:@"Import game (.vpk / .zip)"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(__unused UIAlertAction *action) { present_picker(NO); }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Import firmware (.PUP)"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(__unused UIAlertAction *action) { present_picker(YES); }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    // iPad requires a popover anchor; on iPhone this is ignored.
+    menu.popoverPresentationController.sourceView = g_library;
+    menu.popoverPresentationController.sourceRect = CGRectMake(CGRectGetWidth(g_library.bounds) - 60, 60, 1, 1);
+    [root presentViewController:menu animated:YES completion:nil];
+}
+
+} // namespace
 
 void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
     const Vita3KIOSSettings &settings) {
@@ -670,7 +794,7 @@ void vita3k_ios_update_perf_overlay(const float guest_fps) {
         const BOOL show_fps = [defaults boolForKey:@"vita3k.perf.fps"];
         const BOOL show_ram = [defaults boolForKey:@"vita3k.perf.ram"];
         const BOOL show_battery = [defaults boolForKey:@"vita3k.perf.battery"];
-        if (!show_fps && !show_ram && !show_battery) {
+        if ([defaults boolForKey:@"vita3k.perf.hidden"] || (!show_fps && !show_ram && !show_battery)) {
             g_perf_hud.hidden = YES;
             return;
         }
@@ -724,6 +848,16 @@ void vita3k_ios_hide_perf_overlay() {
         [g_perf_hud removeFromSuperview];
         g_perf_hud = nil;
         g_perf_label = nil;
+    });
+}
+
+void vita3k_ios_report_import_result(const std::string &message) {
+    NSString *text = [NSString stringWithUTF8String:message.c_str()] ?: @"Import finished";
+    perform_on_main(^{
+        [g_library hideBusyOverlay];
+        g_library.statusLabel.text = text;
+        g_library.statusLabel.alpha = 1;
+        [UIView animateWithDuration:0.3 delay:6 options:0 animations:^{ g_library.statusLabel.alpha = 0; } completion:nil];
     });
 }
 

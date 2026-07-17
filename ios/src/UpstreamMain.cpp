@@ -26,6 +26,9 @@
 #include <app/functions.h>
 #include <app/session_controller.h>
 #include <app/state.h>
+#include <audio/state.h>
+#include <packages/archive.h>
+#include <packages/functions.h>
 #include <compat/functions.h>
 #include <compat/state.h>
 #include <config/functions.h>
@@ -222,8 +225,20 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
     }
 }
 
-Vita3KIOSSettings native_settings(const Config &cfg) {
-    const auto &current = cfg.current_config;
+std::string firmware_version_display(EmuEnvState &emuenv) {
+    // install_pup returns the version string; the frontend persists it here
+    // because the extracted firmware does not keep version.txt around.
+    std::string version;
+    fs::ifstream file(emuenv.log_path / "fw_version.txt");
+    if (file.is_open())
+        std::getline(file, version);
+    if (!version.empty())
+        return "FW " + version;
+    return app::get_firmware_state(emuenv).main_firmware ? "FW installed" : "No firmware";
+}
+
+Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
+    const auto &current = emuenv.cfg.current_config;
     return {
         .resolution_multiplier = current.resolution_multiplier,
         .v_sync = current.v_sync,
@@ -232,7 +247,52 @@ Vita3KIOSSettings native_settings(const Config &cfg) {
         .ngs_enable = current.ngs_enable,
         .async_pipeline_compilation = current.async_pipeline_compilation,
         .anisotropic_filtering = current.anisotropic_filtering,
+        .firmware_version = firmware_version_display(emuenv),
     };
+}
+
+struct ImportJob {
+    std::atomic_bool done{ false };
+    bool firmware = false;
+    std::string message;
+};
+std::shared_ptr<ImportJob> g_import_job;
+
+void start_import(EmuEnvState &emuenv, const std::string &path, const bool firmware) {
+    if (g_import_job && !g_import_job->done.load()) {
+        vita3k_ios_report_import_result("Another import is still running");
+        return;
+    }
+    auto job = std::make_shared<ImportJob>();
+    job->firmware = firmware;
+    g_import_job = job;
+    // Installs take minutes for a PUP; never block the SDL/UIKit thread.
+    std::thread([job, path, &emuenv] {
+        try {
+            if (job->firmware) {
+                const std::string version = install_pup(emuenv.vita_fs_path, fs::path(path), nullptr);
+                if (version.empty()) {
+                    job->message = "Firmware install failed (see vita3k.log)";
+                } else {
+                    fs::ofstream out(emuenv.log_path / "fw_version.txt");
+                    out << version;
+                    job->message = "Firmware " + version + " installed";
+                }
+            } else {
+                const auto result = packages::install_archive_transactionally(
+                    std::filesystem::path(path), std::filesystem::path(emuenv.vita_fs_path.string()));
+                job->message = result.success
+                    ? "Installed " + std::to_string(result.application_count) + " application(s)"
+                    : "Import failed: " + result.detail;
+            }
+        } catch (const std::exception &error) {
+            job->message = std::string("Import failed: ") + error.what();
+        }
+        boost::system::error_code cleanup_error;
+        fs::remove(fs::path(path), cleanup_error);
+        LOG_INFO("iOS import finished: {}", job->message);
+        job->done.store(true);
+    }).detach();
 }
 
 std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
@@ -328,15 +388,27 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
         LOG_WARN("No installed titles were found under {}. Showing native empty-library instructions.",
             emuenv.vita_fs_path / "ux0/app");
     }
-    vita3k_ios_show_library(games, native_settings(emuenv.cfg));
+    vita3k_ios_show_library(games, native_settings(emuenv));
 
     for (;;) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED
+                || event.type == SDL_EVENT_TERMINATING) {
                 vita3k_ios_hide_library();
                 return std::nullopt;
             }
+        }
+
+        if (g_import_job && g_import_job->done.load()) {
+            const bool was_firmware = g_import_job->firmware;
+            const std::string message = g_import_job->message;
+            g_import_job.reset();
+            if (!was_firmware && !app::init_apps_list(emuenv))
+                LOG_ERROR("Failed to rescan apps list after import.");
+            games = native_games(emuenv);
+            vita3k_ios_update_library(games, native_settings(emuenv));
+            vita3k_ios_report_import_result(message);
         }
 
         if (auto action = vita3k_ios_take_frontend_action()) {
@@ -350,11 +422,19 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                 if (!app::init_apps_list(emuenv))
                     LOG_ERROR("Failed to rescan apps list.");
                 games = native_games(emuenv);
-                vita3k_ios_update_library(games, native_settings(emuenv.cfg));
+                vita3k_ios_update_library(games, native_settings(emuenv));
                 break;
             case Vita3KIOSFrontendActionKind::ApplySettings:
                 apply_native_settings(emuenv, action->settings);
-                vita3k_ios_update_library(games, native_settings(emuenv.cfg));
+                vita3k_ios_update_library(games, native_settings(emuenv));
+                break;
+            case Vita3KIOSFrontendActionKind::ImportGame:
+                LOG_INFO("Importing game archive: {}", action->app_path);
+                start_import(emuenv, action->app_path, false);
+                break;
+            case Vita3KIOSFrontendActionKind::ImportFirmware:
+                LOG_INFO("Importing firmware PUP: {}", action->app_path);
+                start_import(emuenv, action->app_path, true);
                 break;
             case Vita3KIOSFrontendActionKind::Quit:
                 vita3k_ios_hide_library();
@@ -443,11 +523,14 @@ int main(int argc, char *argv[]) {
         LOG_ERROR("SDL_CreateProperties failed: {}", SDL_GetError());
         return -1;
     }
-    SDL_SetStringProperty(window_props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Vita3K");
+    SDL_SetStringProperty(window_props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Tsubomi");
     SDL_SetNumberProperty(window_props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, 960);
     SDL_SetNumberProperty(window_props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, 544);
+    // HIGH_PIXEL_DENSITY is essential: without it SDL's Metal layer stays at
+    // contentsScale 1 and the whole game renders at point resolution (the
+    // 402x874 "extremely pixelated" drawable seen in device logs).
     SDL_SetNumberProperty(window_props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER,
-        SDL_WINDOW_VULKAN | SDL_WINDOW_FULLSCREEN);
+        SDL_WINDOW_VULKAN | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 
     SDL_Window *window = SDL_CreateWindowWithProperties(window_props);
     SDL_DestroyProperties(window_props);
@@ -456,18 +539,20 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    // Library -> game -> library loop: quitting a game returns to the
+    // library instead of leaving a dead process behind (the old "freeze").
+    bool app_terminating = false;
+    bool jit_pool_prewarmed = false;
+    while (!app_terminating) {
     auto launch_request = choose_boot_title(*emuenv);
-    if (!launch_request) {
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 0;
-    }
+    if (!launch_request)
+        break;
 
     app::AppSessionController session_controller(*emuenv);
     SDL_Log("Vita3K iOS: begin_launch '%s'", launch_request->app_path.c_str());
     if (!session_controller.begin_launch(*launch_request)) {
         LOG_ERROR("Could not find app '{}' in apps list.", launch_request->app_path);
-        return -1;
+        continue;
     }
 
     IOSFrameHost frame_host(window);
@@ -488,15 +573,18 @@ int main(int argc, char *argv[]) {
     // StikDebug is known to be attached. iOS 26 keeps these RX/RW aliases
     // executable after the debugger app is suspended, so later guest worker
     // threads can take a prepared region without issuing BRK #0xf00d.
-    constexpr std::size_t IOS_JIT_CACHE_SIZE = 16 * 1024 * 1024;
-    constexpr std::size_t IOS_JIT_POOL_TARGET = 24;
-    const std::size_t warmed_jit_regions =
-        prewarm_ios_jit_code_cache_pool(IOS_JIT_POOL_TARGET, IOS_JIT_CACHE_SIZE);
-    if (warmed_jit_regions < IOS_JIT_POOL_TARGET) {
-        LOG_CRITICAL("iOS JIT region pool is under target: target={} available={}",
-            IOS_JIT_POOL_TARGET, warmed_jit_regions);
-        if (auto logger = spdlog::default_logger())
-            logger->flush();
+    if (!jit_pool_prewarmed) {
+        constexpr std::size_t IOS_JIT_CACHE_SIZE = 16 * 1024 * 1024;
+        constexpr std::size_t IOS_JIT_POOL_TARGET = 24;
+        const std::size_t warmed_jit_regions =
+            prewarm_ios_jit_code_cache_pool(IOS_JIT_POOL_TARGET, IOS_JIT_CACHE_SIZE);
+        if (warmed_jit_regions < IOS_JIT_POOL_TARGET) {
+            LOG_CRITICAL("iOS JIT region pool is under target: target={} available={}",
+                IOS_JIT_POOL_TARGET, warmed_jit_regions);
+            if (auto logger = spdlog::default_logger())
+                logger->flush();
+        }
+        jit_pool_prewarmed = true;
     }
 
     SDL_Log("Vita3K iOS: load_and_run");
@@ -569,8 +657,15 @@ int main(int argc, char *argv[]) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
+            case SDL_EVENT_TERMINATING:
+                app_terminating = true;
+                running = false;
+                break;
+
             case SDL_EVENT_QUIT:
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                // In-game menu "Quit Game" pushes SDL_EVENT_QUIT: end the
+                // session and fall back to the library.
                 running = false;
                 break;
 
@@ -657,8 +752,21 @@ int main(int argc, char *argv[]) {
     guest_watchdog.join();
     vita3k_ios_hide_perf_overlay();
     vita3k_ios_hide_virtual_controller();
-    session_controller.stop(app::AppSessionStopReason::FrontendShutdown);
+    session_controller.stop(app_terminating
+            ? app::AppSessionStopReason::FrontendShutdown
+            : app::AppSessionStopReason::UserRequest);
     if (has_virtual_controller)
         vita3k_ios_detach_virtual_controller();
+
+    // Match the Android frontend: drop the SDL audio adapter so the next
+    // session opens a fresh device instead of reusing torn-down state.
+    emuenv->audio.adapter.reset();
+    emuenv->audio.audio_backend.clear();
+
+    LOG_INFO("Returning to game library");
+    } // while (!app_terminating)
+
+    SDL_DestroyWindow(window);
+    SDL_Quit();
     return 0;
 }

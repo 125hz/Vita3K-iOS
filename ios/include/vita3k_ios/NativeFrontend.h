@@ -25,12 +25,17 @@ struct Vita3KIOSSettings {
     bool ngs_enable = true;
     bool async_pipeline_compilation = true;
     int anisotropic_filtering = 1;
+    // Display-only: installed firmware version shown on the library header.
+    std::string firmware_version;
 };
 
 enum class Vita3KIOSFrontendActionKind {
     Launch,
     Refresh,
     ApplySettings,
+    // app_path carries the local file path of the picked archive/PUP.
+    ImportGame,
+    ImportFirmware,
     Quit,
 };
 
@@ -53,3 +58,6 @@ void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_r
 // HUD only appears when the user enabled at least one metric in settings.
 void vita3k_ios_update_perf_overlay(float guest_fps);
 void vita3k_ios_hide_perf_overlay();
+
+// Dismisses the import-in-progress overlay and shows the outcome message.
+void vita3k_ios_report_import_result(const std::string &message);
