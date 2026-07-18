@@ -58,9 +58,11 @@ sideload a new build.
 
 ## Screenshots
 
-![Amagami ebKore+](_readme/screenshots/Amagami%20ebKore+.jpg)
+![Persona 4 Golden](_readme/screenshots/Persona%204%20Golden.png)
 
-_More screenshots will be added as compatibility improves._
+![VA-11 HALL-A](_readme/screenshots/VA-11%20HALL-A.png)
+
+![Amagami Ebikore+](_readme/screenshots/Amagami%20Ebikore+.png)
 
 ## Building
 
@@ -72,4 +74,3 @@ and sideload yourself. iOS is the only supported target.
 
 - **[Vita3K](https://github.com/Vita3K/Vita3K)** and its contributors — the emulator
   Tsubomi is built on.
-- The Tsubomi iOS port.
