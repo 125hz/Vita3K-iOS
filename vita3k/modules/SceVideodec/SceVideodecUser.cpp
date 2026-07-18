@@ -217,7 +217,7 @@ EXPORT(int, sceAvcdecDecode, SceAvcdecCtrl *decoder, const SceAvcdecAu *au, SceA
     // stalled avPlayer from a broken decode path.
     LOG_INFO_ONCE("First sceAvcdecDecode: es_size={} frame={}x{} pixelType=0x{:X} send={} received={}",
         au->es.size, pPicture->frame.frameWidth, pPicture->frame.frameHeight,
-        pPicture->frame.pixelType, send, received);
+        static_cast<uint32_t>(pPicture->frame.pixelType), send, received);
     if (received) {
         decoder_info->get_res(pPicture->frame.horizontalSize, pPicture->frame.verticalSize);
         decoder_info->get_pts(pPicture->info.pts.upper, pPicture->info.pts.lower);
