@@ -30,6 +30,7 @@
 #include <packages/archive.h>
 #include <packages/functions.h>
 #include <packages/license.h>
+#include <packages/pkg.h>
 #include <packages/sfo.h>
 #include <compat/functions.h>
 #include <compat/state.h>
@@ -130,18 +131,47 @@ private:
     SDL_Window *m_window = nullptr;
 };
 
-// True when a JIT-enabling debugger (StikDebug and similar) is attached.
-// Writable-executable guest memory is only granted to a traced process, so
-// this gates whether games can boot. Probing P_TRACED via sysctl is a cheap,
-// public, side-effect-free check — unlike the BRK #0xf00d bridge, which kills
-// the process outright when no debugger is present.
+// csops() is a private syscall but is the standard way to read the code-signing
+// status flags. CS_DEBUGGED stays set for the process lifetime once a debugger
+// has attached and enabled invalid-page execution (JIT), whereas P_TRACED drops
+// the moment StikDebug detaches.
+extern "C" int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
+#ifndef CS_OPS_STATUS
+#define CS_OPS_STATUS 0
+#endif
+#ifndef CS_DEBUGGED
+#define CS_DEBUGGED 0x10000000u
+#endif
+
+// True when JIT (writable-executable guest memory) is available. StikDebug
+// commonly enables JIT and then DETACHES, so P_TRACED alone would flip back to
+// false and wrongly re-raise the "JIT disabled" banner mid-session. Prefer
+// CS_DEBUGGED (persists after detach) and additionally latch: once JIT has been
+// observed available this process lifetime, never report it unavailable again.
+// The unavailable -> available upgrade path (user attaches later) still works.
 bool ios_jit_available() {
-    struct kinfo_proc info{};
-    std::size_t size = sizeof(info);
-    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
-    if (sysctl(mib, 4, &info, &size, nullptr, 0) != 0)
-        return false;
-    return (info.kp_proc.p_flag & P_TRACED) != 0;
+    static std::atomic_bool ever_available{ false };
+    if (ever_available.load(std::memory_order_relaxed))
+        return true;
+
+    bool available = false;
+    uint32_t cs_flags = 0;
+    if (csops(getpid(), CS_OPS_STATUS, &cs_flags, sizeof(cs_flags)) == 0)
+        available = (cs_flags & CS_DEBUGGED) != 0;
+
+    if (!available) {
+        // Fallback: a debugger currently attached (P_TRACED) even if CS_DEBUGGED
+        // was not observed (older jailbreak/JIT tools).
+        struct kinfo_proc info{};
+        std::size_t size = sizeof(info);
+        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+        if (sysctl(mib, 4, &info, &size, nullptr, 0) == 0)
+            available = (info.kp_proc.p_flag & P_TRACED) != 0;
+    }
+
+    if (available)
+        ever_available.store(true, std::memory_order_relaxed);
+    return available;
 }
 
 fs::path ios_storage_path() {
@@ -565,10 +595,34 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
             case Vita3KIOSFrontendActionKind::ImportLicense: {
                 LOG_INFO("Importing NoNpDrm work.bin license: {}", action->app_path);
                 const bool copied = copy_license(emuenv, fs::path(action->app_path));
+                // A NoNpDrm dump's ux0:app content is still PFS-encrypted on
+                // disk; copying the .rif alone leaves eboot.bin/PNGs encrypted
+                // (decrypt_fself fails, art won't decode). Decrypt the installed
+                // title in place with the work.bin, exactly like desktop.
+                bool decrypted = false;
+                if (copied && !emuenv.license_title_id.empty()) {
+                    const fs::path title_path = emuenv.vita_fs_path / "ux0/app" / emuenv.license_title_id;
+                    boost::system::error_code exists_error;
+                    if (fs::exists(title_path, exists_error) && !exists_error) {
+                        try {
+                            decrypted = decrypt_install_nonpdrm(emuenv, fs::path(action->app_path), title_path);
+                        } catch (const std::exception &error) {
+                            LOG_ERROR("NoNpDrm content decrypt failed: {}", error.what());
+                        }
+                    }
+                }
                 boost::system::error_code cleanup_error;
                 fs::remove(fs::path(action->app_path), cleanup_error);
+                // Rescan so the (now decryptable) art and titles refresh without
+                // an app restart.
+                if (!app::init_apps_list(emuenv))
+                    LOG_ERROR("Failed to rescan apps after license import.");
+                games = native_games(emuenv);
+                vita3k_ios_update_library(games, native_settings(emuenv));
                 vita3k_ios_report_import_result(
-                    copied ? "License installed" : "License import failed (see vita3k.log)", copied);
+                    copied ? (decrypted ? "License installed; content decrypted"
+                                        : "License installed")
+                           : "License import failed (see tsubomi.log)", copied);
                 break;
             }
             case Vita3KIOSFrontendActionKind::Quit:
@@ -741,40 +795,56 @@ int main(int argc, char *argv[]) {
 
     IOSFrameHost frame_host(window);
 
-    SDL_Log("Vita3K iOS: initialize_renderer (Vulkan/MoltenVK)");
-    if (!session_controller.initialize_renderer(frame_host)) {
-        LOG_ERROR("Failed to initialise renderer.");
-        return -1;
-    }
+    // A failed launch (bad renderer init, encrypted/undecryptable content, a
+    // throwing loader) must return to the library with an explanation instead
+    // of tearing the whole app down (the old "Unhandled std::terminate()").
+    std::string boot_error;
+    try {
+        SDL_Log("Vita3K iOS: initialize_renderer (Vulkan/MoltenVK)");
+        if (!session_controller.initialize_renderer(frame_host)) {
+            boot_error = "Could not initialise the graphics renderer.";
+        } else {
+            SDL_Log("Vita3K iOS: initialize_runtime (kernel/CPU - requires JIT)");
+            if (!session_controller.initialize_runtime()) {
+                boot_error = "Could not initialise the runtime. Make sure JIT is enabled.";
+            } else {
+                // Prepare every JIT mapping the session is expected to need
+                // while StikDebug is known to be attached. iOS 26 keeps these
+                // RX/RW aliases executable after the debugger app is suspended.
+                if (!jit_pool_prewarmed) {
+                    constexpr std::size_t IOS_JIT_CACHE_SIZE = 16 * 1024 * 1024;
+                    constexpr std::size_t IOS_JIT_POOL_TARGET = 24;
+                    const std::size_t warmed_jit_regions =
+                        prewarm_ios_jit_code_cache_pool(IOS_JIT_POOL_TARGET, IOS_JIT_CACHE_SIZE);
+                    if (warmed_jit_regions < IOS_JIT_POOL_TARGET) {
+                        LOG_CRITICAL("iOS JIT region pool is under target: target={} available={}",
+                            IOS_JIT_POOL_TARGET, warmed_jit_regions);
+                        if (auto logger = spdlog::default_logger())
+                            logger->flush();
+                    }
+                    jit_pool_prewarmed = true;
+                }
 
-    SDL_Log("Vita3K iOS: initialize_runtime (kernel/CPU - requires JIT)");
-    if (!session_controller.initialize_runtime()) {
-        LOG_ERROR("Failed late initialisation.");
-        return -1;
-    }
-
-    // Prepare every JIT mapping the session is expected to need while
-    // StikDebug is known to be attached. iOS 26 keeps these RX/RW aliases
-    // executable after the debugger app is suspended, so later guest worker
-    // threads can take a prepared region without issuing BRK #0xf00d.
-    if (!jit_pool_prewarmed) {
-        constexpr std::size_t IOS_JIT_CACHE_SIZE = 16 * 1024 * 1024;
-        constexpr std::size_t IOS_JIT_POOL_TARGET = 24;
-        const std::size_t warmed_jit_regions =
-            prewarm_ios_jit_code_cache_pool(IOS_JIT_POOL_TARGET, IOS_JIT_CACHE_SIZE);
-        if (warmed_jit_regions < IOS_JIT_POOL_TARGET) {
-            LOG_CRITICAL("iOS JIT region pool is under target: target={} available={}",
-                IOS_JIT_POOL_TARGET, warmed_jit_regions);
-            if (auto logger = spdlog::default_logger())
-                logger->flush();
+                SDL_Log("Vita3K iOS: load_and_run");
+                if (!session_controller.load_and_run())
+                    boot_error = "Could not load or start the game. If this is a retail dump, the "
+                                 "content may still be encrypted — import the .pkg with its "
+                                 "work.bin/zRIF instead of a pre-extracted copy.";
+            }
         }
-        jit_pool_prewarmed = true;
+    } catch (const std::exception &error) {
+        boot_error = std::string("The game crashed during startup: ") + error.what();
+    } catch (...) {
+        boot_error = "The game crashed during startup.";
     }
 
-    SDL_Log("Vita3K iOS: load_and_run");
-    if (!session_controller.load_and_run()) {
-        LOG_ERROR("Failed to load or start the app session.");
-        return -1;
+    if (!boot_error.empty()) {
+        LOG_ERROR("iOS boot failed: {}", boot_error);
+        session_controller.stop(app::AppSessionStopReason::UserRequest);
+        emuenv->audio.adapter.reset();
+        emuenv->audio.audio_backend.clear();
+        vita3k_ios_show_boot_error(boot_error);
+        continue;
     }
 
     LOG_INFO("Game started: {} ({})", emuenv->current_app_title, launch_request->app_path);

@@ -80,3 +80,7 @@ void vita3k_ios_hide_perf_overlay();
 // surfaced as a dismissible alert (so the precise installer detail is readable)
 // while successes use the transient status label.
 void vita3k_ios_report_import_result(const std::string &message, bool success);
+
+// Dismisses the "Booting…" overlay and shows a boot-failure alert so a failed
+// launch returns to the library instead of taking the whole app down.
+void vita3k_ios_show_boot_error(const std::string &message);

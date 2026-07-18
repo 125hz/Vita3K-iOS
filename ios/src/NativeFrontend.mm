@@ -1037,6 +1037,14 @@ void vita3k_ios_report_import_result(const std::string &message, const bool succ
     });
 }
 
+void vita3k_ios_show_boot_error(const std::string &message) {
+    NSString *text = [NSString stringWithUTF8String:message.c_str()] ?: @"The game could not start.";
+    perform_on_main(^{
+        [g_library hideBusyOverlay];
+        present_alert(@"Couldn’t start game", text);
+    });
+}
+
 void vita3k_ios_set_jit_available(const bool available) {
     perform_on_main(^{
         g_jit_available = available;

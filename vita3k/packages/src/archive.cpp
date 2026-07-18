@@ -2,6 +2,8 @@
 
 #include <packages/sfo.h>
 
+#include <util/log.h>
+
 #include <miniz.h>
 
 #include <algorithm>
@@ -55,12 +57,30 @@ bool safe_title_id(std::string_view title_id) {
 
 bool existing_parent_has_symlink(const std::filesystem::path &root,
     const std::filesystem::path &relative_parent, std::error_code &error) {
+    error.clear();
     auto current = root;
     for (const auto &component : relative_parent) {
         current /= component;
-        const auto status = std::filesystem::symlink_status(current, error);
-        if (error || std::filesystem::is_symlink(status))
+        std::error_code status_error;
+        const auto status = std::filesystem::symlink_status(current, status_error);
+        // A component that does not exist yet is fine — it will be created as a
+        // normal directory (e.g. ux0/patch on the first patch install). Only a
+        // path that definitively IS a symlink, or a real error querying an
+        // existing path, should reject. The previous code treated *any* error
+        // (including not-found) as a symlink, which wrongly rejected clean zips.
+        if (status_error) {
+            if (status.type() == std::filesystem::file_type::not_found
+                || status_error == std::errc::no_such_file_or_directory)
+                continue;
+            LOG_ERROR("Archive install: cannot stat destination component '{}': {}",
+                current.string(), status_error.message());
+            error = status_error;
             return true;
+        }
+        if (std::filesystem::is_symlink(status)) {
+            LOG_ERROR("Archive install: destination component is a symlink: '{}'", current.string());
+            return true;
+        }
     }
     return false;
 }
