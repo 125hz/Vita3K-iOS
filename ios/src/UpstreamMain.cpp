@@ -1271,24 +1271,20 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // Secure the permanent universal-JIT region pool as soon as StikDebug is
-    // detected. Waiting until a game was tapped left enough time for StikDebug
-    // to detach while the user browsed the library, forcing a second attach.
-    // Once all regions are ready, the game can start after that detach.
-    bool jit_pool_prewarmed = false;
-    if (ios_debugger_attached()) {
-        LOG_INFO("StikDebug is attached at startup; preparing the permanent iOS JIT pool now");
-        jit_pool_prewarmed = prepare_ios_jit_pool();
-    }
-    const bool initial_jit_available = jit_pool_prewarmed;
+    // Probe JIT for the library, but do not allocate the permanent region pool
+    // yet. Vita3K must reserve its large guest address space first: preparing
+    // the 24 JIT mappings here fragmented that space and made mem::init fail
+    // with ENOMEM before any game could boot.
+    const bool initial_jit_available = ios_jit_available();
     vita3k_ios_set_jit_available(initial_jit_available);
     LOG_INFO("iOS JIT availability probe: {}",
-        initial_jit_available ? "available (permanent pool ready)"
-                              : "unavailable (attach StikDebug and keep it attached until preparation completes)");
+        initial_jit_available ? "available (process is traced)"
+                              : "unavailable (no debugger attached)");
 
     // Library -> game -> library loop: quitting a game returns to the
     // library instead of leaving a dead process behind (the old "freeze").
     bool app_terminating = false;
+    bool jit_pool_prewarmed = g_jit_pool_ready.load(std::memory_order_relaxed);
     while (!app_terminating) {
     auto launch_request = choose_boot_title(*emuenv);
     if (!launch_request)
@@ -1314,7 +1310,8 @@ int main(int argc, char *argv[]) {
         } else {
             SDL_Log("Vita3K iOS: initialize_runtime (kernel/CPU - requires JIT)");
             if (!session_controller.initialize_runtime()) {
-                boot_error = "Could not initialise the runtime. Make sure JIT is enabled.";
+                boot_error = "Could not initialise the emulator runtime or reserve guest memory. "
+                             "Restart Tsubomi, re-enable JIT in StikDebug, and try again.";
             } else {
                 // Prepare every JIT mapping the session is expected to need
                 // while StikDebug is known to be attached. iOS 26 keeps these
