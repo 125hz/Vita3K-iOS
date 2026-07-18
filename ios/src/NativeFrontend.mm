@@ -435,7 +435,7 @@ std::string hex_bytes(const std::string &value) {
             accessory:[self defaultsSwitch:@"vita3k.perf.fps" defaults:defaults]],
         [self row:@"Show RAM usage" hint:@"This app's physical memory footprint."
             accessory:[self defaultsSwitch:@"vita3k.perf.ram" defaults:defaults]],
-        [self row:@"Show battery %" hint:@"Approximate device level; iOS exposes it in coarse steps."
+        [self row:@"Show battery %" hint:@"Current device battery level."
             accessory:[self defaultsSwitch:@"vita3k.perf.battery" defaults:defaults]],
     ]];
 
@@ -454,14 +454,24 @@ std::string hex_bytes(const std::string &value) {
     [forkLink setTitle:@"Vita3K ↗" forState:UIControlStateNormal];
     forkLink.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     [forkLink addTarget:self action:@selector(openVita3K) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *developerLink = [UIButton buttonWithType:UIButtonTypeSystem];
+    [developerLink setTitle:@"@halcyonpalace" forState:UIControlStateNormal];
+    developerLink.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    [developerLink addTarget:self action:@selector(openDeveloperProfile) forControlEvents:UIControlEventTouchUpInside];
     [self addSection:@"About" rows:@[
         [self row:@"Version" hint:@"Tsubomi — an iOS PS Vita emulator." accessory:[self valueLabel:tsubomi_app_version()]],
         [self row:@"What's new" hint:@"Changes in this version." accessory:changelog],
         [self row:@"Forked from" hint:@"Tsubomi is built on the Vita3K emulator." accessory:forkLink],
-        [self row:@"Developed by" hint:@"twitter / discord" accessory:[self valueLabel:@"@halcyonpalace"]],
+        [self row:@"Developed by" hint:@"twitter / discord" accessory:developerLink],
         [self row:@"Thanks to" hint:@"" accessory:[self valueLabel:@"Bloom, Craig, Thomasina"]],
     ]];
     return self;
+}
+
+- (void)openDeveloperProfile {
+    [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://x.com/halcyonpalace"]
+                                    options:@{}
+                          completionHandler:nil];
 }
 
 - (void)showTitleIdsChanged:(UISwitch *)sender {
@@ -476,15 +486,19 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.5.0",
-        @"• Renamed to Tsubomi (data now in Documents/Tsubomi).\n"
-        @"• iOS audio session fix and movie/audio decode work.\n"
-        @"• Import fixes: zip symlink false-reject, NoNpDrm work.bin decrypt, "
-        @"failed boots return to the library.\n"
-        @"• JIT banner no longer reappears after StikDebug detaches.\n"
-        @"• Library: long-press to rename a game, Show title IDs toggle, "
-        @"landscape spacing, firmware version badge.\n"
-        @"• App icon, About section, and various UI polish.");
+    present_alert(@"What's new in 0.6.0",
+        @"• Games now boot past their menus: fixed the freezes in "
+        @"Persona 4 Golden, VA-11 HALL-A, and Amagami's gallery.\n"
+        @"• Fixed the crash when quitting a second game.\n"
+        @"• Faster first boot: more shader-compile workers and no more "
+        @"debugger-stalling memory traps.\n"
+        @"• Library: games scroll under a glass header, compact one-row "
+        @"header with plain glyphs, list view adapts to light mode, "
+        @"rotation no longer breaks the layout.\n"
+        @"• In-game menu: Performance HUD panel with per-element switches, "
+        @"and Back buttons that return to the menu.\n"
+        @"• Battery shows an exact percentage; tap @halcyonpalace in About "
+        @"to open the developer's profile.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -849,6 +863,15 @@ std::string hex_bytes(const std::string &value) {
     [self updateHeaderGlassVisibility];
 }
 
+// On rotation the safe areas settle after the first layout pass, so insets
+// computed during it are stale (content under the notch one way, centered the
+// other). Re-run layout and re-ask for cell sizes when they change.
+- (void)safeAreaInsetsDidChange {
+    [super safeAreaInsetsDidChange];
+    [self setNeedsLayout];
+    [self.collectionView.collectionViewLayout invalidateLayout];
+}
+
 // Fade the header material in only when content is actually behind it, the
 // way a navigation bar transitions from its scroll-edge appearance.
 - (void)updateHeaderGlassVisibility {
@@ -1050,8 +1073,14 @@ std::string hex_bytes(const std::string &value) {
 - (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)layout sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
     (void)layout;
     (void)indexPath;
-    const CGFloat width = CGRectGetWidth(collectionView.bounds)
-        - collectionView.contentInset.left - collectionView.contentInset.right;
+    // Derive the usable width from the CURRENT safe areas rather than the
+    // collection view's contentInset: during rotation this method can run
+    // before layoutSubviews has pushed the new insets, and stale insets are
+    // exactly the too-wide/too-narrow cell bugs seen on orientation change.
+    const UIEdgeInsets safe = self.safeAreaInsets;
+    const CGFloat usable = CGRectGetWidth(self.bounds) - safe.left - safe.right;
+    const CGFloat collectionInset = usable < 600 ? 10 : 18;
+    const CGFloat width = usable - collectionInset * 2;
     if (_listMode)
         return CGSizeMake(floor(width), 82);
     const CGFloat spacing = 14;
@@ -1518,11 +1547,11 @@ void vita3k_ios_update_perf_overlay(const float guest_fps) {
         }
         if (show_battery) {
             // batteryMonitoringEnabled is set once at library init, not here.
-            // iOS still reports batteryLevel in 5% steps; that granularity is an
-            // OS limitation (no public finer API — IOKit is private).
+            // With monitoring enabled, modern iOS reports batteryLevel in 1%
+            // steps, so show the plain percentage.
             const float level = UIDevice.currentDevice.batteryLevel;
             if (level >= 0)
-                [parts addObject:[NSString stringWithFormat:@"≈%.0f%%", level * 100.0f]];
+                [parts addObject:[NSString stringWithFormat:@"%.0f%%", level * 100.0f]];
         }
         g_perf_label.text = [parts componentsJoinedByString:@"  ·  "];
         [g_perf_label sizeToFit];
