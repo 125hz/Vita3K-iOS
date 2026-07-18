@@ -60,8 +60,9 @@ struct ThreadParams {
 static int SDLCALL thread_function(void *data) {
     assert(data != nullptr);
     const ThreadParams params = *static_cast<const ThreadParams *>(data);
+    params.kernel->running_thread_bodies.fetch_add(1, std::memory_order_acq_rel);
     SDL_SignalSemaphore(params.host_may_destroy_params);
-    const ThreadStatePtr thread = params.kernel->get_thread(params.thid);
+    ThreadStatePtr thread = params.kernel->get_thread(params.thid);
 #ifdef TRACY_ENABLE
     if (!thread->name.empty()) {
         tracy::SetThreadName(thread->name.c_str());
@@ -73,12 +74,28 @@ static int SDLCALL thread_function(void *data) {
 
     thread->run_loop();
     const uint32_t r0 = read_reg(*thread->cpu, 0);
+    const SceUID thid = thread->id;
+    const int corenum = get_processor_id(*thread->cpu);
 
-    params.kernel->untrack_thread_for_diagnostics(thread->id);
+    params.kernel->untrack_thread_for_diagnostics(thid);
+    ThreadStatePtr map_ref;
     {
         std::lock_guard<std::mutex> lock(params.kernel->mutex);
-        params.kernel->threads.erase(thread->id);
-        params.kernel->corenum_allocator.free_corenum(get_processor_id(*thread->cpu));
+        auto it = params.kernel->threads.find(thid);
+        if (it != params.kernel->threads.end()) {
+            map_ref = std::move(it->second);
+            params.kernel->threads.erase(it);
+        }
+        params.kernel->corenum_allocator.free_corenum(corenum);
+    }
+    // Destroy the ThreadState (guest stack free, JIT teardown) BEFORE
+    // signalling deletion: process_exit must not observe an empty thread map
+    // while these destructors still touch MemState.
+    map_ref.reset();
+    thread.reset();
+    {
+        std::lock_guard<std::mutex> lock(params.kernel->mutex);
+        params.kernel->running_thread_bodies.fetch_sub(1, std::memory_order_acq_rel);
         params.kernel->thread_deleted_cond.notify_all();
     }
     return r0;
@@ -212,7 +229,9 @@ void KernelState::process_exit() {
     }
 
     std::unique_lock<std::mutex> lock(mutex);
-    thread_deleted_cond.wait(lock, [this] { return threads.empty(); });
+    thread_deleted_cond.wait(lock, [this] {
+        return threads.empty() && running_thread_bodies.load(std::memory_order_acquire) == 0;
+    });
 }
 
 void KernelState::pause_threads() {

@@ -158,6 +158,13 @@ struct KernelState {
     static constexpr int EXCEPTION_HANDLER_MAX = 3;
     std::atomic<Address> exception_handlers[EXCEPTION_HANDLER_MAX]{};
     std::condition_variable thread_deleted_cond;
+    // Number of host thread bodies that have started and not yet released
+    // every ThreadState resource. The threads map alone is not enough for
+    // process_exit: an entry is erased before the ThreadState destructor
+    // frees the guest stack, so teardown could reset MemState while that
+    // free was still in flight (observed as a crash when quitting a second
+    // title on iOS).
+    std::atomic<int> running_thread_bodies{ 0 };
 
     SceUID get_next_uid() {
         return next_uid++;
