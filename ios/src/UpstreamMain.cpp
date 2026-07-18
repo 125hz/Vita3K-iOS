@@ -51,6 +51,8 @@
 
 #include <csignal>
 #include <dlfcn.h>
+#include <execinfo.h>
+#include <os/proc.h>
 #include <sys/sysctl.h>
 #include <unistd.h>
 
@@ -58,6 +60,7 @@
 #include <vita3k_ios/VirtualController.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -609,10 +612,30 @@ void fatal_signal_handler(int sig, siginfo_t *info, void *uct) {
         image_base = reinterpret_cast<uintptr_t>(dl_info.dli_fbase);
     }
     // Not async-signal-safe, but the process is dying anyway and this is the
-    // only channel that reaches vita3k.log before the kill.
-    LOG_CRITICAL("FATAL SIGNAL {}: PC=0x{:X} (image '{}' +0x{:X}) fault_addr=0x{:X}",
+    // only channel that reaches the log before the kill.
+    LOG_CRITICAL("FATAL SIGNAL {}: PC=0x{:X} (image '{}' +0x{:X}) fault_addr=0x{:X} available_mem={} MiB",
         sig, pc, image, image_base ? pc - image_base : 0,
-        info ? reinterpret_cast<uintptr_t>(info->si_addr) : 0);
+        info ? reinterpret_cast<uintptr_t>(info->si_addr) : 0,
+        static_cast<unsigned long long>(os_proc_available_memory() / (1024 * 1024)));
+
+    // Host-side backtrace of the crashing thread. backtrace_symbols_fd is
+    // async-signal-safe and reaches the device console; also log the raw
+    // frames so they land in the file log we ship back.
+    void *frames[64];
+    const int frame_count = backtrace(frames, 64);
+    backtrace_symbols_fd(frames, frame_count, STDERR_FILENO);
+    for (int i = 0; i < frame_count; ++i) {
+        Dl_info frame_info{};
+        const char *frame_image = "?";
+        uintptr_t frame_off = 0;
+        if (dladdr(frames[i], &frame_info) && frame_info.dli_fname) {
+            frame_image = frame_info.dli_fname;
+            frame_off = reinterpret_cast<uintptr_t>(frames[i])
+                - reinterpret_cast<uintptr_t>(frame_info.dli_fbase);
+        }
+        LOG_CRITICAL("  #{:02} 0x{:X} ({} +0x{:X})", i,
+            reinterpret_cast<uintptr_t>(frames[i]), frame_image, frame_off);
+    }
     if (auto logger = spdlog::default_logger())
         logger->flush();
     signal(sig, SIG_DFL);
@@ -620,8 +643,16 @@ void fatal_signal_handler(int sig, siginfo_t *info, void *uct) {
 }
 
 void install_fatal_signal_logger() {
+    // Run the handler on its own stack so a stack-overflow fault can still be
+    // reported instead of double-faulting silently.
+    static std::array<char, SIGSTKSZ> alt_stack_storage;
+    stack_t alt_stack{};
+    alt_stack.ss_sp = alt_stack_storage.data();
+    alt_stack.ss_size = alt_stack_storage.size();
+    sigaltstack(&alt_stack, nullptr);
+
     struct sigaction sa{};
-    sa.sa_flags = SA_SIGINFO;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigemptyset(&sa.sa_mask);
     sa.sa_sigaction = fatal_signal_handler;
     // SIGSEGV/SIGBUS belong to mem.cpp's guest-fault handler; it raises
@@ -786,6 +817,16 @@ int main(int argc, char *argv[]) {
             if (setframe_count != last_setframe_seen) {
                 last_setframe_seen = setframe_count;
                 last_setframe_change_ms = now_ms;
+            }
+
+            // Sample the OS memory headroom every ~2s. If a freeze is really a
+            // jetsam kill, the log shows this number collapsing toward zero
+            // right before the process dies (no signal is delivered for jetsam).
+            static Uint64 last_mem_log_ms = 0;
+            if (now_ms - last_mem_log_ms >= 2000) {
+                last_mem_log_ms = now_ms;
+                LOG_INFO("iOS memory headroom: {} MiB available before jetsam",
+                    static_cast<unsigned long long>(os_proc_available_memory() / (1024 * 1024)));
             }
 
             if (next_scheduled_dump < std::size(scheduled_dump_at_ms)

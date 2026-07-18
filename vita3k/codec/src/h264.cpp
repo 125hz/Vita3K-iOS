@@ -23,6 +23,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 }
 
+#include <algorithm>
 #include <cassert>
 
 void copy_yuv_data_from_frame(AVFrame *frame, uint8_t *dest, const uint32_t width, const uint32_t height, bool is_p3) {
@@ -120,7 +121,26 @@ bool H264DecoderState::receive(uint8_t *data, DecoderSize *size) {
     }
 
     if (data) {
-        copy_yuv_data_from_frame(frame, data, width_in, height_in, output_yuvp3);
+        // Guard the copy against decoder output that does not match the
+        // guest-requested planar-YUV420 layout or is smaller than requested.
+        // Copying width_in*height_in unconditionally read past ffmpeg's planes
+        // and hard-crashed the process on iOS as the P4G intro movie's first
+        // frame decoded.
+        const bool planar_yuv420 = (frame->format == AV_PIX_FMT_YUV420P
+                                       || frame->format == AV_PIX_FMT_YUVJ420P)
+            && frame->data[0] && frame->data[1] && frame->data[2];
+        if (!planar_yuv420) {
+            LOG_WARN("H264 frame format {} unsupported for YUV420 copy; dropping frame.",
+                static_cast<int>(frame->format));
+            av_frame_free(&frame);
+            return false;
+        }
+        const uint32_t copy_width = std::min<uint32_t>(width_in, static_cast<uint32_t>(frame->width));
+        const uint32_t copy_height = std::min<uint32_t>(height_in, static_cast<uint32_t>(frame->height));
+        if (copy_width != width_in || copy_height != height_in)
+            LOG_WARN_ONCE("H264 output {}x{} smaller than requested {}x{}; clamping copy.",
+                frame->width, frame->height, width_in, height_in);
+        copy_yuv_data_from_frame(frame, data, copy_width, copy_height, output_yuvp3);
     }
 
     if (size) {
@@ -174,6 +194,15 @@ H264DecoderState::H264DecoderState(uint32_t width, uint32_t height) {
     assert(context);
     context->width = width;
     context->height = height;
+
+#ifdef VITA3K_PLATFORM_IOS
+    // Single-threaded decode on iOS: frame/slice threading spawns worker
+    // pthreads whose faults bypass our fatal-signal logger (a silent process
+    // death as the P4G movie started), and it multiplies the decoder's buffer
+    // footprint right when memory is tightest during movie playback.
+    context->thread_count = 1;
+    context->thread_type = 0;
+#endif
 
     int result = avcodec_open2(context, codec, nullptr);
     assert(result == 0);
