@@ -44,6 +44,7 @@ void SDLCALL SDLAudioAdapter::thread_wakeup_callback(void *userdata, SDL_AudioSt
     assert(userdata != nullptr);
     assert(stream != nullptr);
     SDLAudioOutPort *port = static_cast<SDLAudioOutPort *>(userdata);
+    port->adapter.state.device_pulls.fetch_add(1, std::memory_order_relaxed);
     const int samples_available = port->adapter.get_rest_sample(*port);
     if (samples_available < get_threshold_samples(port->adapter.device_buffer_samples) || additional_amount > 0) {
         port->cond_var.notify_one();
@@ -110,6 +111,7 @@ void SDLAudioAdapter::audio_output(AudioOutPort &out_port, const void *buffer) {
 
     //  Put audio to the port's stream and see how much is left to play.
     SDLAudioOutPort &port = static_cast<SDLAudioOutPort &>(out_port);
+    state.output_calls.fetch_add(1, std::memory_order_relaxed);
     // If there's lots of audio left to play, stop this thread.
     // The audio callback will wake it up later when it's running out of data.
     const int samples_available = get_rest_sample(port);

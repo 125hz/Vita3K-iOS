@@ -173,6 +173,7 @@ void process_batches(renderer::State &state, const FeatureState &features, MemSt
 
         state.command_buffer_queue.pop();
         process_batch(state, features, mem, config, *cmd_list);
+        state.batches_processed.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

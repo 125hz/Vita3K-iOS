@@ -94,6 +94,12 @@ struct AudioState {
     std::string audio_backend;
     float global_volume = 1;
 
+    // Diagnostic counters: guest-side buffer submissions and host-side device
+    // pulls. Comparing them across two guest-state dumps shows whether the
+    // host audio device is still draining while a title appears frozen.
+    std::atomic<uint64_t> output_calls{ 0 };
+    std::atomic<uint64_t> device_pulls{ 0 };
+
     bool init(const std::string &adapter_name);
     void deinit();
     void stop_all_ports();

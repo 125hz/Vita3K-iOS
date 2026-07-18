@@ -121,6 +121,11 @@ struct State {
     // Diagnostic counter: number of frames the host render loop has presented.
     std::atomic<uint64_t> host_frames_presented{ 0 };
 
+    // Diagnostic counter: number of GXM command batches executed by the
+    // render loop. If this stops advancing while guest threads keep queueing
+    // scenes, the renderer itself (or its sync-object gating) is the stall.
+    std::atomic<uint64_t> batches_processed{ 0 };
+
     std::atomic<bool> async_flip_requested{ false };
     std::atomic<int> pending_vsync{ -1 };
 

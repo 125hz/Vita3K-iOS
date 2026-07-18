@@ -32,9 +32,12 @@
 #include <kernel/state.h>
 #include <kernel/sync_primitives.h>
 #include <kernel/thread/thread_state.h>
+#include <mem/functions.h>
+#include <mem/ptr.h>
 #include <ngs/scheduler.h>
 #include <ngs/state.h>
 #include <ngs/system.h>
+#include <nids/functions.h>
 #include <renderer/state.h>
 #include <util/log.h>
 
@@ -93,8 +96,9 @@ static void dump_display_state(EmuEnvState &emuenv) {
     }
 
     if (emuenv.renderer)
-        LOG_INFO("Renderer: should_display={} host_frames_presented={}",
-            emuenv.renderer->should_display, emuenv.renderer->host_frames_presented.load());
+        LOG_INFO("Renderer: should_display={} host_frames_presented={} batches_processed={}",
+            emuenv.renderer->should_display, emuenv.renderer->host_frames_presented.load(),
+            emuenv.renderer->batches_processed.load(std::memory_order_relaxed));
 }
 
 static void dump_threads(EmuEnvState &emuenv) {
@@ -150,9 +154,29 @@ static void dump_threads(EmuEnvState &emuenv) {
         };
         const SceKernelModuleInfo *pc_module = module_for_address(pc);
         const SceKernelModuleInfo *lr_module = module_for_address(lr);
-        LOG_INFO("Thread {:>4} '{}': status={} priority={} PC=0x{:08X}{} LR=0x{:08X}{} SP=0x{:08X} entry=0x{:08X}",
+        // A PC inside an HLE import stub means the thread is executing (or
+        // parked inside) that import right now. The stub layout is
+        // svc #0 / mov pc, lr / nid, and the PC sits on the mov during the
+        // HLE call, so the NID names the exact API the thread is stuck in.
+        const auto import_at_pc = [&emuenv](uint32_t addr) -> std::string {
+            addr &= ~1u;
+            if ((addr & 3) || !is_valid_addr_range(emuenv.mem, addr, addr + 12))
+                return "";
+            const uint32_t *words = Ptr<uint32_t>(addr).get(emuenv.mem);
+            if (!words)
+                return "";
+            uint32_t nid = 0;
+            if (words[0] == 0xe1a0f00e)
+                nid = words[1];
+            else if (words[0] == 0xef000000 && words[1] == 0xe1a0f00e)
+                nid = words[2];
+            else
+                return "";
+            return fmt::format(" import={}(0x{:08X})", import_name(nid), nid);
+        };
+        LOG_INFO("Thread {:>4} '{}': status={} priority={} PC=0x{:08X}{}{} LR=0x{:08X}{} SP=0x{:08X} entry=0x{:08X}",
             thread->id, thread->name, thread_status_str(thread->status), thread->priority,
-            pc, pc_module ? fmt::format(" ({})", pc_module->module_name) : "",
+            pc, pc_module ? fmt::format(" ({})", pc_module->module_name) : "", import_at_pc(pc),
             lr, lr_module ? fmt::format(" ({})", lr_module->module_name) : "",
             sp, thread->entry_point);
     }
@@ -230,9 +254,20 @@ static void dump_primitives(EmuEnvState &emuenv, const char *kind, PrimMap &prim
 
 static void dump_audio_state(EmuEnvState &emuenv) {
     std::unique_lock<std::mutex> lock(emuenv.audio.mutex, std::try_to_lock);
-    LOG_INFO("Audio: backend='{}' adapter_present={} out_ports={}",
+    LOG_INFO("Audio: backend='{}' adapter_present={} out_ports={} output_calls={} device_pulls={}",
         emuenv.audio.audio_backend, emuenv.audio.adapter != nullptr,
-        lock.owns_lock() ? std::to_string(emuenv.audio.out_ports.size()) : "(busy)");
+        lock.owns_lock() ? std::to_string(emuenv.audio.out_ports.size()) : "(busy)",
+        emuenv.audio.output_calls.load(std::memory_order_relaxed),
+        emuenv.audio.device_pulls.load(std::memory_order_relaxed));
+    if (!lock.owns_lock() || !emuenv.audio.adapter)
+        return;
+    for (const auto &[port_id, port] : emuenv.audio.out_ports) {
+        if (!port)
+            continue;
+        LOG_INFO("Audio port {}: len={} freq={} mode={} stopping={} rest_samples={}",
+            port_id, port->len, port->freq, port->mode, port->stopping.load(),
+            emuenv.audio.adapter->get_rest_sample(*port));
+    }
 }
 
 static void dump_ngs_state(EmuEnvState &emuenv) {
