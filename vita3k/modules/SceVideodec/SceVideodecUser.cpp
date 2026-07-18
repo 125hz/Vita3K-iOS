@@ -211,7 +211,14 @@ EXPORT(int, sceAvcdecDecode, SceAvcdecCtrl *decoder, const SceAvcdecAu *au, SceA
     decoder_info->configure(&options);
     const auto send = decoder_info->send(au->es.pBuf.cast<uint8_t>().get(emuenv.mem), au->es.size);
     decoder_info->set_res(pPicture->frame.frameWidth, pPicture->frame.frameHeight);
-    if (send && decoder_info->receive(output)) {
+    const bool received = send && decoder_info->receive(output);
+    // One-shot proof that guest video (e.g. P4G's intro movie) actually reaches
+    // the H264 decoder and produces a frame, so a device log can distinguish a
+    // stalled avPlayer from a broken decode path.
+    LOG_INFO_ONCE("First sceAvcdecDecode: es_size={} frame={}x{} pixelType=0x{:X} send={} received={}",
+        au->es.size, pPicture->frame.frameWidth, pPicture->frame.frameHeight,
+        pPicture->frame.pixelType, send, received);
+    if (received) {
         decoder_info->get_res(pPicture->frame.horizontalSize, pPicture->frame.verticalSize);
         decoder_info->get_pts(pPicture->info.pts.upper, pPicture->info.pts.lower);
         picture->numOfOutput++;

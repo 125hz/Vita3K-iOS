@@ -163,8 +163,10 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
         // With valid extradata this should no longer happen for P4G's raw AUs;
         // keep the silent frame only as a last resort so one bad packet can't
         // wedge the avPlayer clock, and log it so it is visible if it recurs.
-        LOG_WARN_ONCE("Aac decode error ({}); emitting silence. ffmpeg '{}', packet {} bytes, extradata {} bytes.",
-            codec_error_name(err), av_version_info(), size, context->extradata_size);
+        LOG_WARN_ONCE("Aac decode error ({}); emitting silence. ffmpeg '{}', packet {} bytes, extradata {} bytes, "
+                      "head {:02X} {:02X} {:02X} {:02X} (0xFFFx=ADTS).",
+            codec_error_name(err), av_version_info(), size, context->extradata_size,
+            size > 0 ? data[0] : 0, size > 1 ? data[1] : 0, size > 2 ? data[2] : 0, size > 3 ? data[3] : 0);
         if (!emit_silence()) {
             LOG_WARN("Failed to allocate AAC silence frame: {}.", codec_error_name(err));
             return false;
