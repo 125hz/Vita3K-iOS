@@ -64,6 +64,16 @@ void present_alert(NSString *title, NSString *message) {
     [root presentViewController:alert animated:YES completion:nil];
 }
 
+// Per-title display-name override (a frontend-only rename), keyed by title id.
+NSString *title_override_key(NSString *identifier) {
+    return [@"tsubomi.title_override." stringByAppendingString:identifier ?: @""];
+}
+
+NSString *display_title(NSString *identifier, NSString *original) {
+    NSString *override = [NSUserDefaults.standardUserDefaults stringForKey:title_override_key(identifier)];
+    return override.length ? override : original;
+}
+
 UIVisualEffect *glass_effect(const BOOL interactive = YES) {
     if (@available(iOS 26.0, *)) {
         UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
@@ -687,8 +697,72 @@ std::string hex_bytes(const std::string &value) {
         title = [NSString stringWithFormat:@"Unknown title (%@)", identifier];
     }
     NSString *iconPath = [NSString stringWithUTF8String:game.icon_path.c_str()];
-    [cell configureTitle:title identifier:identifier iconPath:iconPath];
+    [cell configureTitle:display_title(identifier, title) identifier:identifier iconPath:iconPath];
     return cell;
+}
+
+- (void)promptRename:(NSString *)identifier original:(NSString *)original {
+    UIViewController *root = active_window().rootViewController;
+    if (!root)
+        return;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Rename game"
+                                                                  message:original
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.text = display_title(identifier, original);
+        field.clearButtonMode = UITextFieldViewModeWhileEditing;
+        field.autocapitalizationType = UITextAutocapitalizationTypeWords;
+    }];
+    __weak Vita3KLibraryView *weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault
+        handler:^(__unused UIAlertAction *action) {
+            NSString *entered = [alert.textFields.firstObject.text
+                stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+            // An empty name clears the override (restores the SFO title).
+            if (entered.length && ![entered isEqualToString:original])
+                [defaults setObject:entered forKey:title_override_key(identifier)];
+            else
+                [defaults removeObjectForKey:title_override_key(identifier)];
+            [weakSelf.collectionView reloadData];
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [root presentViewController:alert animated:YES completion:nil];
+}
+
+- (UIContextMenuConfiguration *)collectionView:(UICollectionView *)collectionView
+    contextMenuConfigurationForItemAtIndexPath:(NSIndexPath *)indexPath
+                                         point:(CGPoint)point {
+    (void)collectionView;
+    (void)point;
+    if (indexPath.item >= static_cast<NSInteger>(_games.size()))
+        return nil;
+    const auto &game = _games.at(static_cast<std::size_t>(indexPath.item));
+    NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
+    NSString *original = [NSString stringWithUTF8String:game.title.c_str()] ?: identifier;
+    __weak Vita3KLibraryView *weakSelf = self;
+    return [UIContextMenuConfiguration configurationWithIdentifier:nil
+        previewProvider:nil
+         actionProvider:^UIMenu *(__unused NSArray<UIMenuElement *> *suggested) {
+            UIAction *rename = [UIAction actionWithTitle:@"Rename"
+                image:[UIImage systemImageNamed:@"pencil"]
+                identifier:nil
+                handler:^(__unused UIAction *action) { [weakSelf promptRename:identifier original:original]; }];
+            NSString *overrideName = [NSUserDefaults.standardUserDefaults stringForKey:title_override_key(identifier)];
+            NSMutableArray<UIMenuElement *> *children = [NSMutableArray arrayWithObject:rename];
+            if (overrideName.length) {
+                UIAction *reset = [UIAction actionWithTitle:@"Reset name"
+                    image:[UIImage systemImageNamed:@"arrow.uturn.backward"]
+                    identifier:nil
+                    handler:^(__unused UIAction *action) {
+                        [NSUserDefaults.standardUserDefaults removeObjectForKey:title_override_key(identifier)];
+                        [weakSelf.collectionView reloadData];
+                    }];
+                reset.attributes = UIMenuElementAttributesDestructive;
+                [children addObject:reset];
+            }
+            return [UIMenu menuWithTitle:original children:children];
+        }];
 }
 
 - (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)layout sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
