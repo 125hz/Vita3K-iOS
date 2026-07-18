@@ -1186,6 +1186,39 @@ bool has_physical_controller(CtrlState &state) {
     });
 }
 
+constexpr std::size_t IOS_JIT_CACHE_SIZE = 16 * 1024 * 1024;
+constexpr std::size_t IOS_JIT_POOL_TARGET = 24;
+
+bool prepare_ios_jit_pool() {
+    if (g_jit_pool_ready.load(std::memory_order_relaxed))
+        return true;
+    if (!ios_debugger_attached())
+        return false;
+
+    g_unhandled_universal_jit_breakpoint.store(false, std::memory_order_relaxed);
+    try {
+        const std::size_t warmed_jit_regions =
+            prewarm_ios_jit_code_cache_pool(IOS_JIT_POOL_TARGET, IOS_JIT_CACHE_SIZE);
+        if (warmed_jit_regions < IOS_JIT_POOL_TARGET) {
+            LOG_CRITICAL("iOS JIT region pool is under target: target={} available={}",
+                IOS_JIT_POOL_TARGET, warmed_jit_regions);
+            if (auto logger = spdlog::default_logger())
+                logger->flush();
+            return false;
+        }
+    } catch (const std::exception &error) {
+        LOG_ERROR("iOS JIT region pool preparation failed: {}", error.what());
+        return false;
+    } catch (...) {
+        LOG_ERROR("iOS JIT region pool preparation failed with an unknown exception");
+        return false;
+    }
+
+    g_jit_pool_ready.store(true, std::memory_order_relaxed);
+    vita3k_ios_set_jit_available(true);
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -1238,17 +1271,24 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // Probe JIT once up front so the library banner is correct on first show;
-    // choose_boot_title re-probes each second and gates launches.
-    const bool initial_jit_available = ios_jit_available();
+    // Secure the permanent universal-JIT region pool as soon as StikDebug is
+    // detected. Waiting until a game was tapped left enough time for StikDebug
+    // to detach while the user browsed the library, forcing a second attach.
+    // Once all regions are ready, the game can start after that detach.
+    bool jit_pool_prewarmed = false;
+    if (ios_debugger_attached()) {
+        LOG_INFO("StikDebug is attached at startup; preparing the permanent iOS JIT pool now");
+        jit_pool_prewarmed = prepare_ios_jit_pool();
+    }
+    const bool initial_jit_available = jit_pool_prewarmed;
     vita3k_ios_set_jit_available(initial_jit_available);
     LOG_INFO("iOS JIT availability probe: {}",
-        initial_jit_available ? "available (process is traced)" : "unavailable (no debugger attached)");
+        initial_jit_available ? "available (permanent pool ready)"
+                              : "unavailable (attach StikDebug and keep it attached until preparation completes)");
 
     // Library -> game -> library loop: quitting a game returns to the
     // library instead of leaving a dead process behind (the old "freeze").
     bool app_terminating = false;
-    bool jit_pool_prewarmed = g_jit_pool_ready.load(std::memory_order_relaxed);
     while (!app_terminating) {
     auto launch_request = choose_boot_title(*emuenv);
     if (!launch_request)
@@ -1279,24 +1319,12 @@ int main(int argc, char *argv[]) {
                 // Prepare every JIT mapping the session is expected to need
                 // while StikDebug is known to be attached. iOS 26 keeps these
                 // RX/RW aliases executable after the debugger app is suspended.
-                if (!jit_pool_prewarmed) {
-                    constexpr std::size_t IOS_JIT_CACHE_SIZE = 16 * 1024 * 1024;
-                    constexpr std::size_t IOS_JIT_POOL_TARGET = 24;
-                    g_unhandled_universal_jit_breakpoint.store(false, std::memory_order_relaxed);
-                    const std::size_t warmed_jit_regions =
-                        prewarm_ios_jit_code_cache_pool(IOS_JIT_POOL_TARGET, IOS_JIT_CACHE_SIZE);
-                    if (warmed_jit_regions < IOS_JIT_POOL_TARGET) {
-                        LOG_CRITICAL("iOS JIT region pool is under target: target={} available={}",
-                            IOS_JIT_POOL_TARGET, warmed_jit_regions);
-                        if (auto logger = spdlog::default_logger())
-                            logger->flush();
-                        boot_error = "StikDebug detached while Tsubomi was preparing JIT. Re-enable JIT, keep "
-                                     "StikDebug attached until the game starts, then try again.";
-                        vita3k_ios_set_jit_available(false);
-                    } else {
-                        jit_pool_prewarmed = true;
-                        g_jit_pool_ready.store(true, std::memory_order_relaxed);
-                    }
+                if (!jit_pool_prewarmed && !prepare_ios_jit_pool()) {
+                    boot_error = "StikDebug detached while Tsubomi was preparing JIT. Re-enable JIT, keep "
+                                 "StikDebug attached until preparation completes, then try again.";
+                    vita3k_ios_set_jit_available(false);
+                } else {
+                    jit_pool_prewarmed = true;
                 }
 
                 if (boot_error.empty())
@@ -1312,7 +1340,7 @@ int main(int argc, char *argv[]) {
             && (g_unhandled_universal_jit_breakpoint.exchange(false, std::memory_order_relaxed)
                 || !ios_debugger_attached())) {
             boot_error = "StikDebug detached while Tsubomi was preparing JIT. Re-enable JIT, keep "
-                         "StikDebug attached until the game starts, then try again.";
+                         "StikDebug attached until preparation completes, then try again.";
             vita3k_ios_set_jit_available(false);
         } else {
             boot_error = std::string("The game crashed during startup: ") + error.what();

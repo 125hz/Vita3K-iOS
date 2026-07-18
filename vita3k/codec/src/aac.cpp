@@ -40,6 +40,48 @@ extern "C" {
 #include <cstring>
 #include <iterator>
 
+#ifdef VITA3K_PLATFORM_IOS
+namespace {
+
+// FFmpeg's public send/receive API accepts a complete AVPacket but does not
+// report how many bytes the decoder consumed. SceAudiodec requires that exact
+// count because maxEsSize is only the capacity of the guest buffer. Vita3K's
+// desktop path gets the count from FFCodec::cb.decode; vcpkg deliberately does
+// not install codec_internal.h, so mirror the prefix of FFmpeg 8.1's FFCodec
+// (the version pinned by vcpkg.json) through that callback.
+struct FFCodec81Prefix {
+    AVCodec public_codec;
+    unsigned caps_internal : 24;
+    unsigned is_decoder : 1;
+    unsigned color_ranges : 2;
+    unsigned alpha_modes : 2;
+    unsigned cb_type : 3;
+    int priv_data_size;
+    int (*update_thread_context)(AVCodecContext *, const AVCodecContext *);
+    int (*update_thread_context_for_user)(AVCodecContext *, const AVCodecContext *);
+    const void *defaults;
+    int (*init)(AVCodecContext *);
+    union {
+        int (*decode)(AVCodecContext *, AVFrame *, int *, AVPacket *);
+        void *other;
+    } cb;
+};
+
+constexpr unsigned FF_CODEC_CB_TYPE_DECODE = 0;
+
+const FFCodec81Prefix *ffmpeg81_private_decoder(const AVCodec *public_codec) {
+    if (!public_codec || std::strncmp(av_version_info(), "8.1", 3) != 0)
+        return nullptr;
+    const auto *private_codec = reinterpret_cast<const FFCodec81Prefix *>(public_codec);
+    if (!private_codec->is_decoder || private_codec->cb_type != FF_CODEC_CB_TYPE_DECODE
+        || !private_codec->cb.decode)
+        return nullptr;
+    return private_codec;
+}
+
+} // namespace
+#endif
+
 AacDecoderState::AacDecoderState(uint32_t sample_rate, uint32_t channels) {
     codec = avcodec_find_decoder(AV_CODEC_ID_AAC);
     assert(codec);
@@ -54,14 +96,9 @@ AacDecoderState::AacDecoderState(uint32_t sample_rate, uint32_t channels) {
     context->sample_rate = sample_rate;
 
 #ifdef VITA3K_PLATFORM_IOS
-    // The desktop build decodes AAC through libavcodec's private ff_codec
-    // callback, which accepts a bare raw access unit. vcpkg's iOS ffmpeg does
-    // not ship codec_internal.h, so we use the public send/receive API — and
-    // that path rejects a raw AU with no extradata (AVERROR_INVALIDDATA on
-    // ffmpeg 8.1, exactly what Persona 4 Golden's intro movie hit). SceAudiodec
-    // provides the stream configuration out of band (sample rate + channels),
-    // so synthesise the 2-byte AudioSpecificConfig the decoder needs, matching
-    // what an MP4 'esds' box would carry.
+    // SceAudiodec provides the stream configuration out of band (sample rate +
+    // channels), so synthesise the 2-byte AudioSpecificConfig expected by
+    // FFmpeg's raw-AAC decoder, matching what an MP4 'esds' box would carry.
     static const int aac_freq_table[] = { 96000, 88200, 64000, 48000, 44100,
         32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350 };
     int freq_index = -1;
@@ -119,60 +156,29 @@ uint32_t AacDecoderState::get(DecoderQuery query) {
 
 bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
     AVPacket *packet = av_packet_alloc();
-    const uint8_t *payload_data = data;
-    uint32_t payload_size = size;
-    uint32_t framing_size = 0;
-
-#ifdef VITA3K_PLATFORM_IOS
-    // P4G's SceAudiodec buffer is not a bare AAC AU: it starts with a
-    // little-endian 32-bit payload length (device capture: DE 04 00 00 =
-    // 1246 bytes) and the rest of the 1536-byte ES buffer is padding/next
-    // data. Strip that wrapper before handing the AU to FFmpeg and report the
-    // four framing bytes as consumed with it.
-    if (size >= 8 && data[2] == 0 && data[3] == 0) {
-        const uint32_t declared_size = static_cast<uint32_t>(data[0])
-            | (static_cast<uint32_t>(data[1]) << 8)
-            | (static_cast<uint32_t>(data[2]) << 16)
-            | (static_cast<uint32_t>(data[3]) << 24);
-        if (declared_size >= 8 && declared_size <= size - 4) {
-            payload_data = data + 4;
-            payload_size = declared_size;
-            framing_size = 4;
-            LOG_INFO_ONCE("AAC iOS length-prefixed AU: input={} declared_payload={} framing={} bytes.",
-                size, payload_size, framing_size);
-        }
-    }
-#endif
-
-    packet->data = const_cast<uint8_t *>(payload_data);
-    packet->size = static_cast<int>(payload_size);
+    packet->data = const_cast<uint8_t *>(data);
+    packet->size = static_cast<int>(size);
 
     av_frame_unref(frame);
 
 #ifdef VITA3K_PLATFORM_IOS
-    // sceAudiodec supplies the capacity of its ES buffer, not necessarily the
-    // exact length of the first compressed access unit. The old private FFmpeg
-    // decode callback returned the number of bytes it consumed; the public API
-    // does not. Ask FFmpeg's public AAC parser for the first frame boundary so
-    // avPlayer advances by one AU instead of discarding the entire 1536-byte
-    // buffer (the P4G FilterAu stall seen on device).
-    uint32_t parsed_consumed = framing_size + payload_size;
-    AVCodecParserContext *parser = av_parser_init(AV_CODEC_ID_AAC);
-    if (parser) {
-        uint8_t *parsed_data = nullptr;
-        int parsed_size = 0;
-        const int consumed = av_parser_parse2(parser, context, &parsed_data, &parsed_size,
-            payload_data, static_cast<int>(payload_size), AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
-        if (consumed > 0 && consumed <= static_cast<int>(payload_size) && parsed_size > 0) {
-            packet->data = parsed_data;
-            packet->size = parsed_size;
-            parsed_consumed = framing_size + static_cast<uint32_t>(consumed);
-        }
+    const FFCodec81Prefix *private_codec = ffmpeg81_private_decoder(codec);
+    int got_frame = 0;
+    const int consumed = private_codec
+        ? private_codec->cb.decode(context, frame, &got_frame, packet)
+        : AVERROR(ENOSYS);
+    av_packet_free(&packet);
+
+    if (consumed >= 0 && got_frame && consumed <= static_cast<int>(size)) {
+        es_size_used = static_cast<uint32_t>(consumed);
+        LOG_INFO_ONCE("AAC iOS exact decoder bridge: ffmpeg='{}' input={} consumed={} samples={}.",
+            av_version_info(), size, es_size_used, frame->nb_samples);
+        return true;
     }
-    // Emit one AAC frame of silence into `frame` so `receive()` still produces
-    // valid PCM and the guest movie/audio clock keeps advancing. Without this,
-    // a single decode failure permanently wedged the avPlayer intro (the
-    // endless-EAGAIN loop seen booting Persona 4 Golden on device).
+
+    // Keep a bad AAC access unit from permanently wedging the movie clock.
+    // This is a last-resort path; the log makes a future FFmpeg private-ABI
+    // mismatch or genuinely invalid packet explicit.
     const auto emit_silence = [this]() {
         av_frame_unref(frame);
         frame->format = AV_SAMPLE_FMT_FLTP;
@@ -187,62 +193,15 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
             frame->ch_layout.nb_channels, AV_SAMPLE_FMT_FLTP);
         return true;
     };
-
-    // The public send/receive API requires the caller to drain decoded frames
-    // before the decoder will accept a new packet. If a prior packet decoded
-    // but its frame was never received (e.g. after an earlier error), the next
-    // send returns EAGAIN forever unless we drain first, then resend.
-    int err = avcodec_send_packet(context, packet);
-    if (err == AVERROR(EAGAIN)) {
-        avcodec_receive_frame(context, frame);
-        av_frame_unref(frame);
-        err = avcodec_send_packet(context, packet);
-    }
-    const int decode_packet_size = packet->size;
-    av_packet_free(&packet);
-
-    if (err >= 0)
-        err = avcodec_receive_frame(context, frame);
-    if (parser)
-        av_parser_close(parser);
-
-    if (err < 0) {
-        // With valid extradata this should no longer happen for P4G's raw AUs;
-        // keep the silent frame only as a last resort so one bad packet can't
-        // wedge the avPlayer clock, and log it so it is visible if it recurs.
-        LOG_WARN_ONCE("Aac decode error ({}); emitting silence. ffmpeg '{}', input {} bytes, decoded packet {} bytes, "
-                      "extradata {} bytes, head {:02X} {:02X} {:02X} {:02X}.",
-            codec_error_name(err), av_version_info(), size, decode_packet_size, context->extradata_size,
-            size > 0 ? data[0] : 0, size > 1 ? data[1] : 0, size > 2 ? data[2] : 0, size > 3 ? data[3] : 0);
-        if (!emit_silence()) {
-            LOG_WARN("Failed to allocate AAC silence frame: {}.", codec_error_name(err));
-            return false;
-        }
-        es_size_used = parsed_consumed;
-        return true;
-    }
-
-    LOG_INFO_ONCE("AAC decode ok on iOS (ffmpeg '{}', extradata {} bytes, {} samples/frame).",
-        av_version_info(), context->extradata_size, frame->nb_samples);
-
-    // Advance the guest ES read pointer by the bytes actually consumed. For an
-    // ADTS stream that is the 13-bit frame length in the header; for a raw AU
-    // (the MP4/avPlayer case) the whole packet is one access unit.
-    es_size_used = parsed_consumed;
-    if (payload_size >= 7 && payload_data[0] == 0xFF && (payload_data[1] & 0xF6) == 0xF0) {
-        const uint32_t adts_frame_length =
-            (static_cast<uint32_t>(payload_data[3] & 0x03) << 11)
-            | (static_cast<uint32_t>(payload_data[4]) << 3)
-            | (static_cast<uint32_t>(payload_data[5]) >> 5);
-        if (adts_frame_length >= 7 && adts_frame_length <= payload_size)
-            es_size_used = framing_size + adts_frame_length;
-    }
-
-    LOG_INFO_ONCE("AAC iOS frame boundary: input={} packet={} consumed={} bytes.",
-        size, decode_packet_size, es_size_used);
-
+    LOG_WARN_ONCE("AAC iOS exact decoder bridge failed: ffmpeg='{}' bridge={} result={} got_frame={} "
+                  "input={} extradata={} head={:02X} {:02X} {:02X} {:02X}; emitting silence.",
+        av_version_info(), private_codec != nullptr, codec_error_name(consumed), got_frame,
+        size, context->extradata_size, size > 0 ? data[0] : 0, size > 1 ? data[1] : 0,
+        size > 2 ? data[2] : 0, size > 3 ? data[3] : 0);
+    if (!emit_silence())
+        return false;
+    es_size_used = size;
     return true;
-}
 #else
     const FFCodec *ff_codec = ffcodec(codec);
     int got_frame;
@@ -258,8 +217,8 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
     es_size_used = static_cast<uint32_t>(len);
 
     return true;
-}
 #endif
+}
 
 bool AacDecoderState::receive(uint8_t *data, DecoderSize *size) {
     assert(frame->format == AV_SAMPLE_FMT_FLTP);
