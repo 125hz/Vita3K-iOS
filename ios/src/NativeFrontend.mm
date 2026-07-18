@@ -95,7 +95,9 @@ NSString *game_metadata(const Vita3KIOSGameEntry &game) {
     bytes.countStyle = NSByteCountFormatterCountStyleFile;
     NSString *size = [bytes stringFromByteCount:(long long)game.size_bytes];
     const long long minutes = MAX(0, game.time_played_seconds) / 60;
-    NSString *played = minutes >= 60
+    NSString *played = game.time_played_seconds > 0 && minutes == 0
+        ? @"<1m"
+        : minutes >= 60
         ? [NSString stringWithFormat:@"%lldh %lldm", minutes / 60, minutes % 60]
         : [NSString stringWithFormat:@"%lldm", minutes];
     NSString *last = @"Never played";
@@ -1571,11 +1573,23 @@ void vita3k_ios_configure_audio_session() {
             error.localizedDescription.UTF8String ?: "unknown");
         error = nil;
     }
+    if (![session setPreferredSampleRate:48000 error:&error]) {
+        LOG_WARN("iOS audio session preferred sample rate failed: {}",
+            error.localizedDescription.UTF8String ?: "unknown");
+        error = nil;
+    }
+    constexpr NSTimeInterval preferredBufferDuration = 1024.0 / 48000.0;
+    if (![session setPreferredIOBufferDuration:preferredBufferDuration error:&error]) {
+        LOG_WARN("iOS audio session preferred buffer duration failed: {}",
+            error.localizedDescription.UTF8String ?: "unknown");
+        error = nil;
+    }
     if (![session setActive:YES error:&error]) {
         LOG_ERROR("iOS audio session activation failed: {}",
             error.localizedDescription.UTF8String ?: "unknown");
     } else {
-        LOG_INFO("iOS audio session active (Playback), sample rate {} Hz", session.sampleRate);
+        LOG_INFO("iOS audio session active (Playback), sample rate {} Hz, I/O buffer {:.2f} ms",
+            session.sampleRate, session.IOBufferDuration * 1000.0);
     }
 }
 

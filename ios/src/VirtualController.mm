@@ -80,9 +80,9 @@ static NSMutableDictionary *element(CGFloat x, CGFloat y, BOOL visible) {
 static NSMutableDictionary *landscapeElements() {
     return [@{
         @"dpad_up": element(0.14, 0.66, YES), @"dpad_down": element(0.14, 0.86, YES),
-        @"dpad_left": element(0.06, 0.76, YES), @"dpad_right": element(0.22, 0.76, YES),
+        @"dpad_left": element(0.08, 0.76, YES), @"dpad_right": element(0.20, 0.76, YES),
         @"triangle": element(0.86, 0.66, YES), @"cross": element(0.86, 0.86, YES),
-        @"square": element(0.78, 0.76, YES), @"circle": element(0.94, 0.76, YES),
+        @"square": element(0.80, 0.76, YES), @"circle": element(0.92, 0.76, YES),
         @"left_shoulder": element(0.09, 0.10, YES), @"right_shoulder": element(0.91, 0.10, YES),
         @"select": element(0.43, 0.91, YES), @"start": element(0.57, 0.91, YES),
         @"left_stick": element(0.29, 0.73, YES), @"right_stick": element(0.71, 0.73, YES),
@@ -109,7 +109,7 @@ static NSMutableDictionary *defaultConfig() {
         @"scale": @1.0,
         @"hideWhenPhysical": @YES,
         @"haptics": @YES,
-        @"layoutVersion": @2,
+        @"layoutVersion": @3,
         @"layouts": [@{@"landscape": landscapeElements(), @"portrait": portraitElements()} mutableCopy],
     } mutableCopy];
 }
@@ -185,6 +185,25 @@ static void loadConfig() {
         migrateX(@"portrait", @"square", 0.69, 0.67);
         migrateX(@"portrait", @"circle", 0.87, 0.89);
         g_controls_config[@"layoutVersion"] = @2;
+        saveConfig();
+    }
+
+    // The v2 landscape layout over-corrected the spacing and pushed the
+    // horizontal controls too close to the screen edges. Bring only untouched
+    // v2 positions back toward each cluster; preserve custom user placement
+    // and keep the portrait spacing unchanged.
+    if ([saved[@"layoutVersion"] integerValue] < 3) {
+        void (^migrateLandscapeX)(NSString *, CGFloat, CGFloat) =
+            ^(NSString *key, CGFloat oldX, CGFloat newX) {
+                NSMutableDictionary *entry = g_controls_config[@"layouts"][@"landscape"][key];
+                if (fabs([entry[@"x"] doubleValue] - oldX) < 0.0001)
+                    entry[@"x"] = @(newX);
+            };
+        migrateLandscapeX(@"dpad_left", 0.06, 0.08);
+        migrateLandscapeX(@"dpad_right", 0.22, 0.20);
+        migrateLandscapeX(@"square", 0.78, 0.80);
+        migrateLandscapeX(@"circle", 0.94, 0.92);
+        g_controls_config[@"layoutVersion"] = @3;
         saveConfig();
     }
 }

@@ -60,10 +60,14 @@ SDLAudioAdapter::~SDLAudioAdapter() {
 }
 
 bool SDLAudioAdapter::init() {
-    // SDL3 default is 1024 sample frames for 48kHz audio, which is higher than cubeb.
-    // Request smaller device buffer for lower latency callbacks.
-    // 512 sample frames = 2048 bytes for stereo 16-bit, matching cubeb's callback size.
+    // A 512-frame callback is low latency on desktop, but device traces show
+    // iOS underrunning it while JIT and MoltenVK share the CPU. Match the iOS
+    // audio-session preference (about 21 ms) for stable playback.
+#if defined(VITA3K_PLATFORM_IOS)
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");
+#else
     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
+#endif
     device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
     SDL_CHECK_EXT(device_id > 0, false);
     return true;

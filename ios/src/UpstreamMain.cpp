@@ -457,6 +457,10 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
             LOG_ERROR("Failed to initialize active user.");
             return false;
         }
+        // init_apps_list does not load ux0/user/time.xml. Without this, a new
+        // process always showed every title as 0m / Never played even though
+        // begin_launch had persisted a valid record in the previous process.
+        app::load_app_times(*emuenv);
         compat::load_from_disk(emuenv->compat, std::filesystem::path(emuenv->cache_path.string()));
         return true;
     } catch (const std::exception &error) {
@@ -1425,6 +1429,7 @@ int main(int argc, char *argv[]) {
 
     Uint64 perf_last_ms = SDL_GetTicks();
     std::size_t perf_last_frame_count = emuenv->frame_count;
+    Uint64 playtime_checkpoint_ms = perf_last_ms;
 
     bool running = true;
     while (running) {
@@ -1505,6 +1510,13 @@ int main(int argc, char *argv[]) {
                 perf_last_frame_count = frames;
                 perf_last_ms = now_ms;
                 vita3k_ios_update_perf_overlay(fps);
+            }
+            // Persist progress periodically, not only on a clean in-app quit.
+            // iOS users commonly terminate a stalled title from the app
+            // switcher, which previously discarded the whole session length.
+            if (now_ms - playtime_checkpoint_ms >= 30000) {
+                app::update_app_time_used(*emuenv, emuenv->io.app_path);
+                playtime_checkpoint_ms = now_ms;
             }
         }
 
