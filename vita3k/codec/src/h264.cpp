@@ -196,16 +196,21 @@ H264DecoderState::H264DecoderState(uint32_t width, uint32_t height) {
     context->height = height;
 
 #ifdef VITA3K_PLATFORM_IOS
-    // Single-threaded decode on iOS: frame/slice threading spawns worker
-    // pthreads whose faults bypass our fatal-signal logger (a silent process
-    // death as the P4G movie started), and it multiplies the decoder's buffer
-    // footprint right when memory is tightest during movie playback.
-    context->thread_count = 1;
-    context->thread_type = 0;
+    // A forced single decoder thread made P4G's 960x544 intro run at roughly
+    // half speed on device, starving its audio clock and making movie teardown
+    // stall after Skip. The guarded frame copy above fixes the earlier iOS
+    // out-of-bounds crash, so allow bounded frame/slice parallelism without
+    // letting FFmpeg create an unbounded number of workers.
+    context->thread_count = 4;
+    context->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
 #endif
 
     int result = avcodec_open2(context, codec, nullptr);
     assert(result == 0);
+#ifdef VITA3K_PLATFORM_IOS
+    LOG_INFO("iOS H264 decoder threading: requested={} active_type=0x{:X}",
+        context->thread_count, context->active_thread_type);
+#endif
 }
 
 H264DecoderState::~H264DecoderState() {

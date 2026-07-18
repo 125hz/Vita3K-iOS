@@ -629,6 +629,7 @@ static constexpr TextureGxmDataRepr strided_texture_mask = {
 void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemState &mem) {
     R_PROFILE(__func__);
 
+    const SceGxmTextureBaseFormat base_format = gxm::get_base_format(gxm::get_format(gxm_texture));
     size_t index = 0;
     bool configure = false;
     bool upload = false;
@@ -684,6 +685,19 @@ void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemS
                 should_use_hash = false;
             }
         }
+
+#ifdef VITA3K_PLATFORM_IOS
+        // HLE video decoding updates YUV textures from a host thread. On iOS,
+        // relying on a protected guest-memory page fault to mark these large,
+        // reused buffers dirty is not reliable enough: MoltenVK can keep the
+        // first (often white) upload while audio and video decoding continue.
+        // Hash dynamic YUV data on bind so every changed movie frame is
+        // uploaded, without disabling the texture cache for normal textures.
+        if (gxm::is_yuv_format(base_format)) {
+            should_use_hash = true;
+            LOG_INFO_ONCE("iOS dynamic YUV textures use hash-based cache invalidation");
+        }
+#endif
 
         info->use_hash = should_use_hash;
         if (info->use_hash) {

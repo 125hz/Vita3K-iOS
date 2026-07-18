@@ -269,6 +269,9 @@ EXPORT(int, sceAvcdecDecodeFlush, SceAvcdecCtrl *decoder) {
 
     decoder_info->flush();
     decoder_info->is_stopped = true;
+#ifdef VITA3K_PLATFORM_IOS
+    LOG_INFO("iOS H264 decoder flush: handle={}", decoder->handle);
+#endif
 
     return 0;
 }
@@ -315,7 +318,8 @@ EXPORT(int, sceAvcdecDecodeStop, SceAvcdecCtrl *decoder, SceAvcdecArrayPicture *
     if (!decoder_info)
         return RET_ERROR(SCE_AVCDEC_ERROR_INVALID_PARAM);
 
-    if (!decoder_info->is_stopped) {
+    const bool was_stopped = decoder_info->is_stopped;
+    if (!was_stopped) {
         SceAvcdecPicture *pPicture = picture->pPicture.get(emuenv.mem)[0].get(emuenv.mem);
 
         // we get the values from the last frame, maybe we should slightly increase the pts value?
@@ -327,6 +331,10 @@ EXPORT(int, sceAvcdecDecodeStop, SceAvcdecCtrl *decoder, SceAvcdecArrayPicture *
         picture->numOfOutput = 0;
     }
     decoder_info->is_stopped = true;
+#ifdef VITA3K_PLATFORM_IOS
+    LOG_INFO("iOS H264 decoder stop: handle={} was_stopped={} outputs={}",
+        decoder->handle, was_stopped, picture->numOfOutput);
+#endif
 
     return 0;
 }
