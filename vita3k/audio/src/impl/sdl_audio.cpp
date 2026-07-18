@@ -132,7 +132,7 @@ int SDLAudioAdapter::get_rest_sample(AudioOutPort &out_port) {
     const int bytes_available = SDL_GetAudioStreamAvailable(port.stream.get());
     SDL_CHECK_NEG(bytes_available);
     const int guest_frame_bytes = port.channels * static_cast<int>(sizeof(int16_t));
-    const int output_sample_bytes = std::max(1, SDL_AUDIO_BITSIZE(dst_spec.format) / 8);
+    const int output_sample_bytes = std::max(1, static_cast<int>(SDL_AUDIO_BITSIZE(dst_spec.format)) / 8);
     const int output_frame_bytes = output_sample_bytes * std::max(1, static_cast<int>(dst_spec.channels));
     const std::int64_t queued_frames = bytes_queued / std::max(1, guest_frame_bytes);
     const std::int64_t output_frames = bytes_available / std::max(1, output_frame_bytes);
