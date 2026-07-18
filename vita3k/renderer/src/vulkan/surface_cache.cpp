@@ -409,9 +409,11 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
     if (!overlap)
         return std::nullopt;
 
-    if (*ite->second->dirty)
+    if (*ite->second->dirty) {
         // Guest wrote to the surface backing memory since it was rendered, so GPU data is stale.
+        LOG_WARN_ONCE("Surface-as-texture miss (dirty): texture=0x{:X} surface=0x{:X}", address, ite->first);
         return std::nullopt;
+    }
 
     const vk::ComponentMapping swizzle = texture::translate_swizzle(gxm::get_format(texture));
     vk::Format vk_format = color::translate_format(base_format);
@@ -460,18 +462,24 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
         // don't even try to match u8u8u8 with something else
         return std::nullopt;
 
-    if (tiling != info.tiling || info.stride_bytes != stride_bytes)
+    if (tiling != info.tiling || info.stride_bytes != stride_bytes) {
         // if the tiling is different, also don't try to match them
         // about the strides, I've yet to see a case where the byte stride is different
+        LOG_WARN_ONCE("Surface-as-texture miss (tiling/stride): texture=0x{:X} tiling={}/{} stride={}/{}",
+            address, static_cast<int>(tiling), static_cast<int>(info.tiling), stride_bytes, info.stride_bytes);
         return std::nullopt;
+    }
 
     // Check if we can use this surface
     bool addr_in_range_of_cache = ((address + total_surface_size) <= (ite->first + info.total_bytes + 4));
 
-    if (ite->first != address && !addr_in_range_of_cache)
+    if (ite->first != address && !addr_in_range_of_cache) {
         // persona 4 sample from the top of a texture while the bottom wasn't rendered to, the fact that both the surface and
         // the texture start at the same location should be enough
+        LOG_WARN_ONCE("Surface-as-texture miss (range): texture=0x{:X}+0x{:X} surface=0x{:X}+0x{:X}",
+            address, total_surface_size, ite->first, info.total_bytes);
         return std::nullopt;
+    }
 
     uint32_t bytes_per_pixel_requested = gxm::bits_per_pixel(base_format) / 8;
     uint32_t bytes_per_pixel_in_store = gxm::bits_per_pixel(info.format) / 8;
@@ -509,15 +517,10 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
     const vk::ImageView color_handle_view = reinterpret_cast<VKContext *>(state.context)->current_color_view;
     const bool is_same_image = (color_handle_view == info.texture.view) || (color_handle_view == info.alternate_view);
 
-    // MoltenVK clamps Persona 4 Golden's out-of-range viewport sampling to an
-    // all-white result. Normal surfaces keep the fast path (important for
-    // titles such as Amagami); only a genuinely partial surface uses the
-    // initialized copy/crop fallback below.
-    if (state.features.use_texture_viewport && base_format == info.format
-#if defined(VITA3K_PLATFORM_IOS)
-        && !partial_surface
-#endif
-    ) {
+    // Desktop-parity: partial surfaces also use the texture viewport. The
+    // earlier all-white/grain result on iOS was traced to stale-RAM texture
+    // fallbacks (spurious dirty marks), not to MoltenVK viewport sampling.
+    if (state.features.use_texture_viewport && base_format == info.format) {
         // use a texture viewport
         *texture_viewport = {
             .ratio = {
