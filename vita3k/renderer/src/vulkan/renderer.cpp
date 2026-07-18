@@ -945,11 +945,21 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
         features.support_shader_interlock = false;
     }
 
-    // texture viewport is faster but not entirely accurate
+    // Texture viewport is faster but not entirely accurate. On iOS, MoltenVK
+    // cannot use Vita3K's guest-memory mapping/surface-sync path, and titles
+    // such as Persona 4 Golden sample partially rendered color surfaces during
+    // menu composition. Use the established copy/crop fallback there instead
+    // of passing out-of-range viewport coordinates through the shader.
+#if defined(VITA3K_PLATFORM_IOS)
+    if (support_standard_layout && !use_high_accuracy) {
+        LOG_INFO("iOS Vulkan renderer is using accurate copy/crop surface sampling");
+    }
+#else
     if (support_standard_layout && !use_high_accuracy) {
         LOG_INFO("The Vulkan renderer is using texture viewport for better performance");
         features.use_texture_viewport = true;
     }
+#endif
 
     // parse the mapping method
     auto &config_mapping = cfg.current_config.memory_mapping;

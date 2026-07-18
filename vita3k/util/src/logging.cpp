@@ -32,6 +32,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #endif
 
+#include <chrono>
 #include <functional>
 #include <iostream>
 #include <mutex>
@@ -44,6 +45,9 @@ static const char *LOG_PATTERN = "%^[%H:%M:%S.%e] |%L| [%!]: %v%$";
 static constexpr size_t ASYNC_LOG_QUEUE_SIZE = 65536;
 static std::vector<spdlog::sink_ptr> sinks;
 static std::once_flag s_async_logging_once;
+#if defined(VITA3K_PLATFORM_IOS)
+static std::once_flag s_periodic_flush_once;
+#endif
 
 static std::function<void(std::string, int)> s_log_callback;
 static std::mutex s_log_callback_mutex;
@@ -110,9 +114,18 @@ ExitCode init(const Root &root_paths, bool use_stdout) {
     SetConsoleTitle("Vita3K PSVita Emulator");
 #endif
 
-#if defined(__ANDROID__) || defined(VITA3K_PLATFORM_IOS)
+#if defined(__ANDROID__)
     // needed, otherwise the log file contains nothing
     spdlog::flush_on(spdlog::level::trace);
+#elif defined(VITA3K_PLATFORM_IOS)
+    // Flushing every trace line forces thousands of tiny file writes while a
+    // title boots, competing with emulation and making audio underrun. Keep
+    // warnings immediate, batch normal diagnostic output for at most one
+    // second, and rely on the iOS fatal-signal handler to flush on a crash.
+    spdlog::flush_on(spdlog::level::warn);
+    std::call_once(s_periodic_flush_once, []() {
+        spdlog::flush_every(std::chrono::seconds(1));
+    });
 #endif
 
     register_log_exception_handler();

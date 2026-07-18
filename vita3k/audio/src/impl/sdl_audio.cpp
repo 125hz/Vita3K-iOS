@@ -93,6 +93,9 @@ AudioOutPortPtr SDLAudioAdapter::open_port(int nb_channels, int freq, int nb_sam
     port->len_bytes = nb_sample * nb_channels * sizeof(int16_t);
     SDL_CHECK(SDL_BindAudioStream(device_id, stream.get()));
     SDL_CHECK(SDL_SetAudioStreamGetCallback(stream.get(), SDLAudioAdapter::thread_wakeup_callback, port.get()));
+    LOG_INFO("SDL audio output opened: guest={} Hz/{} ch/{} frames, device={} Hz/{} ch/{} frames (format=0x{:X})",
+        freq, nb_channels, nb_sample, dst_spec.freq, dst_spec.channels, device_buffer_samples,
+        static_cast<unsigned>(dst_spec.format));
     switch_state(false);
     return port;
 }
