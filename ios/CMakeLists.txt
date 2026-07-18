@@ -29,6 +29,7 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
     target_link_libraries(Vita3KiOS PRIVATE
         vita3k
         audio
+        io
         miniz
         np
         packages
