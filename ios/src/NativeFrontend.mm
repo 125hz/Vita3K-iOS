@@ -853,13 +853,12 @@ std::string hex_bytes(const std::string &value) {
 
 - (void)updateGradientColors {
     const BOOL dark = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
-    // Dark: deep navy → plum → teal. Light: near-white with a faint pink/cyan
-    // wash so the brand feel survives without a heavy tint.
+    // Dark: pure black. Light: near-white with a faint pink/cyan wash so the
+    // brand feel survives without a heavy tint.
     if (dark) {
-        // True-black base with only a whisper of brand tint at the edges.
         self.backgroundGradient.colors = @[
             (id)UIColor.blackColor.CGColor,
-            (id)[UIColor colorWithRed:0.05 green:0.01 blue:0.06 alpha:1].CGColor,
+            (id)UIColor.blackColor.CGColor,
             (id)UIColor.blackColor.CGColor,
         ];
     } else {
