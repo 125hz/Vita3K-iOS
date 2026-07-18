@@ -22,6 +22,7 @@
 #include <util/types.h>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -81,6 +82,12 @@ struct DisplayState {
     // however this is not always the case, some games may not be affected (if they look at the Vcount)
     // or run twice as fast (if they only rely on these function calls for their timings)
     bool fps_hack = false;
+
+    // Host presentation cap. Guest timing and the 60 Hz Vita vblank clock are
+    // left untouched; frames are only skipped when they arrive faster than
+    // this limit. A value of 60 (or greater) is effectively uncapped.
+    std::atomic<int> fps_limit{ 60 };
+    std::chrono::steady_clock::time_point last_present_time{};
 
     // should contain the list of sync objects / swapchain images (in the order they appear in the cycle)
     std::vector<PredictedDisplayFrame> predicted_frames;

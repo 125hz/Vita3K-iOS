@@ -43,12 +43,15 @@
 #include <display/state.h>
 #include <emuenv/state.h>
 #include <modules/module_parent.h>
+#include <np/trophy/collection.h>
 #include <renderer/frame_host.h>
 #include <renderer/functions.h>
 #include <renderer/state.h>
 #include <touch/functions.h>
 #include <util/fs.h>
 #include <util/log.h>
+
+#include <miniz.h>
 
 #include <csignal>
 #include <dlfcn.h>
@@ -64,9 +67,12 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -75,6 +81,88 @@
 #include <vector>
 
 namespace {
+
+std::string g_current_trophy_id;
+std::string g_current_title;
+
+bool safe_identifier(std::string_view value, const std::size_t maximum = 32) {
+    return !value.empty() && value.size() <= maximum
+        && std::all_of(value.begin(), value.end(), [](unsigned char character) {
+               return std::isalnum(character) || character == '_' || character == '-';
+           });
+}
+
+std::uint64_t directory_size(const fs::path &root) {
+    boost::system::error_code error;
+    if (!fs::exists(root, error) || error)
+        return 0;
+    std::uint64_t total = 0;
+    for (fs::recursive_directory_iterator it(root, error), end; it != end && !error; it.increment(error)) {
+        if (!fs::is_regular_file(it->path(), error) || error)
+            continue;
+        const auto size = fs::file_size(it->path(), error);
+        if (!error && size <= std::numeric_limits<std::uint64_t>::max() - total)
+            total += size;
+    }
+    return total;
+}
+
+std::string trophy_id_for_title(const EmuEnvState &emuenv, const std::string &title_id) {
+    const fs::path param_path = emuenv.vita_fs_path / "ux0/app" / title_id / "sce_sys/param.sfo";
+    fs::ifstream input(param_path, std::ios::binary);
+    if (!input)
+        return {};
+    const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
+    SfoFile sfo_file{};
+    std::string trophy_id;
+    if (sfo::load(sfo_file, bytes))
+        sfo::get_data_by_key(trophy_id, sfo_file, "NP_COMMUNICATION_ID");
+    return trophy_id;
+}
+
+np::trophy::CollectionSource trophy_source(EmuEnvState &emuenv) {
+    return {
+        .io = &emuenv.io,
+        .vita_fs_path = emuenv.vita_fs_path,
+        .user_id = emuenv.io.user_id,
+        .lang = static_cast<std::uint32_t>(emuenv.cfg.sys_lang),
+    };
+}
+
+void show_trophies(EmuEnvState &emuenv, const std::string &requested_id, const std::string &fallback_title) {
+    std::string trophy_id = safe_identifier(requested_id) ? requested_id : std::string{};
+    if (trophy_id.empty()) {
+        const auto ids = np::trophy::list_collection_ids(trophy_source(emuenv));
+        if (ids.size() == 1)
+            trophy_id = ids.front();
+    }
+    np::trophy::CollectionSnapshot snapshot;
+    Vita3KIOSTrophyCollection collection;
+    collection.title = fallback_title.empty() ? "Trophies" : fallback_title;
+    collection.trophy_id = trophy_id;
+    if (!trophy_id.empty() && np::trophy::load_collection(trophy_source(emuenv), trophy_id, snapshot)) {
+        collection.title = snapshot.title.empty() ? collection.title : snapshot.title;
+        collection.unlocked = snapshot.unlocked;
+        collection.total = snapshot.total;
+        collection.trophies.reserve(snapshot.trophies.size());
+        for (const auto &trophy : snapshot.trophies) {
+            collection.trophies.push_back({
+                .id = trophy.id,
+                .name = trophy.name,
+                .detail = trophy.detail,
+                .icon_path = trophy.icon_path,
+                .grade = trophy.grade,
+                .hidden = trophy.hidden,
+                .earned = trophy.earned,
+                .timestamp = trophy.timestamp,
+            });
+        }
+        std::stable_sort(collection.trophies.begin(), collection.trophies.end(), [](const auto &left, const auto &right) {
+            return left.earned != right.earned ? left.earned > right.earned : left.id < right.id;
+        });
+    }
+    vita3k_ios_present_trophies(collection);
+}
 
 class IOSFrameHost final : public renderer::FrameHost {
 public:
@@ -355,7 +443,7 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
     return {
         .resolution_multiplier = current.resolution_multiplier,
         .v_sync = current.v_sync,
-        .fps_hack = current.fps_hack,
+        .fps_limit = vita3k_ios_load_fps_limit(),
         .cpu_opt = current.cpu_opt,
         .ngs_enable = current.ngs_enable,
         .async_pipeline_compilation = current.async_pipeline_compilation,
@@ -368,12 +456,184 @@ struct ImportJob {
     std::atomic_bool done{ false };
     bool firmware = false;
     bool success = false;
+    bool rescan_apps = true;
     std::string message;
+    std::string share_path;
     // Populated for a successful game archive install so the frontend can offer
     // a follow-up NoNpDrm work.bin import for retail titles that need one.
     std::vector<packages::ArchiveApplicationInfo> installed_applications;
 };
 std::shared_ptr<ImportJob> g_import_job;
+
+bool safe_save_archive_path(std::string_view name) {
+    if (name.empty() || name.front() == '/' || name.front() == '\\'
+        || name.find('\\') != std::string_view::npos || name.find(':') != std::string_view::npos)
+        return false;
+    for (std::size_t offset = 0; offset < name.size();) {
+        const auto separator = name.find('/', offset);
+        const auto end = separator == std::string_view::npos ? name.size() : separator;
+        const auto part = name.substr(offset, end - offset);
+        if (part.empty() || part == "." || part == "..")
+            return false;
+        if (separator == std::string_view::npos)
+            break;
+        offset = separator + 1;
+    }
+    return true;
+}
+
+fs::path save_path_for_title(const EmuEnvState &emuenv, const std::string &title_id) {
+    return emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id / "savedata" / title_id;
+}
+
+void start_save_export(EmuEnvState &emuenv, const std::string &title_id) {
+    if (!safe_identifier(title_id, 16)) {
+        vita3k_ios_report_import_result("Save export rejected an invalid title ID", false);
+        return;
+    }
+    if (g_import_job && !g_import_job->done.load()) {
+        vita3k_ios_report_import_result("Another file operation is still running", false);
+        return;
+    }
+    auto job = std::make_shared<ImportJob>();
+    job->rescan_apps = false;
+    g_import_job = job;
+    std::thread([job, title_id, &emuenv] {
+        const fs::path source = save_path_for_title(emuenv, title_id);
+        const fs::path export_dir = emuenv.log_path / "exports";
+        const fs::path output = export_dir / (title_id + "-save.zip");
+        try {
+            if (!fs::exists(source) || fs::is_empty(source)) {
+                job->message = "No save data exists for " + title_id;
+            } else {
+                fs::create_directories(export_dir);
+                mz_zip_archive zip{};
+                const std::string output_text = fs_utils::path_to_utf8(output);
+                if (!mz_zip_writer_init_file(&zip, output_text.c_str(), 0)) {
+                    job->message = "Could not create the save archive";
+                } else {
+                    bool ok = true;
+                    std::size_t files = 0;
+                    boost::system::error_code error;
+                    for (fs::recursive_directory_iterator it(source, error), end; it != end && !error; it.increment(error)) {
+                        if (!fs::is_regular_file(it->path(), error) || error)
+                            continue;
+                        const std::string relative = fs_utils::path_to_utf8(fs::relative(it->path(), source));
+                        const std::string disk_path = fs_utils::path_to_utf8(it->path());
+                        if (!safe_save_archive_path(relative)
+                            || !mz_zip_writer_add_file(&zip, relative.c_str(), disk_path.c_str(), nullptr, 0, MZ_DEFAULT_COMPRESSION)) {
+                            ok = false;
+                            break;
+                        }
+                        ++files;
+                    }
+                    ok = ok && !error && files > 0 && mz_zip_writer_finalize_archive(&zip);
+                    mz_zip_writer_end(&zip);
+                    if (ok) {
+                        job->success = true;
+                        job->message = "Save exported";
+                        job->share_path = output_text;
+                    } else {
+                        boost::system::error_code cleanup_error;
+                        fs::remove(output, cleanup_error);
+                        job->message = "Could not archive the complete save";
+                    }
+                }
+            }
+        } catch (const std::exception &error) {
+            job->message = std::string("Save export failed: ") + error.what();
+        }
+        job->done.store(true);
+    }).detach();
+}
+
+void start_save_import(EmuEnvState &emuenv, const std::string &title_id, const std::string &archive_path) {
+    if (!safe_identifier(title_id, 16)) {
+        vita3k_ios_report_import_result("Save import rejected an invalid title ID", false);
+        return;
+    }
+    if (g_import_job && !g_import_job->done.load()) {
+        vita3k_ios_report_import_result("Another file operation is still running", false);
+        return;
+    }
+    auto job = std::make_shared<ImportJob>();
+    job->rescan_apps = false;
+    g_import_job = job;
+    std::thread([job, title_id, archive_path, &emuenv] {
+        const fs::path destination = save_path_for_title(emuenv, title_id);
+        const fs::path staging = destination.parent_path() / (title_id + ".importing");
+        const fs::path backup = destination.parent_path() / (title_id + ".backup");
+        mz_zip_archive zip{};
+        try {
+            const std::string archive_text = fs_utils::path_to_utf8(fs::path(archive_path));
+            if (!mz_zip_reader_init_file(&zip, archive_text.c_str(), 0)) {
+                job->message = "The selected save is not a readable ZIP archive";
+            } else {
+                boost::system::error_code error;
+                fs::remove_all(staging, error);
+                fs::create_directories(staging, error);
+                bool ok = !error;
+                std::uint64_t total_size = 0;
+                const mz_uint entries = mz_zip_reader_get_num_files(&zip);
+                if (entries == 0 || entries > 100000)
+                    ok = false;
+                for (mz_uint index = 0; ok && index < entries; ++index) {
+                    mz_zip_archive_file_stat stat{};
+                    if (!mz_zip_reader_file_stat(&zip, index, &stat)
+                        || !safe_save_archive_path(stat.m_filename)) {
+                        ok = false;
+                        break;
+                    }
+                    const unsigned unix_type = (stat.m_external_attr >> 16) & 0170000;
+                    if (unix_type == 0120000 || stat.m_uncomp_size > (32ULL << 30)
+                        || total_size > (32ULL << 30) - stat.m_uncomp_size) {
+                        ok = false;
+                        break;
+                    }
+                    total_size += stat.m_uncomp_size;
+                    const fs::path output = staging / fs::path(stat.m_filename);
+                    if (mz_zip_reader_is_file_a_directory(&zip, index)) {
+                        fs::create_directories(output, error);
+                    } else {
+                        fs::create_directories(output.parent_path(), error);
+                        const std::string output_text = fs_utils::path_to_utf8(output);
+                        if (!error && !mz_zip_reader_extract_to_file(&zip, index, output_text.c_str(), 0))
+                            ok = false;
+                    }
+                    if (error)
+                        ok = false;
+                }
+                mz_zip_reader_end(&zip);
+                if (ok) {
+                    fs::remove_all(backup, error);
+                    if (fs::exists(destination))
+                        fs::rename(destination, backup, error);
+                    if (!error)
+                        fs::rename(staging, destination, error);
+                    if (error && fs::exists(backup) && !fs::exists(destination)) {
+                        boost::system::error_code rollback_error;
+                        fs::rename(backup, destination, rollback_error);
+                    }
+                    if (!error) {
+                        fs::remove_all(backup, error);
+                        job->success = true;
+                        job->message = "Save imported for " + title_id;
+                    }
+                }
+                if (!job->success) {
+                    fs::remove_all(staging, error);
+                    job->message = "Save import was rejected; the existing save was left unchanged";
+                }
+            }
+        } catch (const std::exception &error) {
+            job->message = std::string("Save import failed: ") + error.what();
+            mz_zip_reader_end(&zip);
+        }
+        boost::system::error_code cleanup_error;
+        fs::remove(fs::path(archive_path), cleanup_error);
+        job->done.store(true);
+    }).detach();
+}
 
 void start_import(EmuEnvState &emuenv, const std::string &path, const bool firmware) {
     if (g_import_job && !g_import_job->done.load()) {
@@ -395,6 +655,14 @@ void start_import(EmuEnvState &emuenv, const std::string &path, const bool firmw
                     out << version;
                     job->success = true;
                     job->message = "Firmware " + version + " installed";
+                }
+            } else if (fs::path(path).extension() == ".pkg" || fs::path(path).extension() == ".PKG") {
+                std::string zrif = find_pkg_zrif(fs::path(path), emuenv.vita_fs_path);
+                if (zrif.empty()) {
+                    job->message = "PKG needs a matching license. Import its work.bin first, then select the .pkg again.";
+                } else {
+                    job->success = install_pkg(fs::path(path), emuenv, zrif, [](float) {});
+                    job->message = job->success ? "PKG installed" : "PKG install failed (see tsubomi.log)";
                 }
             } else {
                 const auto result = packages::install_archive_transactionally(
@@ -439,6 +707,7 @@ void maybe_prompt_license_import(EmuEnvState &emuenv,
 
 std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
     const auto apps = app::get_apps(emuenv);
+    const auto user_times = app::get_user_app_times(emuenv);
     std::vector<Vita3KIOSGameEntry> games;
     games.reserve(apps.size());
     for (const auto &entry : apps) {
@@ -456,12 +725,22 @@ std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
         LOG_INFO("iOS library art: title_id={} icon='{}' exists={} pic0='{}' exists={}",
             entry.title_id, icon, icon_exists, banner, banner_exists);
         const fs::path selected_art = banner_exists ? banner : icon;
+        const auto time_it = user_times.find(entry.path.empty() ? entry.title_id : entry.path);
+        const app::AppTime *app_time = time_it == user_times.end() ? nullptr : &time_it->second;
+        const std::uint64_t installed_size = directory_size(emuenv.vita_fs_path / "ux0/app" / entry.title_id)
+            + directory_size(emuenv.vita_fs_path / "ux0/patch" / entry.title_id)
+            + directory_size(emuenv.vita_fs_path / "ux0/addcont" / entry.title_id);
         games.push_back({
             .title = entry.title,
             .title_id = entry.title_id,
             .category = entry.category,
             .app_path = entry.path.empty() ? entry.title_id : entry.path,
             .icon_path = fs_utils::path_to_utf8(selected_art),
+            .version = entry.app_ver,
+            .trophy_id = trophy_id_for_title(emuenv, entry.title_id),
+            .size_bytes = installed_size,
+            .time_played_seconds = app_time ? app_time->time_used : 0,
+            .last_played_timestamp = app_time ? app_time->last_time_used : 0,
         });
     }
     return games;
@@ -497,7 +776,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     auto apply = [&](Config::CurrentConfig &current) {
         current.resolution_multiplier = settings.resolution_multiplier;
         current.v_sync = settings.v_sync;
-        current.fps_hack = settings.fps_hack;
+        current.fps_hack = false;
         current.cpu_opt = settings.cpu_opt;
         current.ngs_enable = settings.ngs_enable;
         current.async_pipeline_compilation = settings.async_pipeline_compilation;
@@ -507,7 +786,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     apply(desired.current_config);
     desired.resolution_multiplier = settings.resolution_multiplier;
     desired.v_sync = settings.v_sync;
-    desired.fps_hack = settings.fps_hack;
+    desired.fps_hack = false;
     desired.cpu_opt = settings.cpu_opt;
     desired.ngs_enable = settings.ngs_enable;
     desired.async_pipeline_compilation = settings.async_pipeline_compilation;
@@ -515,6 +794,8 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     desired.audio_backend = "SDL";
 
     const auto result = app::commit_settings(emuenv, desired);
+    emuenv.display.fps_hack = false;
+    emuenv.display.fps_limit.store(std::clamp(settings.fps_limit, 15, 60), std::memory_order_relaxed);
     std::vector<std::string> restart_required;
     restart_required.reserve(result.restart_required_settings.size());
     for (const auto setting : result.restart_required_settings)
@@ -544,16 +825,22 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
 
         if (g_import_job && g_import_job->done.load()) {
             const bool was_firmware = g_import_job->firmware;
+            const bool rescan_apps = g_import_job->rescan_apps;
             const bool success = g_import_job->success;
             const std::string message = g_import_job->message;
+            const std::string share_path = g_import_job->share_path;
             const auto installed_applications = g_import_job->installed_applications;
             g_import_job.reset();
-            if (!was_firmware && !app::init_apps_list(emuenv))
+            if (rescan_apps && !was_firmware && !app::init_apps_list(emuenv))
                 LOG_ERROR("Failed to rescan apps list after import.");
-            games = native_games(emuenv);
-            vita3k_ios_update_library(games, native_settings(emuenv));
+            if (rescan_apps) {
+                games = native_games(emuenv);
+                vita3k_ios_update_library(games, native_settings(emuenv));
+            }
             vita3k_ios_report_import_result(message, success);
-            if (success && !was_firmware)
+            if (!share_path.empty())
+                vita3k_ios_share_file(share_path);
+            if (success && rescan_apps && !was_firmware)
                 maybe_prompt_license_import(emuenv, installed_applications);
         }
 
@@ -570,6 +857,15 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                     break;
                 }
                 vita3k_ios_set_jit_available(true);
+                g_current_trophy_id.clear();
+                g_current_title.clear();
+                for (const auto &game : games) {
+                    if (game.app_path == action->app_path) {
+                        g_current_trophy_id = game.trophy_id;
+                        g_current_title = game.title;
+                        break;
+                    }
+                }
                 LOG_INFO("Booting selected iOS library title: {}", action->app_path);
                 vita3k_ios_hide_library();
                 return AppLaunchRequest{.app_path = action->app_path};
@@ -625,6 +921,15 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                            : "License import failed (see tsubomi.log)", copied);
                 break;
             }
+            case Vita3KIOSFrontendActionKind::ImportSave:
+                start_save_import(emuenv, action->title_id, action->app_path);
+                break;
+            case Vita3KIOSFrontendActionKind::ExportSave:
+                start_save_export(emuenv, action->title_id);
+                break;
+            case Vita3KIOSFrontendActionKind::ShowTrophies:
+                show_trophies(emuenv, action->trophy_id, action->title_id);
+                break;
             case Vita3KIOSFrontendActionKind::Quit:
                 vita3k_ios_hide_library();
                 return std::nullopt;
@@ -853,6 +1158,8 @@ int main(int argc, char *argv[]) {
     }
 
     LOG_INFO("Game started: {} ({})", emuenv->current_app_title, launch_request->app_path);
+    emuenv->display.fps_hack = false;
+    emuenv->display.fps_limit.store(vita3k_ios_load_fps_limit(), std::memory_order_relaxed);
 
     const bool has_virtual_controller = vita3k_ios_attach_virtual_controller();
     if (has_virtual_controller) {
@@ -1001,6 +1308,11 @@ int main(int argc, char *argv[]) {
                 perf_last_ms = now_ms;
                 vita3k_ios_update_perf_overlay(fps);
             }
+        }
+
+        if (auto action = vita3k_ios_take_frontend_action()) {
+            if (action->kind == Vita3KIOSFrontendActionKind::ShowTrophies)
+                show_trophies(*emuenv, g_current_trophy_id, g_current_title);
         }
 
         if (auto request = emuenv->take_app_launch_request()) {

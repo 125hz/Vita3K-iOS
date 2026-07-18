@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vita3K team
 
 #include <vita3k_ios/VirtualController.h>
+#include <vita3k_ios/NativeFrontend.h>
 
 #include <SDL3/SDL.h>
 
@@ -39,10 +40,14 @@ static UIVisualEffect *glassEffect(const BOOL interactive = YES) {
     if (@available(iOS 26.0, *)) {
         UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
         effect.interactive = interactive;
-        effect.tintColor = [UIColor colorWithWhite:0.04 alpha:0.12];
+        effect.tintColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+            return traits.userInterfaceStyle == UIUserInterfaceStyleDark
+                ? [UIColor colorWithWhite:0.04 alpha:0.12]
+                : [UIColor colorWithWhite:1.0 alpha:0.10];
+        }];
         return effect;
     }
-    return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
+    return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
 }
 
 static constexpr NSInteger glassBackgroundTag = 0x3301;
@@ -284,6 +289,7 @@ static void hapticTick() {
 // YES when the overlay was created solely to edit the layout from the homepage
 // (no game running); it is torn down again when editing finishes.
 @property(nonatomic) BOOL previewEditingOnly;
+@property(nonatomic, strong) NSTimer *menuFadeTimer;
 - (void)applyConfiguration;
 - (void)setLayoutEditing:(BOOL)editing;
 - (void)releaseAllInputs;
@@ -325,11 +331,12 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     self.menuButton.accessibilityIdentifier = @"menu";
     self.menuButton.accessibilityLabel = @"In-game menu";
     [self.menuButton setImage:[UIImage systemImageNamed:@"ellipsis"] forState:UIControlStateNormal];
-    self.menuButton.tintColor = UIColor.whiteColor;
+    self.menuButton.tintColor = UIColor.labelColor;
     self.menuButton.backgroundColor = UIColor.clearColor;
     self.menuButton.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.55].CGColor;
     self.menuButton.layer.borderWidth = 1;
     [self.menuButton addTarget:self action:@selector(menuTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.menuButton addTarget:self action:@selector(resetMenuFade) forControlEvents:UIControlEventTouchDown];
     installGlassBackground(self.menuButton);
     [self addSubview:self.menuButton];
 
@@ -358,7 +365,27 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     }
     UIPanGestureRecognizer *menuPan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(menuPanned:)];
     [self.menuButton addGestureRecognizer:menuPan];
+    [self resetMenuFade];
     return self;
+}
+
+- (void)willMoveToWindow:(UIWindow *)newWindow {
+    if (!newWindow)
+        [self.menuFadeTimer invalidate];
+    [super willMoveToWindow:newWindow];
+}
+
+- (void)resetMenuFade {
+    [self.menuFadeTimer invalidate];
+    self.menuButton.alpha = 1.0;
+    if (self.menuButton.hidden || self.layoutEditing)
+        return;
+    self.menuFadeTimer = [NSTimer scheduledTimerWithTimeInterval:2.75 target:self
+        selector:@selector(fadeMenuButton) userInfo:nil repeats:NO];
+}
+
+- (void)fadeMenuButton {
+    [UIView animateWithDuration:0.55 animations:^{ self.menuButton.alpha = 0.12; }];
 }
 
 - (void)addButton:(NSString *)title key:(NSString *)key button:(SDL_GamepadButton)gamepadButton accessibility:(NSString *)accessibility {
@@ -457,7 +484,10 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     NSMutableDictionary *menuSettings = elementConfig(@"menu");
     self.menuButton.hidden = ![menuSettings[@"visible"] boolValue];
     self.menuButton.bounds = CGRectMake(0, 0, 46, 46);
-    self.menuButton.center = CGPointMake([menuSettings[@"x"] doubleValue] * width, [menuSettings[@"y"] doubleValue] * height);
+    const CGFloat half = 23;
+    self.menuButton.center = CGPointMake(
+        std::clamp(static_cast<CGFloat>([menuSettings[@"x"] doubleValue] * width), half, width - half),
+        std::clamp(static_cast<CGFloat>([menuSettings[@"y"] doubleValue] * height), half, height - half));
     self.menuButton.layer.cornerRadius = 23;
     layoutGlassBackground(self.menuButton);
 }
@@ -503,24 +533,27 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
 - (void)menuPanned:(UIPanGestureRecognizer *)recognizer {
     if (self.layoutEditing)
         return;
+    if (recognizer.state == UIGestureRecognizerStateBegan)
+        [self resetMenuFade];
     const CGPoint translation = [recognizer translationInView:self];
     self.menuButton.center = CGPointMake(self.menuButton.center.x + translation.x, self.menuButton.center.y + translation.y);
     [recognizer setTranslation:CGPointZero inView:self];
     if (recognizer.state == UIGestureRecognizerStateEnded) {
-        const UIEdgeInsets safe = self.safeAreaInsets;
         const CGFloat half = CGRectGetWidth(self.menuButton.bounds) / 2;
-        const CGFloat left = safe.left + half + 8;
-        const CGFloat right = CGRectGetWidth(self.bounds) - safe.right - half - 8;
+        const CGFloat left = half;
+        const CGFloat right = CGRectGetWidth(self.bounds) - half;
         self.menuButton.center = CGPointMake(self.menuButton.center.x < CGRectGetMidX(self.bounds) ? left : right,
-            std::clamp(self.menuButton.center.y, safe.top + half + 8, CGRectGetHeight(self.bounds) - safe.bottom - half - 8));
+            std::clamp(self.menuButton.center.y, half, CGRectGetHeight(self.bounds) - half));
         NSMutableDictionary *settings = elementConfig(@"menu");
         settings[@"x"] = @(self.menuButton.center.x / CGRectGetWidth(self.bounds));
         settings[@"y"] = @(self.menuButton.center.y / CGRectGetHeight(self.bounds));
         saveConfig();
+        [self resetMenuFade];
     }
 }
 
 - (void)menuTapped {
+    [self resetMenuFade];
     if (!self.layoutEditing)
         presentGameMenu();
 }
@@ -533,6 +566,7 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     settings[@"visible"] = @YES;
     saveConfig();
     [self applyConfiguration];
+    [self resetMenuFade];
     hapticTick();
 }
 
@@ -634,7 +668,7 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     UILabel *title = [[UILabel alloc] init];
     title.text = @"Virtual Controls";
     title.font = [UIFont systemFontOfSize:27 weight:UIFontWeightBold];
-    title.textColor = UIColor.whiteColor;
+    title.textColor = UIColor.labelColor;
     [stack addArrangedSubview:title];
 
     self.opacitySlider = [[UISlider alloc] init];
@@ -773,11 +807,19 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
 @end
 
 
-static UIButton *menuAction(NSString *title, SEL selector, id target) {
+static UIButton *menuAction(NSString *title, NSString *subtitle, NSString *symbol, SEL selector, id target, BOOL destructive = NO) {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    [button setTitle:title forState:UIControlStateNormal];
-    button.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    [button.heightAnchor constraintEqualToConstant:46].active = YES;
+    UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
+    configuration.title = title;
+    configuration.subtitle = subtitle;
+    configuration.image = [UIImage systemImageNamed:symbol];
+    configuration.imagePadding = 13;
+    configuration.titleAlignment = UIButtonConfigurationTitleAlignmentLeading;
+    configuration.baseForegroundColor = destructive ? UIColor.systemRedColor : UIColor.labelColor;
+    configuration.contentInsets = NSDirectionalEdgeInsetsMake(7, 6, 7, 6);
+    button.configuration = configuration;
+    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
+    [button.heightAnchor constraintGreaterThanOrEqualToConstant:50].active = YES;
     [button addTarget:target action:selector forControlEvents:UIControlEventTouchUpInside];
     return button;
 }
@@ -787,11 +829,7 @@ static UIButton *menuAction(NSString *title, SEL selector, id target) {
 @implementation Vita3KGameMenuTarget
 - (void)resume { dismissGameMenu(); }
 - (void)layout { dismissGameMenu(); vita3k_ios_present_controller_options(); }
-- (void)opacity:(UISlider *)slider {
-    g_controls_config[@"opacity"] = @(slider.value);
-    [g_overlay applyConfiguration];
-    saveConfig();
-}
+- (void)trophies { dismissGameMenu(); vita3k_ios_request_current_trophies(); }
 - (void)togglePerfHud {
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     [defaults setBool:![defaults boolForKey:@"vita3k.perf.hidden"] forKey:@"vita3k.perf.hidden"];
@@ -821,52 +859,75 @@ static void presentGameMenu() {
     g_game_menu_target = [[Vita3KGameMenuTarget alloc] init];
     UIControl *shade = [[UIControl alloc] initWithFrame:window.bounds];
     shade.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    shade.backgroundColor = [UIColor colorWithWhite:0 alpha:0.34];
+    shade.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+        return traits.userInterfaceStyle == UIUserInterfaceStyleDark
+            ? [UIColor colorWithWhite:0 alpha:0.40]
+            : [UIColor colorWithWhite:1 alpha:0.32];
+    }];
     [shade addTarget:g_game_menu_target action:@selector(resume) forControlEvents:UIControlEventTouchUpInside];
     UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect()];
     glass.translatesAutoresizingMaskIntoConstraints = NO;
     glass.layer.cornerRadius = 28;
     glass.clipsToBounds = YES;
     [shade addSubview:glass];
+    const UIEdgeInsets safe = window.safeAreaInsets;
+    const CGFloat panelHeight = MIN(470, MAX(280, CGRectGetHeight(window.bounds) - safe.top - safe.bottom - 24));
+    NSLayoutConstraint *preferredWidth = [glass.widthAnchor constraintEqualToAnchor:shade.safeAreaLayoutGuide.widthAnchor multiplier:0.92];
+    preferredWidth.priority = UILayoutPriorityDefaultHigh;
     [NSLayoutConstraint activateConstraints:@[
         [glass.centerXAnchor constraintEqualToAnchor:shade.centerXAnchor],
-        [glass.bottomAnchor constraintEqualToAnchor:shade.safeAreaLayoutGuide.bottomAnchor constant:-14],
-        [glass.widthAnchor constraintEqualToConstant:360],
+        [glass.bottomAnchor constraintEqualToAnchor:shade.safeAreaLayoutGuide.bottomAnchor constant:-12],
+        [glass.leadingAnchor constraintGreaterThanOrEqualToAnchor:shade.safeAreaLayoutGuide.leadingAnchor constant:12],
+        [glass.trailingAnchor constraintLessThanOrEqualToAnchor:shade.safeAreaLayoutGuide.trailingAnchor constant:-12],
+        [glass.widthAnchor constraintLessThanOrEqualToConstant:410],
+        preferredWidth,
+        [glass.heightAnchor constraintEqualToConstant:panelHeight],
+    ]];
+    UIScrollView *scroll = [[UIScrollView alloc] init];
+    scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    [glass.contentView addSubview:scroll];
+    [NSLayoutConstraint activateConstraints:@[
+        [scroll.leadingAnchor constraintEqualToAnchor:glass.contentView.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:glass.contentView.trailingAnchor],
+        [scroll.topAnchor constraintEqualToAnchor:glass.contentView.topAnchor],
+        [scroll.bottomAnchor constraintEqualToAnchor:glass.contentView.bottomAnchor],
     ]];
     UIStackView *stack = [[UIStackView alloc] init];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 5;
-    stack.layoutMargins = UIEdgeInsetsMake(18, 18, 18, 18);
+    stack.layoutMargins = UIEdgeInsetsMake(18, 18, 20, 18);
     stack.layoutMarginsRelativeArrangement = YES;
-    [glass.contentView addSubview:stack];
+    [scroll addSubview:stack];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:glass.contentView.leadingAnchor],
-        [stack.trailingAnchor constraintEqualToAnchor:glass.contentView.trailingAnchor],
-        [stack.topAnchor constraintEqualToAnchor:glass.contentView.topAnchor],
-        [stack.bottomAnchor constraintEqualToAnchor:glass.contentView.bottomAnchor],
+        [stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor],
+        [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor],
+        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor],
+        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor],
+        [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor],
     ]];
     UILabel *title = [[UILabel alloc] init];
     title.text = @"Game Menu";
     title.font = [UIFont systemFontOfSize:25 weight:UIFontWeightBold];
-    title.textColor = UIColor.whiteColor;
+    title.textColor = UIColor.labelColor;
     [stack addArrangedSubview:title];
-    UISlider *opacity = [[UISlider alloc] init];
-    opacity.minimumValue = 0.15;
-    opacity.maximumValue = 1;
-    opacity.value = [g_controls_config[@"opacity"] floatValue];
-    [opacity addTarget:g_game_menu_target action:@selector(opacity:) forControlEvents:UIControlEventValueChanged];
-    [stack addArrangedSubview:opacity];
-    [stack addArrangedSubview:menuAction(@"Resume", @selector(resume), g_game_menu_target)];
-    [stack addArrangedSubview:menuAction(@"Controller Layout", @selector(layout), g_game_menu_target)];
+    UILabel *subtitle = [[UILabel alloc] init];
+    subtitle.text = @"Quick actions";
+    subtitle.textColor = UIColor.secondaryLabelColor;
+    subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    [stack addArrangedSubview:subtitle];
+    [stack addArrangedSubview:menuAction(@"Resume", nil, @"play.fill", @selector(resume), g_game_menu_target)];
+    [stack addArrangedSubview:menuAction(@"Trophies", @"Progress and unlock dates", @"trophy.fill", @selector(trophies), g_game_menu_target)];
+    [stack addArrangedSubview:menuAction(@"Controller Options", @"Layout, visibility, scale and opacity", @"gamecontroller.fill", @selector(layout), g_game_menu_target)];
     NSString *hudTitle = [NSUserDefaults.standardUserDefaults boolForKey:@"vita3k.perf.hidden"]
         ? @"Show Performance HUD"
         : @"Hide Performance HUD";
-    [stack addArrangedSubview:menuAction(hudTitle, @selector(togglePerfHud), g_game_menu_target)];
-    [stack addArrangedSubview:menuAction(@"Hide Menu Button (3-finger tap restores)", @selector(hideMenuButton), g_game_menu_target)];
-    UIButton *quit = menuAction(@"Quit Game", @selector(quit), g_game_menu_target);
-    [quit setTitleColor:UIColor.systemRedColor forState:UIControlStateNormal];
-    [stack addArrangedSubview:quit];
+    [stack addArrangedSubview:menuAction(hudTitle, @"FPS, memory and battery overlay", @"gauge.with.dots.needle.67percent",
+        @selector(togglePerfHud), g_game_menu_target)];
+    [stack addArrangedSubview:menuAction(@"Hide Menu Button", @"Restore it with a three-finger tap", @"eye.slash.fill",
+        @selector(hideMenuButton), g_game_menu_target)];
+    [stack addArrangedSubview:menuAction(@"Quit Game", @"Return to the library", @"rectangle.portrait.and.arrow.right",
+        @selector(quit), g_game_menu_target, YES)];
     g_game_menu = shade;
     [window addSubview:shade];
 }

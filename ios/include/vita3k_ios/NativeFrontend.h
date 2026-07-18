@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -15,12 +16,36 @@ struct Vita3KIOSGameEntry {
     std::string category;
     std::string app_path;
     std::string icon_path;
+    std::string version;
+    std::string trophy_id;
+    std::uint64_t size_bytes = 0;
+    std::int64_t time_played_seconds = 0;
+    std::int64_t last_played_timestamp = 0;
+};
+
+struct Vita3KIOSTrophyEntry {
+    int id = 0;
+    std::string name;
+    std::string detail;
+    std::string icon_path;
+    int grade = 0;
+    bool hidden = false;
+    bool earned = false;
+    std::uint64_t timestamp = 0;
+};
+
+struct Vita3KIOSTrophyCollection {
+    std::string title;
+    std::string trophy_id;
+    int unlocked = 0;
+    int total = 0;
+    std::vector<Vita3KIOSTrophyEntry> trophies;
 };
 
 struct Vita3KIOSSettings {
     float resolution_multiplier = 1.0f;
     bool v_sync = true;
-    bool fps_hack = false;
+    int fps_limit = 60;
     bool cpu_opt = true;
     bool ngs_enable = true;
     bool async_pipeline_compilation = true;
@@ -38,12 +63,17 @@ enum class Vita3KIOSFrontendActionKind {
     ImportFirmware,
     // app_path carries the local file path of a NoNpDrm work.bin license.
     ImportLicense,
+    ImportSave,
+    ExportSave,
+    ShowTrophies,
     Quit,
 };
 
 struct Vita3KIOSFrontendAction {
     Vita3KIOSFrontendActionKind kind = Vita3KIOSFrontendActionKind::Quit;
     std::string app_path;
+    std::string title_id;
+    std::string trophy_id;
     Vita3KIOSSettings settings;
 };
 
@@ -54,6 +84,10 @@ void vita3k_ios_update_library(const std::vector<Vita3KIOSGameEntry> &games,
 void vita3k_ios_hide_library();
 std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action();
 void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_required);
+int vita3k_ios_load_fps_limit();
+void vita3k_ios_present_trophies(const Vita3KIOSTrophyCollection &collection);
+void vita3k_ios_share_file(const std::string &path);
+void vita3k_ios_request_current_trophies();
 
 // Tells the library whether a JIT-enabling debugger is attached. When false,
 // the library shows a persistent banner and refuses to launch games (guest

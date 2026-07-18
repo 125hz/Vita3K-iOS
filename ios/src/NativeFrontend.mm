@@ -18,6 +18,7 @@
 #include <mach/mach.h>
 #undef Ptr
 
+#include <algorithm>
 #include <cmath>
 #include <mutex>
 #include <utility>
@@ -33,6 +34,8 @@ void queue_action(Vita3KIOSFrontendAction action) {
 }
 
 void present_import_picker(BOOL firmware);
+void present_license_picker();
+void present_save_picker(NSString *titleId);
 void reload_library_cells();
 
 UIWindow *active_window() {
@@ -87,6 +90,28 @@ NSString *tsubomi_app_version() {
     return version.length ? version : @"0.5.0";
 }
 
+NSString *game_metadata(const Vita3KIOSGameEntry &game) {
+    NSByteCountFormatter *bytes = [[NSByteCountFormatter alloc] init];
+    bytes.countStyle = NSByteCountFormatterCountStyleFile;
+    NSString *size = [bytes stringFromByteCount:(long long)game.size_bytes];
+    const long long minutes = MAX(0, game.time_played_seconds) / 60;
+    NSString *played = minutes >= 60
+        ? [NSString stringWithFormat:@"%lldh %lldm", minutes / 60, minutes % 60]
+        : [NSString stringWithFormat:@"%lldm", minutes];
+    NSString *last = @"Never played";
+    if (game.last_played_timestamp > 0) {
+        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+        formatter.dateStyle = NSDateFormatterShortStyle;
+        formatter.timeStyle = NSDateFormatterShortStyle;
+        last = [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:game.last_played_timestamp]];
+    }
+    NSString *versionText = [NSString stringWithUTF8String:game.version.c_str()];
+    NSString *version = game.version.empty() || !versionText
+        ? @"Unknown version"
+        : [@"v" stringByAppendingString:versionText];
+    return [NSString stringWithFormat:@"%@  ·  %@  ·  %@  ·  %@", version, played, last, size];
+}
+
 UIVisualEffect *glass_effect(const BOOL interactive = YES) {
     if (@available(iOS 26.0, *)) {
         UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
@@ -110,7 +135,7 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
     // Size the button BEFORE adding the autoresizing glass child: adding a
     // 44pt child to a zero-sized parent made autoresizing inflate the glass
     // past the button (the oversized top-right blobs on the home screen).
-    button.frame = CGRectMake(0, 0, 44, 44);
+    button.frame = CGRectMake(0, 0, 46, 46);
     UIImage *image = [UIImage systemImageNamed:symbol];
     if (image)
         [button setImage:image forState:UIControlStateNormal];
@@ -121,13 +146,13 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
     button.tintColor = UIColor.labelColor;
     button.accessibilityLabel = accessibility;
     button.backgroundColor = UIColor.clearColor;
-    button.layer.cornerRadius = 22;
+    button.layer.cornerRadius = 23;
     button.clipsToBounds = YES;
-    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(YES)];
     glass.userInteractionEnabled = NO;
     glass.frame = button.bounds;
     glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    glass.layer.cornerRadius = 22;
+    glass.layer.cornerRadius = 23;
     glass.clipsToBounds = YES;
     [button insertSubview:glass atIndex:0];
     return button;
@@ -153,7 +178,10 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UIImageView *icon;
 @property(nonatomic, strong) UILabel *titleLabel;
 @property(nonatomic, strong) UILabel *identifierLabel;
-- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier iconPath:(NSString *)iconPath;
+@property(nonatomic, strong) UILabel *metadataLabel;
+@property(nonatomic) BOOL listMode;
+- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSString *)metadata
+              iconPath:(NSString *)iconPath listMode:(BOOL)listMode;
 @end
 
 @implementation Vita3KGameCell
@@ -187,19 +215,35 @@ std::string hex_bytes(const std::string &value) {
     self.identifierLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightMedium];
     self.identifierLabel.textColor = UIColor.secondaryLabelColor;
     [self.glass.contentView addSubview:self.identifierLabel];
+    self.metadataLabel = [[UILabel alloc] init];
+    self.metadataLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    self.metadataLabel.textColor = UIColor.secondaryLabelColor;
+    self.metadataLabel.numberOfLines = 2;
+    [self.glass.contentView addSubview:self.metadataLabel];
     return self;
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
     const CGFloat inset = 12;
-    const CGFloat labelHeight = 70;
-    self.icon.frame = CGRectMake(inset, inset, CGRectGetWidth(self.bounds) - inset * 2,
-        CGRectGetHeight(self.bounds) - labelHeight - inset * 2);
-    self.titleLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.icon.frame) + 7,
-        CGRectGetWidth(self.bounds) - inset * 2, 44);
-    self.identifierLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.titleLabel.frame),
-        CGRectGetWidth(self.bounds) - inset * 2, 18);
+    if (self.listMode) {
+        self.icon.frame = CGRectMake(inset, inset, 88, MAX(1, CGRectGetHeight(self.bounds) - inset * 2));
+        const CGFloat textX = CGRectGetMaxX(self.icon.frame) + 14;
+        const CGFloat textWidth = MAX(1, CGRectGetWidth(self.bounds) - textX - inset);
+        self.titleLabel.frame = CGRectMake(textX, inset + 4, textWidth, 26);
+        self.identifierLabel.frame = CGRectMake(textX, CGRectGetMaxY(self.titleLabel.frame), textWidth, 18);
+        self.metadataLabel.frame = CGRectMake(textX, CGRectGetMaxY(self.identifierLabel.frame) + 4, textWidth, 38);
+    } else {
+        const CGFloat labelHeight = 102;
+        self.icon.frame = CGRectMake(inset, inset, CGRectGetWidth(self.bounds) - inset * 2,
+            MAX(1, CGRectGetHeight(self.bounds) - labelHeight - inset * 2));
+        self.titleLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.icon.frame) + 7,
+            CGRectGetWidth(self.bounds) - inset * 2, 40);
+        self.identifierLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.titleLabel.frame),
+            CGRectGetWidth(self.bounds) - inset * 2, 17);
+        self.metadataLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.identifierLabel.frame) + 2,
+            CGRectGetWidth(self.bounds) - inset * 2, 34);
+    }
 }
 
 - (void)setHighlighted:(BOOL)highlighted {
@@ -210,9 +254,12 @@ std::string hex_bytes(const std::string &value) {
     }];
 }
 
-- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier iconPath:(NSString *)iconPath {
+- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSString *)metadata
+              iconPath:(NSString *)iconPath listMode:(BOOL)listMode {
+    self.listMode = listMode;
     self.titleLabel.text = title;
     self.identifierLabel.text = identifier;
+    self.metadataLabel.text = metadata;
     self.identifierLabel.hidden = !show_title_ids();
     UIImage *image = iconPath.length ? [UIImage imageWithContentsOfFile:iconPath] : nil;
     if (iconPath.length && !image)
@@ -220,6 +267,7 @@ std::string hex_bytes(const std::string &value) {
     self.icon.image = image ?: [UIImage systemImageNamed:@"gamecontroller.fill"];
     self.icon.tintColor = UIColor.systemPinkColor;
     self.icon.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.55];
+    [self setNeedsLayout];
 }
 
 @end
@@ -232,7 +280,8 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UISlider *resolutionSlider;
 @property(nonatomic, strong) UILabel *resolutionValue;
 @property(nonatomic, strong) UISwitch *vsyncSwitch;
-@property(nonatomic, strong) UISwitch *fpsSwitch;
+@property(nonatomic, strong) UISlider *fpsSlider;
+@property(nonatomic, strong) UILabel *fpsValue;
 @property(nonatomic, strong) UISwitch *cpuSwitch;
 @property(nonatomic, strong) UISwitch *ngsSwitch;
 @property(nonatomic, strong) UISwitch *asyncSwitch;
@@ -249,11 +298,15 @@ std::string hex_bytes(const std::string &value) {
     self.values = values;
     // Adaptive base (white in light mode, near-black in dark) instead of the
     // old fixed navy; the settings panel now matches the rest of the UI.
-    self.backgroundColor = UIColor.systemBackgroundColor;
+    self.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+        return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? UIColor.blackColor : UIColor.whiteColor;
+    }];
+    self.opaque = YES;
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
     self.scrollView = [[UIScrollView alloc] initWithFrame:self.bounds];
     self.scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.scrollView.backgroundColor = self.backgroundColor;
     self.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAlways;
     [self addSubview:self.scrollView];
 
@@ -304,13 +357,25 @@ std::string hex_bytes(const std::string &value) {
     UIStackView *resolutionAccessory = [[UIStackView alloc] initWithArrangedSubviews:@[self.resolutionSlider, self.resolutionValue]];
     resolutionAccessory.axis = UILayoutConstraintAxisHorizontal;
     resolutionAccessory.spacing = 10;
-    // Keep the slider usable in portrait, where accessory content-hugging
-    // otherwise squeezes it to almost nothing.
-    [self.resolutionSlider.widthAnchor constraintGreaterThanOrEqualToConstant:170].active = YES;
+    resolutionAccessory.accessibilityIdentifier = @"wideAccessory";
+
+    self.fpsSlider = [[UISlider alloc] init];
+    self.fpsSlider.minimumValue = 15;
+    self.fpsSlider.maximumValue = 60;
+    self.fpsSlider.value = values.fps_limit;
+    [self.fpsSlider addTarget:self action:@selector(fpsChanged:) forControlEvents:UIControlEventValueChanged];
+    self.fpsValue = [[UILabel alloc] init];
+    self.fpsValue.textColor = UIColor.systemCyanColor;
+    self.fpsValue.font = [UIFont monospacedDigitSystemFontOfSize:14 weight:UIFontWeightSemibold];
+    UIStackView *fpsAccessory = [[UIStackView alloc] initWithArrangedSubviews:@[self.fpsSlider, self.fpsValue]];
+    fpsAccessory.axis = UILayoutConstraintAxisHorizontal;
+    fpsAccessory.spacing = 10;
+    fpsAccessory.accessibilityIdentifier = @"wideAccessory";
+    [self fpsChanged:self.fpsSlider];
     [self addSection:@"Video" rows:@[
         [self row:@"Resolution multiplier" hint:@"Higher values are sharper but increase GPU load." accessory:resolutionAccessory],
         [self switchRow:@"V-Sync" hint:@"Synchronizes presentation to the display." value:values.v_sync output:&_vsyncSwitch],
-        [self switchRow:@"FPS hack" hint:@"Forces some 30 FPS games to 60; it can break timing." value:values.fps_hack output:&_fpsSwitch],
+        [self row:@"FPS limiter" hint:@"Caps presentation without changing the Vita's 60 Hz timing." accessory:fpsAccessory],
     ]];
 
     self.anisotropicControl = [[UISegmentedControl alloc] initWithItems:@[@"Off", @"2x", @"4x", @"8x", @"16x"]];
@@ -347,7 +412,7 @@ std::string hex_bytes(const std::string &value) {
             accessory:[self defaultsSwitch:@"vita3k.perf.fps" defaults:defaults]],
         [self row:@"Show RAM usage" hint:@"This app's physical memory footprint."
             accessory:[self defaultsSwitch:@"vita3k.perf.ram" defaults:defaults]],
-        [self row:@"Show battery %" hint:@"Device battery level while playing."
+        [self row:@"Show battery %" hint:@"Approximate device level; iOS exposes it in coarse steps."
             accessory:[self defaultsSwitch:@"vita3k.perf.battery" defaults:defaults]],
     ]];
 
@@ -443,13 +508,15 @@ std::string hex_bytes(const std::string &value) {
     [labels addArrangedSubview:detail];
 
     UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[labels, accessory]];
-    row.axis = UILayoutConstraintAxisHorizontal;
-    row.alignment = UIStackViewAlignmentCenter;
+    const BOOL wideAccessory = [accessory.accessibilityIdentifier isEqualToString:@"wideAccessory"];
+    row.axis = wideAccessory ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
+    row.alignment = wideAccessory ? UIStackViewAlignmentFill : UIStackViewAlignmentCenter;
     row.spacing = 16;
     row.layoutMargins = UIEdgeInsetsMake(11, 14, 11, 14);
     row.layoutMarginsRelativeArrangement = YES;
     [labels setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
-    [accessory setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [accessory setContentHuggingPriority:wideAccessory ? UILayoutPriorityDefaultLow : UILayoutPriorityRequired
+                                forAxis:UILayoutConstraintAxisHorizontal];
     return row;
 }
 
@@ -487,6 +554,11 @@ std::string hex_bytes(const std::string &value) {
     [self updateResolutionLabel];
 }
 
+- (void)fpsChanged:(UISlider *)slider {
+    slider.value = roundf(slider.value / 5.0f) * 5.0f;
+    self.fpsValue.text = [NSString stringWithFormat:@"%.0f FPS", slider.value];
+}
+
 - (void)updateResolutionLabel {
     self.resolutionValue.text = [NSString stringWithFormat:@"%.2gx", self.resolutionSlider.value];
 }
@@ -507,7 +579,8 @@ std::string hex_bytes(const std::string &value) {
     action.kind = Vita3KIOSFrontendActionKind::ApplySettings;
     action.settings.resolution_multiplier = self.resolutionSlider.value;
     action.settings.v_sync = self.vsyncSwitch.on;
-    action.settings.fps_hack = self.fpsSwitch.on;
+    action.settings.fps_limit = (int)self.fpsSlider.value;
+    [NSUserDefaults.standardUserDefaults setInteger:action.settings.fps_limit forKey:@"tsubomi.fpsLimit"];
     action.settings.cpu_opt = self.cpuSwitch.on;
     action.settings.ngs_enable = self.ngsSwitch.on;
     action.settings.async_pipeline_compilation = self.asyncSwitch.on;
@@ -524,6 +597,8 @@ std::string hex_bytes(const std::string &value) {
     std::vector<Vita3KIOSGameEntry> _games;
     Vita3KIOSSettings _settings;
     BOOL _jitAvailable;
+    BOOL _listMode;
+    CGFloat _lastCollectionWidth;
 }
 @property(nonatomic, strong) UICollectionView *collectionView;
 @property(nonatomic, strong) UILabel *emptyLabel;
@@ -546,6 +621,7 @@ std::string hex_bytes(const std::string &value) {
     if (!self)
         return nil;
     _jitAvailable = YES;
+    _listMode = [NSUserDefaults.standardUserDefaults boolForKey:@"tsubomi.libraryListMode"];
     // Enable battery monitoring once (not per perf-overlay tick).
     UIDevice.currentDevice.batteryMonitoringEnabled = YES;
     self.backgroundColor = UIColor.systemBackgroundColor;
@@ -576,7 +652,7 @@ std::string hex_bytes(const std::string &value) {
     // Attach the choices directly to the + button so iOS morphs the menu out
     // of the glass control itself instead of sliding an action sheet up from
     // the bottom of the screen.
-    UIAction *importGame = [UIAction actionWithTitle:@"Import game (.vpk / .zip)"
+    UIAction *importGame = [UIAction actionWithTitle:@"Import game (.vpk / .zip / .pkg)"
         image:[UIImage systemImageNamed:@"arrow.down.doc"]
         identifier:nil
         handler:^(__unused UIAction *action) { present_import_picker(NO); }];
@@ -584,9 +660,17 @@ std::string hex_bytes(const std::string &value) {
         image:[UIImage systemImageNamed:@"cpu"]
         identifier:nil
         handler:^(__unused UIAction *action) { present_import_picker(YES); }];
-    importButton.menu = [UIMenu menuWithChildren:@[importGame, importFirmware]];
+    UIAction *importLicense = [UIAction actionWithTitle:@"Import license (work.bin)"
+        image:[UIImage systemImageNamed:@"key.fill"]
+        identifier:nil
+        handler:^(__unused UIAction *action) { present_license_picker(); }];
+    importButton.menu = [UIMenu menuWithChildren:@[importGame, importLicense, importFirmware]];
     importButton.showsMenuAsPrimaryAction = YES;
     [self addSubview:importButton];
+    UIButton *viewMode = symbol_button(_listMode ? @"square.grid.2x2" : @"list.bullet", @"View", @"Switch library view");
+    viewMode.tag = 105;
+    [viewMode addTarget:self action:@selector(toggleViewMode:) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:viewMode];
 
     // Firmware version indicator, wrapped in a small glass capsule.
     self.firmwareGlass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
@@ -629,7 +713,7 @@ std::string hex_bytes(const std::string &value) {
     [self addSubview:self.collectionView];
 
     self.emptyLabel = [[UILabel alloc] init];
-    self.emptyLabel.text = @"No games yet\n\nTap + to import a game (.vpk/.zip), or copy\nPC's Vita3K data into Documents/Tsubomi/vita";
+    self.emptyLabel.text = @"No games yet\n\nTap + to import a game (.vpk/.zip/.pkg), or copy\nPC's Vita3K data into Documents/Tsubomi/vita";
     self.emptyLabel.textColor = UIColor.secondaryLabelColor;
     self.emptyLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle3];
     self.emptyLabel.textAlignment = NSTextAlignmentCenter;
@@ -654,10 +738,14 @@ std::string hex_bytes(const std::string &value) {
     UIButton *refresh = [self viewWithTag:102];
     UIButton *settings = [self viewWithTag:103];
     UIButton *importButton = [self viewWithTag:104];
+    UIButton *viewMode = [self viewWithTag:105];
     title.frame = CGRectMake(safe.left + 22, safe.top + 14, 240, 50);
-    settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 58, safe.top + 17, 44, 44);
-    refresh.frame = CGRectMake(CGRectGetMinX(settings.frame) - 54, safe.top + 17, 44, 44);
-    importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - 54, safe.top + 17, 44, 44);
+    settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 60, safe.top + 16, 46, 46);
+    refresh.frame = CGRectMake(CGRectGetMinX(settings.frame) - 56, safe.top + 16, 46, 46);
+    importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - 56, safe.top + 16, 46, 46);
+    viewMode.frame = CGRectMake(CGRectGetMinX(importButton.frame) - 56, safe.top + 16, 46, 46);
+    title.frame = CGRectMake(safe.left + 22, safe.top + 14,
+        MAX(80, CGRectGetMinX(viewMode.frame) - safe.left - 32), 50);
 
     [self.firmwareLabel sizeToFit];
     const CGFloat firmwareWidth = MIN(CGRectGetWidth(self.firmwareLabel.bounds) + 22, 200);
@@ -694,6 +782,20 @@ std::string hex_bytes(const std::string &value) {
         CGRectGetWidth(self.bounds) - safe.left - safe.right - 36,
         MAX(1, CGRectGetHeight(self.bounds) - contentTop - safe.bottom - 10));
     self.emptyLabel.frame = CGRectInset(self.collectionView.frame, 40, 40);
+    const CGFloat width = CGRectGetWidth(self.collectionView.bounds);
+    if (fabs(width - _lastCollectionWidth) > 0.5) {
+        _lastCollectionWidth = width;
+        [self.collectionView.collectionViewLayout invalidateLayout];
+    }
+}
+
+- (void)toggleViewMode:(UIButton *)sender {
+    _listMode = !_listMode;
+    [NSUserDefaults.standardUserDefaults setBool:_listMode forKey:@"tsubomi.libraryListMode"];
+    [sender setImage:[UIImage systemImageNamed:_listMode ? @"square.grid.2x2" : @"list.bullet"]
+            forState:UIControlStateNormal];
+    [self.collectionView.collectionViewLayout invalidateLayout];
+    [self.collectionView reloadData];
 }
 
 // The gradient uses CGColors, which do not auto-resolve to the current trait
@@ -764,7 +866,8 @@ std::string hex_bytes(const std::string &value) {
         title = [NSString stringWithFormat:@"Unknown title (%@)", identifier];
     }
     NSString *iconPath = [NSString stringWithUTF8String:game.icon_path.c_str()];
-    [cell configureTitle:display_title(identifier, title) identifier:identifier iconPath:iconPath];
+    [cell configureTitle:display_title(identifier, title) identifier:identifier metadata:game_metadata(game)
+                  iconPath:iconPath listMode:_listMode];
     return cell;
 }
 
@@ -807,16 +910,39 @@ std::string hex_bytes(const std::string &value) {
     const auto &game = _games.at(static_cast<std::size_t>(indexPath.item));
     NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
     NSString *original = [NSString stringWithUTF8String:game.title.c_str()] ?: identifier;
+    NSString *trophyId = [NSString stringWithUTF8String:game.trophy_id.c_str()] ?: @"";
     __weak Vita3KLibraryView *weakSelf = self;
     return [UIContextMenuConfiguration configurationWithIdentifier:nil
         previewProvider:nil
          actionProvider:^UIMenu *(__unused NSArray<UIMenuElement *> *suggested) {
-            UIAction *rename = [UIAction actionWithTitle:@"Rename"
+            UIAction *rename = [UIAction actionWithTitle:@"Rename title"
                 image:[UIImage systemImageNamed:@"pencil"]
                 identifier:nil
                 handler:^(__unused UIAction *action) { [weakSelf promptRename:identifier original:original]; }];
             NSString *overrideName = [NSUserDefaults.standardUserDefaults stringForKey:title_override_key(identifier)];
-            NSMutableArray<UIMenuElement *> *children = [NSMutableArray arrayWithObject:rename];
+            UIAction *importSave = [UIAction actionWithTitle:@"Import save"
+                image:[UIImage systemImageNamed:@"square.and.arrow.down"]
+                identifier:nil handler:^(__unused UIAction *action) { present_save_picker(identifier); }];
+            UIAction *exportSave = [UIAction actionWithTitle:@"Export save"
+                image:[UIImage systemImageNamed:@"square.and.arrow.up"]
+                identifier:nil handler:^(__unused UIAction *action) {
+                    [weakSelf showBusyOverlay:@"Exporting save…" blockInteraction:YES];
+                    Vita3KIOSFrontendAction request;
+                    request.kind = Vita3KIOSFrontendActionKind::ExportSave;
+                    request.title_id = identifier.UTF8String;
+                    queue_action(std::move(request));
+                }];
+            UIAction *trophies = [UIAction actionWithTitle:@"View trophies"
+                image:[UIImage systemImageNamed:@"trophy.fill"]
+                identifier:nil handler:^(__unused UIAction *action) {
+                    Vita3KIOSFrontendAction request;
+                    request.kind = Vita3KIOSFrontendActionKind::ShowTrophies;
+                    request.title_id = original.UTF8String;
+                    request.trophy_id = trophyId.UTF8String;
+                    queue_action(std::move(request));
+                }];
+            NSMutableArray<UIMenuElement *> *children = [NSMutableArray arrayWithObjects:
+                importSave, exportSave, rename, trophies, nil];
             if (overrideName.length) {
                 UIAction *reset = [UIAction actionWithTitle:@"Reset name"
                     image:[UIImage systemImageNamed:@"arrow.uturn.backward"]
@@ -836,6 +962,8 @@ std::string hex_bytes(const std::string &value) {
     (void)layout;
     (void)indexPath;
     const CGFloat width = CGRectGetWidth(collectionView.bounds);
+    if (_listMode)
+        return CGSizeMake(floor(width), 112);
     const CGFloat spacing = 14;
     // Choose the column count from a target cell width (~180pt) rather than a
     // couple of fixed width thresholds. Phone landscape (~750-800pt of grid)
@@ -844,7 +972,7 @@ std::string hex_bytes(const std::string &value) {
     const CGFloat targetItemWidth = 180;
     const NSInteger columns = MAX(2, static_cast<NSInteger>(floor((width + spacing) / (targetItemWidth + spacing))));
     const CGFloat itemWidth = floor((width - (columns - 1) * spacing) / columns);
-    return CGSizeMake(itemWidth, itemWidth * 0.9 + 58);
+    return CGSizeMake(itemWidth, itemWidth * 0.9 + 90);
 }
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
@@ -868,7 +996,8 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)showBootingOverlay:(NSString *)title {
-    [self showBusyOverlay:[NSString stringWithFormat:@"Booting %@…", title] blockInteraction:YES];
+    [self showBusyOverlay:[NSString stringWithFormat:@"Preparing JIT and booting %@…\nKeep StikDebug attached", title]
+           blockInteraction:YES];
 }
 
 - (void)hideBusyOverlay {
@@ -884,11 +1013,15 @@ std::string hex_bytes(const std::string &value) {
     self.userInteractionEnabled = !block;
     UIView *dim = [[UIView alloc] initWithFrame:self.bounds];
     dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    dim.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+    dim.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+        return traits.userInterfaceStyle == UIUserInterfaceStyleDark
+            ? [UIColor colorWithWhite:0 alpha:0.55]
+            : [UIColor colorWithWhite:1 alpha:0.58];
+    }];
     dim.alpha = 0;
 
     UIVisualEffectView *panel = [[UIVisualEffectView alloc]
-        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
     panel.frame = CGRectMake(0, 0, 260, 130);
     panel.center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
     panel.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin
@@ -898,14 +1031,14 @@ std::string hex_bytes(const std::string &value) {
 
     UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
         initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
-    spinner.color = UIColor.whiteColor;
+    spinner.color = UIColor.labelColor;
     spinner.center = CGPointMake(130, 48);
     [spinner startAnimating];
     [panel.contentView addSubview:spinner];
 
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(14, 82, 232, 36)];
     label.text = text;
-    label.textColor = UIColor.whiteColor;
+    label.textColor = UIColor.labelColor;
     label.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
     label.textAlignment = NSTextAlignmentCenter;
     label.numberOfLines = 2;
@@ -956,6 +1089,7 @@ void reload_library_cells() {
 // Presents the Files picker and hands the copied file to the emulator loop.
 @interface Vita3KImportPicker : NSObject <UIDocumentPickerDelegate>
 @property(nonatomic) Vita3KIOSFrontendActionKind kind;
+@property(nonatomic, copy) NSString *titleId;
 @end
 
 @implementation Vita3KImportPicker
@@ -995,10 +1129,13 @@ void reload_library_cells() {
         busy = @"Installing firmware…";
     else if (self.kind == Vita3KIOSFrontendActionKind::ImportLicense)
         busy = @"Installing license…";
+    else if (self.kind == Vita3KIOSFrontendActionKind::ImportSave)
+        busy = @"Importing save…";
     [g_library showBusyOverlay:busy blockInteraction:YES];
     Vita3KIOSFrontendAction action;
     action.kind = self.kind;
     action.app_path = destination.UTF8String;
+    action.title_id = self.titleId.UTF8String ?: "";
     queue_action(std::move(action));
 }
 
@@ -1018,6 +1155,7 @@ void present_import_picker(BOOL firmware) {
         g_import_picker = [[Vita3KImportPicker alloc] init];
     g_import_picker.kind = firmware ? Vita3KIOSFrontendActionKind::ImportFirmware
                                     : Vita3KIOSFrontendActionKind::ImportGame;
+    g_import_picker.titleId = nil;
     NSMutableArray<UTType *> *types = [NSMutableArray array];
     if (firmware) {
         UTType *pup = [UTType typeWithFilenameExtension:@"pup"];
@@ -1028,6 +1166,9 @@ void present_import_picker(BOOL firmware) {
         UTType *vpk = [UTType typeWithFilenameExtension:@"vpk"];
         if (vpk)
             [types addObject:vpk];
+        UTType *pkg = [UTType typeWithFilenameExtension:@"pkg"];
+        if (pkg)
+            [types addObject:pkg];
     }
     [types addObject:UTTypeData];
     UIDocumentPickerViewController *picker =
@@ -1044,9 +1185,25 @@ void present_license_picker() {
     if (!g_import_picker)
         g_import_picker = [[Vita3KImportPicker alloc] init];
     g_import_picker.kind = Vita3KIOSFrontendActionKind::ImportLicense;
+    g_import_picker.titleId = nil;
     // A work.bin has no standard UTType; accept any file.
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]];
+    picker.delegate = g_import_picker;
+    picker.allowsMultipleSelection = NO;
+    [root presentViewController:picker animated:YES completion:nil];
+}
+
+void present_save_picker(NSString *titleId) {
+    UIViewController *root = active_window().rootViewController;
+    if (!root)
+        return;
+    if (!g_import_picker)
+        g_import_picker = [[Vita3KImportPicker alloc] init];
+    g_import_picker.kind = Vita3KIOSFrontendActionKind::ImportSave;
+    g_import_picker.titleId = titleId;
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP, UTTypeData]];
     picker.delegate = g_import_picker;
     picker.allowsMultipleSelection = NO;
     [root presentViewController:picker animated:YES completion:nil];
@@ -1102,6 +1259,119 @@ std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action() {
     return action;
 }
 
+@interface Vita3KTrophyViewController : UIViewController <UITableViewDataSource, UITableViewDelegate>
+@property(nonatomic, copy) NSString *collectionTitle;
+@property(nonatomic, copy) NSString *progressText;
+@property(nonatomic, strong) NSArray<NSDictionary *> *rows;
+@property(nonatomic, strong) UITableView *tableView;
+@end
+
+@implementation Vita3KTrophyViewController
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.title = self.collectionTitle;
+    self.navigationItem.prompt = self.progressText;
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(close)];
+    self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleInsetGrouped];
+    self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.tableView.dataSource = self;
+    self.tableView.delegate = self;
+    self.tableView.rowHeight = 88;
+    [self.view addSubview:self.tableView];
+}
+- (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    (void)tableView; (void)section; return self.rows.count;
+}
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    static NSString *identifier = @"trophy";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
+    if (!cell)
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];
+    NSDictionary *row = self.rows[indexPath.row];
+    cell.textLabel.text = row[@"name"];
+    cell.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    cell.detailTextLabel.text = row[@"detail"];
+    cell.detailTextLabel.numberOfLines = 3;
+    NSString *path = row[@"icon"];
+    UIImage *image = path.length ? [UIImage imageWithContentsOfFile:path] : nil;
+    cell.imageView.image = image ?: [UIImage systemImageNamed:[row[@"earned"] boolValue] ? @"trophy.fill" : @"lock.fill"];
+    cell.imageView.tintColor = [row[@"earned"] boolValue] ? UIColor.systemYellowColor : UIColor.tertiaryLabelColor;
+    cell.accessoryView = nil;
+    return cell;
+}
+@end
+
+int vita3k_ios_load_fps_limit() {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if (![defaults objectForKey:@"tsubomi.fpsLimit"])
+        return 60;
+    return (int)std::clamp<NSInteger>([defaults integerForKey:@"tsubomi.fpsLimit"], 15, 60);
+}
+
+void vita3k_ios_present_trophies(const Vita3KIOSTrophyCollection &collection) {
+    const Vita3KIOSTrophyCollection copy = collection;
+    perform_on_main(^{
+        NSMutableArray<NSDictionary *> *rows = [NSMutableArray arrayWithCapacity:copy.trophies.size()];
+        NSDateFormatter *dateFormatter = [[NSDateFormatter alloc] init];
+        dateFormatter.dateStyle = NSDateFormatterMediumStyle;
+        dateFormatter.timeStyle = NSDateFormatterShortStyle;
+        for (const auto &trophy : copy.trophies) {
+            NSString *name = [NSString stringWithUTF8String:trophy.name.c_str()] ?: @"Trophy";
+            NSString *detail = [NSString stringWithUTF8String:trophy.detail.c_str()] ?: @"";
+            if (trophy.hidden && !trophy.earned) {
+                name = @"Hidden trophy";
+                detail = @"Unlock this trophy to reveal its details.";
+            }
+            NSString *grade = trophy.grade == 1 ? @"Platinum" : trophy.grade == 2 ? @"Gold"
+                : trophy.grade == 3 ? @"Silver" : trophy.grade == 4 ? @"Bronze" : @"Trophy";
+            NSString *state = @"Locked";
+            if (trophy.earned && trophy.timestamp > 0)
+                state = [NSString stringWithFormat:@"Unlocked %@", [dateFormatter stringFromDate:
+                    [NSDate dateWithTimeIntervalSince1970:trophy.timestamp]]];
+            NSString *combined = detail.length
+                ? [NSString stringWithFormat:@"%@ · %@\n%@", grade, state, detail]
+                : [NSString stringWithFormat:@"%@ · %@", grade, state];
+            [rows addObject:@{
+                @"name": name,
+                @"detail": combined,
+                @"icon": [NSString stringWithUTF8String:trophy.icon_path.c_str()] ?: @"",
+                @"earned": @(trophy.earned),
+            }];
+        }
+        Vita3KTrophyViewController *controller = [[Vita3KTrophyViewController alloc] init];
+        controller.collectionTitle = [NSString stringWithUTF8String:copy.title.c_str()] ?: @"Trophies";
+        controller.progressText = copy.total > 0
+            ? [NSString stringWithFormat:@"%d of %d unlocked", copy.unlocked, copy.total]
+            : @"No trophy data is installed for this title yet.";
+        controller.rows = rows;
+        UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:controller];
+        navigation.modalPresentationStyle = UIModalPresentationPageSheet;
+        [active_window().rootViewController presentViewController:navigation animated:YES completion:nil];
+    });
+}
+
+void vita3k_ios_share_file(const std::string &path) {
+    NSString *filePath = [NSString stringWithUTF8String:path.c_str()];
+    perform_on_main(^{
+        NSURL *url = [NSURL fileURLWithPath:filePath];
+        UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+        UIViewController *root = active_window().rootViewController;
+        share.popoverPresentationController.sourceView = root.view;
+        share.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(root.view.bounds),
+            CGRectGetMidY(root.view.bounds), 1, 1);
+        [root presentViewController:share animated:YES completion:nil];
+    });
+}
+
+void vita3k_ios_request_current_trophies() {
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::ShowTrophies;
+    queue_action(std::move(action));
+}
+
 static UIVisualEffectView *g_perf_hud = nil;
 static UILabel *g_perf_label = nil;
 
@@ -1127,7 +1397,7 @@ void vita3k_ios_update_perf_overlay(const float guest_fps) {
             g_perf_hud.clipsToBounds = YES;
             g_perf_hud.userInteractionEnabled = NO;
             g_perf_label = [[UILabel alloc] init];
-            g_perf_label.textColor = UIColor.whiteColor;
+            g_perf_label.textColor = UIColor.labelColor;
             g_perf_label.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
             [g_perf_hud.contentView addSubview:g_perf_label];
         }
@@ -1152,7 +1422,7 @@ void vita3k_ios_update_perf_overlay(const float guest_fps) {
             // OS limitation (no public finer API — IOKit is private).
             const float level = UIDevice.currentDevice.batteryLevel;
             if (level >= 0)
-                [parts addObject:[NSString stringWithFormat:@"%.0f%%", level * 100.0f]];
+                [parts addObject:[NSString stringWithFormat:@"≈%.0f%%", level * 100.0f]];
         }
         g_perf_label.text = [parts componentsJoinedByString:@"  ·  "];
         [g_perf_label sizeToFit];
@@ -1179,9 +1449,14 @@ void vita3k_ios_report_import_result(const std::string &message, const bool succ
             g_library.statusLabel.text = text;
             g_library.statusLabel.alpha = 1;
             [UIView animateWithDuration:0.3 delay:6 options:0 animations:^{ g_library.statusLabel.alpha = 0; } completion:nil];
+            if ([text localizedCaseInsensitiveContainsString:@"license"])
+                present_alert(@"License installed", text);
         } else {
             // Keep the precise installer detail on screen until dismissed.
-            present_alert(@"Import failed", text);
+            NSString *title = [text localizedCaseInsensitiveContainsString:@"save"]
+                ? @"Save transfer failed"
+                : @"Import failed";
+            present_alert(title, text);
         }
     });
 }

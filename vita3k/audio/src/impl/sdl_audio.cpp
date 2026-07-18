@@ -115,10 +115,16 @@ void SDLAudioAdapter::set_volume(AudioOutPort &out_port, float volume) {
 
 int SDLAudioAdapter::get_rest_sample(AudioOutPort &out_port) {
     auto &port = static_cast<SDLAudioOutPort &>(out_port);
-    const int bytes_available = SDL_GetAudioStreamAvailable(port.stream.get());
-    SDL_CHECK_NEG(bytes_available);
-    // we have the number of bytes left, we can convert it back to the number of samples left
-    return bytes_available / SDL_AUDIO_FRAMESIZE(dst_spec);
+    // sceAudioOutGetRestSample asks how many guest sample frames remain queued
+    // for playback. SDL_GetAudioStreamAvailable reports converted output that
+    // can be pulled right now; SDL3 may legitimately keep that at zero while
+    // the resampler buffers input. Query the exact input queue instead and
+    // convert using the guest S16 channel count. This avoids telling games the
+    // port is empty while music is still queued (the VA-11 Hall-A transition
+    // stall captured on iOS).
+    const int bytes_queued = SDL_GetAudioStreamQueued(port.stream.get());
+    SDL_CHECK_NEG(bytes_queued);
+    return bytes_queued / (port.channels * static_cast<int>(sizeof(int16_t)));
 }
 
 void SDLAudioAdapter::wake_all_ports() {

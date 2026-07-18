@@ -125,6 +125,25 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
     av_frame_unref(frame);
 
 #ifdef VITA3K_PLATFORM_IOS
+    // sceAudiodec supplies the capacity of its ES buffer, not necessarily the
+    // exact length of the first compressed access unit. The old private FFmpeg
+    // decode callback returned the number of bytes it consumed; the public API
+    // does not. Ask FFmpeg's public AAC parser for the first frame boundary so
+    // avPlayer advances by one AU instead of discarding the entire 1536-byte
+    // buffer (the P4G FilterAu stall seen on device).
+    uint32_t parsed_consumed = size;
+    AVCodecParserContext *parser = av_parser_init(AV_CODEC_ID_AAC);
+    if (parser) {
+        uint8_t *parsed_data = nullptr;
+        int parsed_size = 0;
+        const int consumed = av_parser_parse2(parser, context, &parsed_data, &parsed_size,
+            data, static_cast<int>(size), AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+        if (consumed > 0 && consumed <= static_cast<int>(size) && parsed_size > 0) {
+            packet->data = parsed_data;
+            packet->size = parsed_size;
+            parsed_consumed = static_cast<uint32_t>(consumed);
+        }
+    }
     // Emit one AAC frame of silence into `frame` so `receive()` still produces
     // valid PCM and the guest movie/audio clock keeps advancing. Without this,
     // a single decode failure permanently wedged the avPlayer intro (the
@@ -154,10 +173,13 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
         av_frame_unref(frame);
         err = avcodec_send_packet(context, packet);
     }
+    const int decode_packet_size = packet->size;
     av_packet_free(&packet);
 
     if (err >= 0)
         err = avcodec_receive_frame(context, frame);
+    if (parser)
+        av_parser_close(parser);
 
     if (err < 0) {
         // With valid extradata this should no longer happen for P4G's raw AUs;
@@ -171,7 +193,7 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
             LOG_WARN("Failed to allocate AAC silence frame: {}.", codec_error_name(err));
             return false;
         }
-        es_size_used = size;
+        es_size_used = parsed_consumed;
         return true;
     }
 
@@ -181,7 +203,7 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
     // Advance the guest ES read pointer by the bytes actually consumed. For an
     // ADTS stream that is the 13-bit frame length in the header; for a raw AU
     // (the MP4/avPlayer case) the whole packet is one access unit.
-    es_size_used = size;
+    es_size_used = parsed_consumed;
     if (size >= 7 && data[0] == 0xFF && (data[1] & 0xF6) == 0xF0) {
         const uint32_t adts_frame_length =
             (static_cast<uint32_t>(data[3] & 0x03) << 11)
@@ -190,6 +212,9 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
         if (adts_frame_length >= 7 && adts_frame_length <= size)
             es_size_used = adts_frame_length;
     }
+
+    LOG_INFO_ONCE("AAC iOS frame boundary: input={} packet={} consumed={} bytes.",
+        size, decode_packet_size, es_size_used);
 
     return true;
 }
