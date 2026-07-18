@@ -132,31 +132,21 @@ UIVisualEffect *glass_effect(const BOOL interactive = YES) {
     return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
 }
 
+// Plain toolbar glyph, no material behind it: header controls read as system
+// bar buttons and adapt to light/dark through labelColor.
 UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessibility) {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    // Size the button BEFORE adding the autoresizing glass child: adding a
-    // 44pt child to a zero-sized parent made autoresizing inflate the glass
-    // past the button (the oversized top-right blobs on the home screen).
-    button.frame = CGRectMake(0, 0, 46, 46);
+    button.frame = CGRectMake(0, 0, 40, 40);
     UIImage *image = [UIImage systemImageNamed:symbol];
-    if (image)
+    if (image) {
+        [button setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:19 weight:UIImageSymbolWeightMedium]
+                              forImageInState:UIControlStateNormal];
         [button setImage:image forState:UIControlStateNormal];
-    else
+    } else {
         [button setTitle:fallback forState:UIControlStateNormal];
-    // labelColor adapts (white on dark, near-black on light) so glyphs stay
-    // legible on the glass capsule in both interface styles.
+    }
     button.tintColor = UIColor.labelColor;
     button.accessibilityLabel = accessibility;
-    button.backgroundColor = UIColor.clearColor;
-    button.layer.cornerRadius = 23;
-    button.clipsToBounds = YES;
-    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(YES)];
-    glass.userInteractionEnabled = NO;
-    glass.frame = button.bounds;
-    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    glass.layer.cornerRadius = 23;
-    glass.clipsToBounds = YES;
-    [button insertSubview:glass atIndex:0];
     return button;
 }
 
@@ -678,9 +668,11 @@ std::string hex_bytes(const std::string &value) {
 
     UILabel *title = [[UILabel alloc] init];
     title.text = @"Tsubomi";
-    title.font = [UIFont systemFontOfSize:38 weight:UIFontWeightBlack];
+    title.font = [UIFont systemFontOfSize:32 weight:UIFontWeightBold];
     title.textColor = UIColor.labelColor;
-    title.adjustsFontSizeToFitWidth = NO;
+    // Buttons share the title row; on narrow phones the title yields first.
+    title.adjustsFontSizeToFitWidth = YES;
+    title.minimumScaleFactor = 0.7;
     title.tag = 101;
     [self addSubview:title];
 
@@ -794,33 +786,34 @@ std::string hex_bytes(const std::string &value) {
     UIButton *viewMode = [self viewWithTag:105];
     const CGFloat usableWidth = CGRectGetWidth(self.bounds) - safe.left - safe.right;
     const BOOL compactHeader = usableWidth < 600;
-    const CGFloat titleY = safe.top + 12;
-    const CGFloat controlsY = compactHeader ? titleY + 56 : safe.top + 16;
-    settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 60, controlsY, 46, 46);
-    refresh.frame = CGRectMake(CGRectGetMinX(settings.frame) - 56, controlsY, 46, 46);
-    importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - 56, controlsY, 46, 46);
-    viewMode.frame = CGRectMake(CGRectGetMinX(importButton.frame) - 56, controlsY, 46, 46);
-    title.frame = compactHeader
-        ? CGRectMake(safe.left + 20, titleY, MAX(1, usableWidth - 40), 50)
-        : CGRectMake(safe.left + 22, safe.top + 14,
-              MAX(80, CGRectGetMinX(viewMode.frame) - safe.left - 32), 50);
+    // Single navigation-bar-style row: large title on the left, plain glyph
+    // controls right-aligned on the same baseline.
+    const CGFloat rowY = safe.top + 8;
+    const CGFloat rowHeight = 44;
+    const CGFloat buttonSize = 40;
+    const CGFloat buttonY = rowY + (rowHeight - buttonSize) / 2;
+    settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 14 - buttonSize, buttonY, buttonSize, buttonSize);
+    refresh.frame = CGRectMake(CGRectGetMinX(settings.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
+    importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
+    viewMode.frame = CGRectMake(CGRectGetMinX(importButton.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
+    title.frame = CGRectMake(safe.left + 20, rowY,
+        MAX(80, CGRectGetMinX(viewMode.frame) - safe.left - 30), rowHeight);
 
     [self.firmwareLabel sizeToFit];
     const CGFloat firmwareWidth = MIN(CGRectGetWidth(self.firmwareLabel.bounds) + 22, 200);
     const CGFloat firmwareHeight = 22;
     self.firmwareGlass.frame = CGRectMake(CGRectGetMaxX(settings.frame) - firmwareWidth,
-        CGRectGetMaxY(settings.frame) + 6, firmwareWidth, firmwareHeight);
+        CGRectGetMaxY(settings.frame) + 4, firmwareWidth, firmwareHeight);
     self.firmwareLabel.frame = self.firmwareGlass.bounds;
 
-    // Start the grid below the tallest header element so the firmware badge —
-    // which sits under the top-right buttons and can be wider/taller than the
-    // fixed 78pt used before — never overlaps the first row in portrait.
     CGFloat headerBottom = MAX(CGRectGetMaxY(title.frame), CGRectGetMaxY(settings.frame));
     if (!self.firmwareGlass.hidden)
         headerBottom = MAX(headerBottom, CGRectGetMaxY(self.firmwareGlass.frame));
+    // The status label is a transient toast floating over the content edge;
+    // it must not reserve permanent header height.
     self.statusLabel.frame = CGRectMake(safe.left + 20, headerBottom + 5,
         MAX(1, usableWidth - 40), 38);
-    CGFloat contentTop = CGRectGetMaxY(self.statusLabel.frame) + 10;
+    CGFloat contentTop = headerBottom + 14;
     if (!self.jitBanner.hidden) {
         const CGFloat bannerX = safe.left + 18;
         const CGFloat bannerWidth = CGRectGetWidth(self.bounds) - safe.left - safe.right - 36;
@@ -1384,6 +1377,11 @@ std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action() {
     [self.view addSubview:self.tableView];
 }
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    // When opened from the in-game menu, closing the sheet returns there.
+    vita3k_ios_submenu_dismissed();
+}
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView; (void)section; return self.rows.count;
 }

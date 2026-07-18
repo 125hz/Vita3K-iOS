@@ -22,6 +22,16 @@ static NSMutableDictionary *g_controls_config = nil;
 static Vita3KVirtualControllerView *g_overlay = nil;
 static UIView *g_options_view = nil;
 static UIView *g_game_menu = nil;
+static UIView *g_perf_panel = nil;
+// Set when a sub-screen (controller options, trophies, performance HUD) was
+// opened from the in-game menu, so closing it returns to the menu instead of
+// dropping straight back to the game.
+static BOOL g_return_to_game_menu = NO;
+
+static void presentGameMenu();
+static void dismissGameMenu();
+static void presentPerfHudPanel();
+static void performOnMainThread(dispatch_block_t block);
 
 static UIWindow *activeWindow() {
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -758,11 +768,23 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
 
     UIButton *edit = [self actionButton:@"Edit Layout" color:UIColor.systemBlueColor selector:@selector(editLayout)];
     UIButton *reset = [self actionButton:@"Reset to Default" color:UIColor.systemOrangeColor selector:@selector(resetLayout)];
-    UIButton *done = [self actionButton:@"Done" color:UIColor.systemGrayColor selector:@selector(close)];
+    UIButton *done = [self actionButton:g_return_to_game_menu ? @"Back" : @"Done"
+                                  color:UIColor.systemGrayColor
+                               selector:@selector(done)];
     [stack addArrangedSubview:edit];
     [stack addArrangedSubview:reset];
     [stack addArrangedSubview:done];
     return self;
+}
+
+// Closing from the in-game menu returns to the menu; anywhere else (library
+// settings, layout editing) simply dismisses.
+- (void)done {
+    const BOOL return_to_menu = g_return_to_game_menu;
+    g_return_to_game_menu = NO;
+    [self close];
+    if (return_to_menu)
+        presentGameMenu();
 }
 
 - (UIView *)labeled:(NSString *)label control:(UIView *)control {
@@ -811,6 +833,9 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     saveConfig();
 }
 - (void)editLayout {
+    // Layout editing hands control back to the game view; do not re-open the
+    // in-game menu behind the editing overlay afterwards.
+    g_return_to_game_menu = NO;
     [self close];
     if (!g_overlay) {
         // Invoked from the homepage with no game running, so there is no live
@@ -899,12 +924,19 @@ static UIButton *menuAction(NSString *title, NSString *subtitle, NSString *symbo
 @end
 @implementation Vita3KGameMenuTarget
 - (void)resume { dismissGameMenu(); }
-- (void)layout { dismissGameMenu(); vita3k_ios_present_controller_options(); }
-- (void)trophies { dismissGameMenu(); vita3k_ios_request_current_trophies(); }
-- (void)togglePerfHud {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    [defaults setBool:![defaults boolForKey:@"vita3k.perf.hidden"] forKey:@"vita3k.perf.hidden"];
+- (void)layout {
+    g_return_to_game_menu = YES;
     dismissGameMenu();
+    vita3k_ios_present_controller_options();
+}
+- (void)trophies {
+    g_return_to_game_menu = YES;
+    dismissGameMenu();
+    vita3k_ios_request_current_trophies();
+}
+- (void)perfHud {
+    dismissGameMenu();
+    presentPerfHudPanel();
 }
 - (void)hideMenuButton {
     elementConfig(@"menu")[@"visible"] = @NO;
@@ -920,6 +952,115 @@ static UIButton *menuAction(NSString *title, NSString *subtitle, NSString *symbo
 }
 @end
 static Vita3KGameMenuTarget *g_game_menu_target = nil;
+
+// Small bottom sheet with one switch per HUD element. Toggling any element on
+// also clears the legacy hide flag, so enabling the HUD from here always
+// makes it appear — even when it was fully disabled in the app settings.
+@interface Vita3KPerfHudPanel : UIControl
+@end
+@implementation Vita3KPerfHudPanel
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (!self)
+        return nil;
+    self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+        return traits.userInterfaceStyle == UIUserInterfaceStyleDark
+            ? [UIColor colorWithWhite:0 alpha:0.40]
+            : [UIColor colorWithWhite:1 alpha:0.32];
+    }];
+    [self addTarget:self action:@selector(back) forControlEvents:UIControlEventTouchUpInside];
+
+    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect()];
+    glass.translatesAutoresizingMaskIntoConstraints = NO;
+    glass.layer.cornerRadius = 28;
+    glass.clipsToBounds = YES;
+    [self addSubview:glass];
+    NSLayoutConstraint *preferredWidth = [glass.widthAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.widthAnchor multiplier:0.92];
+    preferredWidth.priority = UILayoutPriorityDefaultHigh;
+    [NSLayoutConstraint activateConstraints:@[
+        [glass.centerXAnchor constraintEqualToAnchor:self.centerXAnchor],
+        [glass.bottomAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.bottomAnchor constant:-12],
+        [glass.widthAnchor constraintLessThanOrEqualToConstant:410],
+        preferredWidth,
+    ]];
+
+    UIStackView *stack = [[UIStackView alloc] init];
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.spacing = 10;
+    stack.layoutMargins = UIEdgeInsetsMake(18, 18, 20, 18);
+    stack.layoutMarginsRelativeArrangement = YES;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [glass.contentView addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.leadingAnchor constraintEqualToAnchor:glass.contentView.leadingAnchor],
+        [stack.trailingAnchor constraintEqualToAnchor:glass.contentView.trailingAnchor],
+        [stack.topAnchor constraintEqualToAnchor:glass.contentView.topAnchor],
+        [stack.bottomAnchor constraintEqualToAnchor:glass.contentView.bottomAnchor],
+    ]];
+
+    UILabel *title = [[UILabel alloc] init];
+    title.text = @"Performance HUD";
+    title.font = [UIFont systemFontOfSize:25 weight:UIFontWeightBold];
+    title.textColor = UIColor.labelColor;
+    [stack addArrangedSubview:title];
+    UILabel *subtitle = [[UILabel alloc] init];
+    subtitle.text = @"Shown in the top-left corner while playing";
+    subtitle.textColor = UIColor.secondaryLabelColor;
+    subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    [stack addArrangedSubview:subtitle];
+
+    [stack addArrangedSubview:[self switchRow:@"FPS" key:@"vita3k.perf.fps"]];
+    [stack addArrangedSubview:[self switchRow:@"Memory use" key:@"vita3k.perf.ram"]];
+    [stack addArrangedSubview:[self switchRow:@"Battery" key:@"vita3k.perf.battery"]];
+    [stack addArrangedSubview:menuAction(@"Back", nil, @"chevron.left", @selector(back), self)];
+    return self;
+}
+
+- (UIView *)switchRow:(NSString *)label key:(NSString *)key {
+    UILabel *title = [[UILabel alloc] init];
+    title.text = label;
+    title.textColor = UIColor.labelColor;
+    title.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    UISwitch *toggle = [[UISwitch alloc] init];
+    toggle.on = [NSUserDefaults.standardUserDefaults boolForKey:key];
+    toggle.accessibilityIdentifier = key;
+    [toggle addTarget:self action:@selector(toggled:) forControlEvents:UIControlEventValueChanged];
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[title, toggle]];
+    row.axis = UILayoutConstraintAxisHorizontal;
+    row.alignment = UIStackViewAlignmentCenter;
+    row.spacing = 12;
+    [title setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [toggle setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    return row;
+}
+
+- (void)toggled:(UISwitch *)sender {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults setBool:sender.on forKey:sender.accessibilityIdentifier];
+    if (sender.on)
+        [defaults setBool:NO forKey:@"vita3k.perf.hidden"];
+}
+
+- (void)back {
+    [self removeFromSuperview];
+    g_perf_panel = nil;
+    presentGameMenu();
+}
+
+@end
+
+static void presentPerfHudPanel() {
+    if (g_perf_panel)
+        return;
+    UIWindow *window = activeWindow();
+    if (!window)
+        return;
+    Vita3KPerfHudPanel *panel = [[Vita3KPerfHudPanel alloc] initWithFrame:window.bounds];
+    g_perf_panel = panel;
+    [window addSubview:panel];
+}
 
 static void presentGameMenu() {
     if (g_game_menu)
@@ -990,11 +1131,8 @@ static void presentGameMenu() {
     [stack addArrangedSubview:menuAction(@"Resume", nil, @"play.fill", @selector(resume), g_game_menu_target)];
     [stack addArrangedSubview:menuAction(@"Trophies", @"Progress and unlock dates", @"trophy.fill", @selector(trophies), g_game_menu_target)];
     [stack addArrangedSubview:menuAction(@"Controller Options", @"Layout, visibility, scale and opacity", @"gamecontroller.fill", @selector(layout), g_game_menu_target)];
-    NSString *hudTitle = [NSUserDefaults.standardUserDefaults boolForKey:@"vita3k.perf.hidden"]
-        ? @"Show Performance HUD"
-        : @"Hide Performance HUD";
-    [stack addArrangedSubview:menuAction(hudTitle, @"FPS, memory and battery overlay", @"gauge.with.dots.needle.67percent",
-        @selector(togglePerfHud), g_game_menu_target)];
+    [stack addArrangedSubview:menuAction(@"Performance HUD", @"FPS, memory and battery overlay", @"gauge.with.dots.needle.67percent",
+        @selector(perfHud), g_game_menu_target)];
     [stack addArrangedSubview:menuAction(@"Hide Menu Button", @"Restore it with a three-finger tap", @"eye.slash.fill",
         @selector(hideMenuButton), g_game_menu_target)];
     [stack addArrangedSubview:menuAction(@"Quit Game", @"Return to the library", @"rectangle.portrait.and.arrow.right",
@@ -1094,6 +1232,23 @@ void vita3k_ios_present_controller_options() {
         [window addSubview:options];
         [window bringSubviewToFront:options];
         SDL_Log("Vita3K iOS: controller options visible (orientation=%s)", orientationKey().UTF8String);
+    });
+}
+
+void vita3k_ios_present_game_menu() {
+    performOnMainThread(^{
+        if (g_overlay && !g_overlay.previewEditingOnly)
+            presentGameMenu();
+    });
+}
+
+void vita3k_ios_submenu_dismissed() {
+    performOnMainThread(^{
+        if (!g_return_to_game_menu)
+            return;
+        g_return_to_game_menu = NO;
+        if (g_overlay && !g_overlay.previewEditingOnly)
+            presentGameMenu();
     });
 }
 

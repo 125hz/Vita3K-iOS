@@ -17,6 +17,15 @@ void vita3k_ios_hide_virtual_controller();
 // the floating in-game menu.
 void vita3k_ios_present_controller_options();
 
+// Re-opens the floating in-game menu (no-op when no game overlay is active).
+// Used by sub-screens (controller options, trophies, performance HUD) so
+// their Back action returns to the menu instead of dropping to the game.
+void vita3k_ios_present_game_menu();
+
+// Notifies the controller layer that a sub-screen opened from the in-game
+// menu was dismissed; re-presents the menu when appropriate.
+void vita3k_ios_submenu_dismissed();
+
 // Physical-pad state excludes Vita3K's own SDL virtual joystick. When enabled
 // in ios_controls.json, only the touch controls auto-hide; the menu stays.
 void vita3k_ios_set_physical_controller_connected(bool connected);
