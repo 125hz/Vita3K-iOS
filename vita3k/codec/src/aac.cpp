@@ -119,8 +119,33 @@ uint32_t AacDecoderState::get(DecoderQuery query) {
 
 bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
     AVPacket *packet = av_packet_alloc();
-    packet->data = const_cast<uint8_t *>(data);
-    packet->size = size;
+    const uint8_t *payload_data = data;
+    uint32_t payload_size = size;
+    uint32_t framing_size = 0;
+
+#ifdef VITA3K_PLATFORM_IOS
+    // P4G's SceAudiodec buffer is not a bare AAC AU: it starts with a
+    // little-endian 32-bit payload length (device capture: DE 04 00 00 =
+    // 1246 bytes) and the rest of the 1536-byte ES buffer is padding/next
+    // data. Strip that wrapper before handing the AU to FFmpeg and report the
+    // four framing bytes as consumed with it.
+    if (size >= 8 && data[2] == 0 && data[3] == 0) {
+        const uint32_t declared_size = static_cast<uint32_t>(data[0])
+            | (static_cast<uint32_t>(data[1]) << 8)
+            | (static_cast<uint32_t>(data[2]) << 16)
+            | (static_cast<uint32_t>(data[3]) << 24);
+        if (declared_size >= 8 && declared_size <= size - 4) {
+            payload_data = data + 4;
+            payload_size = declared_size;
+            framing_size = 4;
+            LOG_INFO_ONCE("AAC iOS length-prefixed AU: input={} declared_payload={} framing={} bytes.",
+                size, payload_size, framing_size);
+        }
+    }
+#endif
+
+    packet->data = const_cast<uint8_t *>(payload_data);
+    packet->size = static_cast<int>(payload_size);
 
     av_frame_unref(frame);
 
@@ -131,17 +156,17 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
     // does not. Ask FFmpeg's public AAC parser for the first frame boundary so
     // avPlayer advances by one AU instead of discarding the entire 1536-byte
     // buffer (the P4G FilterAu stall seen on device).
-    uint32_t parsed_consumed = size;
+    uint32_t parsed_consumed = framing_size + payload_size;
     AVCodecParserContext *parser = av_parser_init(AV_CODEC_ID_AAC);
     if (parser) {
         uint8_t *parsed_data = nullptr;
         int parsed_size = 0;
         const int consumed = av_parser_parse2(parser, context, &parsed_data, &parsed_size,
-            data, static_cast<int>(size), AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
-        if (consumed > 0 && consumed <= static_cast<int>(size) && parsed_size > 0) {
+            payload_data, static_cast<int>(payload_size), AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+        if (consumed > 0 && consumed <= static_cast<int>(payload_size) && parsed_size > 0) {
             packet->data = parsed_data;
             packet->size = parsed_size;
-            parsed_consumed = static_cast<uint32_t>(consumed);
+            parsed_consumed = framing_size + static_cast<uint32_t>(consumed);
         }
     }
     // Emit one AAC frame of silence into `frame` so `receive()` still produces
@@ -185,9 +210,9 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
         // With valid extradata this should no longer happen for P4G's raw AUs;
         // keep the silent frame only as a last resort so one bad packet can't
         // wedge the avPlayer clock, and log it so it is visible if it recurs.
-        LOG_WARN_ONCE("Aac decode error ({}); emitting silence. ffmpeg '{}', packet {} bytes, extradata {} bytes, "
-                      "head {:02X} {:02X} {:02X} {:02X} (0xFFFx=ADTS).",
-            codec_error_name(err), av_version_info(), size, context->extradata_size,
+        LOG_WARN_ONCE("Aac decode error ({}); emitting silence. ffmpeg '{}', input {} bytes, decoded packet {} bytes, "
+                      "extradata {} bytes, head {:02X} {:02X} {:02X} {:02X}.",
+            codec_error_name(err), av_version_info(), size, decode_packet_size, context->extradata_size,
             size > 0 ? data[0] : 0, size > 1 ? data[1] : 0, size > 2 ? data[2] : 0, size > 3 ? data[3] : 0);
         if (!emit_silence()) {
             LOG_WARN("Failed to allocate AAC silence frame: {}.", codec_error_name(err));
@@ -204,13 +229,13 @@ bool AacDecoderState::send(const uint8_t *data, uint32_t size) {
     // ADTS stream that is the 13-bit frame length in the header; for a raw AU
     // (the MP4/avPlayer case) the whole packet is one access unit.
     es_size_used = parsed_consumed;
-    if (size >= 7 && data[0] == 0xFF && (data[1] & 0xF6) == 0xF0) {
+    if (payload_size >= 7 && payload_data[0] == 0xFF && (payload_data[1] & 0xF6) == 0xF0) {
         const uint32_t adts_frame_length =
-            (static_cast<uint32_t>(data[3] & 0x03) << 11)
-            | (static_cast<uint32_t>(data[4]) << 3)
-            | (static_cast<uint32_t>(data[5]) >> 5);
-        if (adts_frame_length >= 7 && adts_frame_length <= size)
-            es_size_used = adts_frame_length;
+            (static_cast<uint32_t>(payload_data[3] & 0x03) << 11)
+            | (static_cast<uint32_t>(payload_data[4]) << 3)
+            | (static_cast<uint32_t>(payload_data[5]) >> 5);
+        if (adts_frame_length >= 7 && adts_frame_length <= payload_size)
+            es_size_used = framing_size + adts_frame_length;
     }
 
     LOG_INFO_ONCE("AAC iOS frame boundary: input={} packet={} consumed={} bytes.",

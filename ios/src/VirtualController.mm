@@ -80,9 +80,9 @@ static NSMutableDictionary *element(CGFloat x, CGFloat y, BOOL visible) {
 static NSMutableDictionary *landscapeElements() {
     return [@{
         @"dpad_up": element(0.14, 0.66, YES), @"dpad_down": element(0.14, 0.86, YES),
-        @"dpad_left": element(0.08, 0.76, YES), @"dpad_right": element(0.20, 0.76, YES),
+        @"dpad_left": element(0.06, 0.76, YES), @"dpad_right": element(0.22, 0.76, YES),
         @"triangle": element(0.86, 0.66, YES), @"cross": element(0.86, 0.86, YES),
-        @"square": element(0.80, 0.76, YES), @"circle": element(0.92, 0.76, YES),
+        @"square": element(0.78, 0.76, YES), @"circle": element(0.94, 0.76, YES),
         @"left_shoulder": element(0.09, 0.10, YES), @"right_shoulder": element(0.91, 0.10, YES),
         @"select": element(0.43, 0.91, YES), @"start": element(0.57, 0.91, YES),
         @"left_stick": element(0.29, 0.73, YES), @"right_stick": element(0.71, 0.73, YES),
@@ -93,9 +93,9 @@ static NSMutableDictionary *landscapeElements() {
 static NSMutableDictionary *portraitElements() {
     return [@{
         @"dpad_up": element(0.22, 0.59, YES), @"dpad_down": element(0.22, 0.71, YES),
-        @"dpad_left": element(0.13, 0.65, YES), @"dpad_right": element(0.31, 0.65, YES),
+        @"dpad_left": element(0.11, 0.65, YES), @"dpad_right": element(0.33, 0.65, YES),
         @"triangle": element(0.78, 0.59, YES), @"cross": element(0.78, 0.71, YES),
-        @"square": element(0.69, 0.65, YES), @"circle": element(0.87, 0.65, YES),
+        @"square": element(0.67, 0.65, YES), @"circle": element(0.89, 0.65, YES),
         @"left_shoulder": element(0.15, 0.53, YES), @"right_shoulder": element(0.85, 0.53, YES),
         @"select": element(0.40, 0.94, YES), @"start": element(0.60, 0.94, YES),
         @"left_stick": element(0.20, 0.84, YES), @"right_stick": element(0.80, 0.84, YES),
@@ -109,11 +109,13 @@ static NSMutableDictionary *defaultConfig() {
         @"scale": @1.0,
         @"hideWhenPhysical": @YES,
         @"haptics": @YES,
+        @"layoutVersion": @2,
         @"layouts": [@{@"landscape": landscapeElements(), @"portrait": portraitElements()} mutableCopy],
     } mutableCopy];
 }
 
 static void loadConfig();
+static void saveConfig();
 
 static NSString *orientationKey() {
     UIView *layoutView = (UIView *)g_overlay;
@@ -163,6 +165,27 @@ static void loadConfig() {
             if (value && elements[key])
                 elements[key] = [value mutableCopy];
         }];
+    }
+
+    // Preserve user-customized positions, but move untouched v1 defaults a
+    // little farther apart so opposing D-pad and face buttons do not crowd.
+    if ([saved[@"layoutVersion"] integerValue] < 2) {
+        void (^migrateX)(NSString *, NSString *, CGFloat, CGFloat) =
+            ^(NSString *layout, NSString *key, CGFloat oldX, CGFloat newX) {
+                NSMutableDictionary *entry = g_controls_config[@"layouts"][layout][key];
+                if (fabs([entry[@"x"] doubleValue] - oldX) < 0.0001)
+                    entry[@"x"] = @(newX);
+            };
+        migrateX(@"landscape", @"dpad_left", 0.08, 0.06);
+        migrateX(@"landscape", @"dpad_right", 0.20, 0.22);
+        migrateX(@"landscape", @"square", 0.80, 0.78);
+        migrateX(@"landscape", @"circle", 0.92, 0.94);
+        migrateX(@"portrait", @"dpad_left", 0.13, 0.11);
+        migrateX(@"portrait", @"dpad_right", 0.31, 0.33);
+        migrateX(@"portrait", @"square", 0.69, 0.67);
+        migrateX(@"portrait", @"circle", 0.87, 0.89);
+        g_controls_config[@"layoutVersion"] = @2;
+        saveConfig();
     }
 }
 
@@ -809,17 +832,46 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
 
 static UIButton *menuAction(NSString *title, NSString *subtitle, NSString *symbol, SEL selector, id target, BOOL destructive = NO) {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
-    configuration.title = title;
-    configuration.subtitle = subtitle;
-    configuration.image = [UIImage systemImageNamed:symbol];
-    configuration.imagePadding = 13;
-    configuration.titleAlignment = UIButtonConfigurationTitleAlignmentLeading;
-    configuration.baseForegroundColor = destructive ? UIColor.systemRedColor : UIColor.labelColor;
-    configuration.contentInsets = NSDirectionalEdgeInsetsMake(7, 6, 7, 6);
-    button.configuration = configuration;
-    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
-    [button.heightAnchor constraintGreaterThanOrEqualToConstant:50].active = YES;
+    UIColor *foreground = destructive ? UIColor.systemRedColor : UIColor.labelColor;
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:symbol]];
+    icon.translatesAutoresizingMaskIntoConstraints = NO;
+    icon.contentMode = UIViewContentModeCenter;
+    icon.tintColor = foreground;
+    icon.preferredSymbolConfiguration = [UIImageSymbolConfiguration configurationWithPointSize:21 weight:UIImageSymbolWeightMedium];
+    icon.userInteractionEnabled = NO;
+
+    UILabel *titleLabel = [[UILabel alloc] init];
+    titleLabel.text = title;
+    titleLabel.textColor = foreground;
+    titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    UILabel *subtitleLabel = [[UILabel alloc] init];
+    subtitleLabel.text = subtitle;
+    subtitleLabel.textColor = destructive ? [UIColor.systemRedColor colorWithAlphaComponent:0.85]
+                                          : UIColor.secondaryLabelColor;
+    subtitleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
+    subtitleLabel.numberOfLines = 1;
+    UIStackView *labels = subtitle.length
+        ? [[UIStackView alloc] initWithArrangedSubviews:@[titleLabel, subtitleLabel]]
+        : [[UIStackView alloc] initWithArrangedSubviews:@[titleLabel]];
+    labels.translatesAutoresizingMaskIntoConstraints = NO;
+    labels.axis = UILayoutConstraintAxisVertical;
+    labels.spacing = 1;
+    labels.alignment = UIStackViewAlignmentLeading;
+    labels.userInteractionEnabled = NO;
+    [button addSubview:icon];
+    [button addSubview:labels];
+    [NSLayoutConstraint activateConstraints:@[
+        [icon.leadingAnchor constraintEqualToAnchor:button.leadingAnchor constant:6],
+        [icon.centerYAnchor constraintEqualToAnchor:button.centerYAnchor],
+        [icon.widthAnchor constraintEqualToConstant:34],
+        [icon.heightAnchor constraintEqualToConstant:34],
+        [labels.leadingAnchor constraintEqualToAnchor:button.leadingAnchor constant:54],
+        [labels.trailingAnchor constraintLessThanOrEqualToAnchor:button.trailingAnchor constant:-6],
+        [labels.centerYAnchor constraintEqualToAnchor:button.centerYAnchor],
+    ]];
+    button.accessibilityLabel = title;
+    button.accessibilityHint = subtitle;
+    [button.heightAnchor constraintGreaterThanOrEqualToConstant:58].active = YES;
     [button addTarget:target action:selector forControlEvents:UIControlEventTouchUpInside];
     return button;
 }

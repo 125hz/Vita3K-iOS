@@ -45,6 +45,7 @@
 #include <io/state.h>
 #include <modules/module_parent.h>
 #include <np/trophy/collection.h>
+#include <np/trophy/trp_parser.h>
 #include <renderer/frame_host.h>
 #include <renderer/functions.h>
 #include <renderer/state.h>
@@ -85,6 +86,9 @@ namespace {
 
 std::string g_current_trophy_id;
 std::string g_current_title;
+std::string g_current_title_id;
+std::atomic_bool g_jit_pool_ready{ false };
+std::atomic_bool g_unhandled_universal_jit_breakpoint{ false };
 
 bool safe_identifier(std::string_view value, const std::size_t maximum = 32) {
     return !value.empty() && value.size() <= maximum
@@ -111,14 +115,99 @@ std::uint64_t directory_size(const fs::path &root) {
 std::string trophy_id_for_title(const EmuEnvState &emuenv, const std::string &title_id) {
     const fs::path param_path = emuenv.vita_fs_path / "ux0/app" / title_id / "sce_sys/param.sfo";
     fs::ifstream input(param_path, std::ios::binary);
-    if (!input)
-        return {};
-    const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
-    SfoFile sfo_file{};
     std::string trophy_id;
-    if (sfo::load(sfo_file, bytes))
-        sfo::get_data_by_key(trophy_id, sfo_file, "NP_COMMUNICATION_ID");
+    if (input) {
+        const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
+        SfoFile sfo_file{};
+        if (sfo::load(sfo_file, bytes))
+            sfo::get_data_by_key(trophy_id, sfo_file, "NP_COMMUNICATION_ID");
+    }
+
+    // Some dumps omit NP_COMMUNICATION_ID from their visible param.sfo even
+    // though they ship a normal trophy archive. Resolve the archive directory
+    // as a fallback so the library does not incorrectly report "no data".
+    const fs::path trophy_root = emuenv.vita_fs_path / "ux0/app" / title_id / "sce_sys/trophy";
+    if (!trophy_id.empty() && fs::exists(trophy_root / trophy_id / "TROPHY.TRP"))
+        return trophy_id;
+    boost::system::error_code error;
+    if (fs::exists(trophy_root, error) && !error) {
+        for (fs::directory_iterator it(trophy_root, error), end; it != end && !error; it.increment(error)) {
+            if (fs::is_directory(it->path(), error) && !error && fs::exists(it->path() / "TROPHY.TRP", error) && !error) {
+                const std::string archive_id = it->path().filename().string();
+                if (safe_identifier(archive_id)) {
+                    if (!trophy_id.empty() && trophy_id != archive_id)
+                        LOG_WARN("Trophy archive id {} differs from SFO id {} for {}; using archive", archive_id, trophy_id, title_id);
+                    return archive_id;
+                }
+            }
+        }
+    }
     return trophy_id;
+}
+
+bool install_trophy_metadata_for_title(EmuEnvState &emuenv, const std::string &title_id,
+    const std::string &trophy_id) {
+    if (!safe_identifier(title_id, 16) || !safe_identifier(trophy_id))
+        return false;
+    const fs::path conf_path = emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id
+        / "trophy/conf" / trophy_id;
+    if (fs::exists(conf_path / "TROP.SFM") || fs::exists(conf_path / "TROP_00.SFM")
+        || fs::exists(conf_path / "TROP_01.SFM"))
+        return true;
+
+    const fs::path archive_path = emuenv.vita_fs_path / "ux0/app" / title_id
+        / "sce_sys/trophy" / trophy_id / "TROPHY.TRP";
+    fs::ifstream archive(archive_path, std::ios::binary);
+    if (!archive) {
+        LOG_WARN("Trophy archive is missing for {} at {}", title_id, archive_path);
+        return false;
+    }
+
+    np::trophy::TRPFile trp;
+    trp.seek_func = [&archive](const int offset) {
+        archive.clear();
+        archive.seekg(offset, std::ios::beg);
+        return static_cast<bool>(archive);
+    };
+    trp.read_func = [&archive](void *destination, const std::uint32_t amount) {
+        archive.read(static_cast<char *>(destination), static_cast<std::streamsize>(amount));
+        return archive.gcount() == static_cast<std::streamsize>(amount);
+    };
+    if (!trp.header_parse()) {
+        LOG_ERROR("Failed to parse trophy archive {}", archive_path);
+        return false;
+    }
+
+    fs::create_directories(conf_path);
+    constexpr std::uint64_t maximum_trophy_file_size = 32 * 1024 * 1024;
+    for (std::size_t index = 0; index < trp.entries.size(); ++index) {
+        const auto &entry = trp.entries[index];
+        const std::string filename(entry.filename.c_str());
+        if (filename.empty() || filename.size() > 96 || filename.find('/') != std::string::npos
+            || filename.find('\\') != std::string::npos || filename == "." || filename == ".."
+            || entry.size > maximum_trophy_file_size) {
+            LOG_ERROR("Rejected unsafe trophy entry '{}' ({} bytes) in {}", filename, entry.size, archive_path);
+            return false;
+        }
+        const fs::path output_path = conf_path / filename;
+        fs::ofstream output(output_path, std::ios::binary | std::ios::trunc);
+        if (!output)
+            return false;
+        const bool copied = trp.get_entry_data(static_cast<std::uint32_t>(index),
+            [&output](void *source, const std::uint32_t amount) {
+                output.write(static_cast<const char *>(source), static_cast<std::streamsize>(amount));
+                return static_cast<bool>(output);
+            });
+        output.close();
+        if (!copied) {
+            boost::system::error_code cleanup_error;
+            fs::remove(output_path, cleanup_error);
+            LOG_ERROR("Failed to extract trophy entry '{}' from {}", filename, archive_path);
+            return false;
+        }
+    }
+    LOG_INFO("Installed trophy metadata for {} ({}) from {}", title_id, trophy_id, archive_path);
+    return true;
 }
 
 np::trophy::CollectionSource trophy_source(EmuEnvState &emuenv) {
@@ -130,8 +219,13 @@ np::trophy::CollectionSource trophy_source(EmuEnvState &emuenv) {
     };
 }
 
-void show_trophies(EmuEnvState &emuenv, const std::string &requested_id, const std::string &fallback_title) {
+void show_trophies(EmuEnvState &emuenv, const std::string &requested_id,
+    const std::string &fallback_title, const std::string &title_id) {
     std::string trophy_id = safe_identifier(requested_id) ? requested_id : std::string{};
+    if (trophy_id.empty() && safe_identifier(title_id, 16))
+        trophy_id = trophy_id_for_title(emuenv, title_id);
+    if (!trophy_id.empty() && safe_identifier(title_id, 16))
+        install_trophy_metadata_for_title(emuenv, title_id, trophy_id);
     if (trophy_id.empty()) {
         const auto ids = np::trophy::list_collection_ids(trophy_source(emuenv));
         if (ids.size() == 1)
@@ -232,35 +326,27 @@ extern "C" int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersiz
 #define CS_DEBUGGED 0x10000000u
 #endif
 
-// True when JIT (writable-executable guest memory) is available. StikDebug
-// commonly enables JIT and then DETACHES, so P_TRACED alone would flip back to
-// false and wrongly re-raise the "JIT disabled" banner mid-session. Prefer
-// CS_DEBUGGED (persists after detach) and additionally latch: once JIT has been
-// observed available this process lifetime, never report it unavailable again.
-// The unavailable -> available upgrade path (user attaches later) still works.
-bool ios_jit_available() {
-    static std::atomic_bool ever_available{ false };
-    if (ever_available.load(std::memory_order_relaxed))
-        return true;
+bool ios_debugger_attached() {
+    struct kinfo_proc info{};
+    std::size_t size = sizeof(info);
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    return sysctl(mib, 4, &info, &size, nullptr, 0) == 0
+        && (info.kp_proc.p_flag & P_TRACED) != 0;
+}
 
-    bool available = false;
+bool ios_jit_capability_enabled() {
     uint32_t cs_flags = 0;
-    if (csops(getpid(), CS_OPS_STATUS, &cs_flags, sizeof(cs_flags)) == 0)
-        available = (cs_flags & CS_DEBUGGED) != 0;
+    return (csops(getpid(), CS_OPS_STATUS, &cs_flags, sizeof(cs_flags)) == 0
+               && (cs_flags & CS_DEBUGGED) != 0)
+        || ios_debugger_attached();
+}
 
-    if (!available) {
-        // Fallback: a debugger currently attached (P_TRACED) even if CS_DEBUGGED
-        // was not observed (older jailbreak/JIT tools).
-        struct kinfo_proc info{};
-        std::size_t size = sizeof(info);
-        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
-        if (sysctl(mib, 4, &info, &size, nullptr, 0) == 0)
-            available = (info.kp_proc.p_flag & P_TRACED) != 0;
-    }
-
-    if (available)
-        ever_available.store(true, std::memory_order_relaxed);
-    return available;
+// iOS 26 universal JIT needs the debugger attached while the permanent RX/RW
+// region pool is prepared. CS_DEBUGGED survives a detach, but it is not enough
+// to service Oaknut's BRK request. Once the pool is complete, detaching is safe.
+bool ios_jit_available() {
+    return g_jit_pool_ready.load(std::memory_order_relaxed)
+        || (ios_jit_capability_enabled() && ios_debugger_attached());
 }
 
 fs::path ios_storage_path() {
@@ -439,8 +525,27 @@ std::string firmware_version_display(EmuEnvState &emuenv) {
     return app::get_firmware_state(emuenv).main_firmware ? "FW installed" : "No firmware";
 }
 
+bool firmware_setup_complete(const EmuEnvState &emuenv) {
+    const auto state = app::get_firmware_state(emuenv);
+    return state.font_package && state.preinstalled_package && state.main_firmware;
+}
+
 Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
     const auto &current = emuenv.cfg.current_config;
+    const auto firmware = app::get_firmware_state(emuenv);
+    std::vector<std::string> missing;
+    if (!firmware.font_package)
+        missing.emplace_back("FONTPKG.PUP");
+    if (!firmware.preinstalled_package)
+        missing.emplace_back("PREINSTALL.PUP");
+    if (!firmware.main_firmware)
+        missing.emplace_back("PSVUPDAT.PUP");
+    std::string missing_text;
+    for (const auto &name : missing) {
+        if (!missing_text.empty())
+            missing_text += ", ";
+        missing_text += name;
+    }
     return {
         .resolution_multiplier = current.resolution_multiplier,
         .v_sync = current.v_sync,
@@ -450,6 +555,8 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
         .async_pipeline_compilation = current.async_pipeline_compilation,
         .anisotropic_filtering = current.anisotropic_filtering,
         .firmware_version = firmware_version_display(emuenv),
+        .firmware_ready = missing.empty(),
+        .missing_firmware = std::move(missing_text),
     };
 }
 
@@ -637,6 +744,11 @@ void start_save_import(EmuEnvState &emuenv, const std::string &title_id, const s
 }
 
 void start_import(EmuEnvState &emuenv, const std::string &path, const bool firmware) {
+    if (!firmware && !firmware_setup_complete(emuenv)) {
+        vita3k_ios_report_import_result(
+            "Install FONTPKG.PUP, PREINSTALL.PUP, and PSVUPDAT.PUP before importing games", false);
+        return;
+    }
     if (g_import_job && !g_import_job->done.load()) {
         vita3k_ios_report_import_result("Another import is still running", false);
         return;
@@ -706,6 +818,26 @@ void maybe_prompt_license_import(EmuEnvState &emuenv,
     }
 }
 
+std::string installed_version_for_title(const EmuEnvState &emuenv,
+    const std::string &title_id, const std::string &base_version) {
+    // The apps list is built from ux0/app, but Vita updates keep their newer
+    // APP_VER in ux0/patch. Match desktop Vita3K by showing the installed
+    // patch version whenever that SFO is present.
+    const fs::path patch_sfo = emuenv.vita_fs_path / "ux0/patch" / title_id / "sce_sys/param.sfo";
+    fs::ifstream input(patch_sfo, std::ios::binary);
+    if (!input)
+        return base_version;
+    const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
+    SfoFile sfo_file{};
+    std::string patch_version;
+    if (sfo::load(sfo_file, bytes) && sfo::get_data_by_key(patch_version, sfo_file, "APP_VER")
+        && !patch_version.empty()) {
+        LOG_INFO("iOS library version: {} base={} installed_patch={}", title_id, base_version, patch_version);
+        return patch_version;
+    }
+    return base_version;
+}
+
 std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
     const auto apps = app::get_apps(emuenv);
     const auto user_times = app::get_user_app_times(emuenv);
@@ -737,7 +869,7 @@ std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
             .category = entry.category,
             .app_path = entry.path.empty() ? entry.title_id : entry.path,
             .icon_path = fs_utils::path_to_utf8(selected_art),
-            .version = entry.app_ver,
+            .version = installed_version_for_title(emuenv, entry.title_id, entry.app_ver),
             .trophy_id = trophy_id_for_title(emuenv, entry.title_id),
             .size_bytes = installed_size,
             .time_played_seconds = app_time ? app_time->time_used : 0,
@@ -848,6 +980,11 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
         if (auto action = vita3k_ios_take_frontend_action()) {
             switch (action->kind) {
             case Vita3KIOSFrontendActionKind::Launch:
+                if (!firmware_setup_complete(emuenv)) {
+                    vita3k_ios_show_boot_error(
+                        "Install FONTPKG.PUP, PREINSTALL.PUP, and PSVUPDAT.PUP before playing games.");
+                    break;
+                }
                 // Defense in depth: the library already refuses launches without
                 // JIT, but re-probe here so a debugger attached after the probe
                 // is honored and one attached-then-detached is caught.
@@ -860,10 +997,12 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                 vita3k_ios_set_jit_available(true);
                 g_current_trophy_id.clear();
                 g_current_title.clear();
+                g_current_title_id.clear();
                 for (const auto &game : games) {
                     if (game.app_path == action->app_path) {
                         g_current_trophy_id = game.trophy_id;
                         g_current_title = game.title;
+                        g_current_title_id = game.title_id;
                         break;
                     }
                 }
@@ -929,7 +1068,7 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                 start_save_export(emuenv, action->title_id);
                 break;
             case Vita3KIOSFrontendActionKind::ShowTrophies:
-                show_trophies(emuenv, action->trophy_id, action->title_id);
+                show_trophies(emuenv, action->trophy_id, action->title_id, action->app_path);
                 break;
             case Vita3KIOSFrontendActionKind::Quit:
                 vita3k_ios_hide_library();
@@ -961,8 +1100,26 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
 void fatal_signal_handler(int sig, siginfo_t *info, void *uct) {
     uintptr_t pc = 0;
 #if defined(__APPLE__) && defined(__aarch64__)
-    if (uct)
-        pc = static_cast<ucontext_t *>(uct)->uc_mcontext->__ss.__pc;
+    if (uct) {
+        auto *context = static_cast<ucontext_t *>(uct);
+        pc = context->uc_mcontext->__ss.__pc;
+        // Oaknut asks StikDebug to prepare an iOS 26 executable mapping with
+        // BRK #0xf00d. If StikDebug detaches in the tiny interval after our
+        // P_TRACED check, that BRK reaches the app as SIGTRAP. Return nullptr
+        // from the naked helper so the allocator throws and the launch returns
+        // to the library with an actionable error instead of killing Tsubomi.
+        constexpr std::uint32_t universal_jit_breakpoint = 0xD43E01A0;
+        if (sig == SIGTRAP && pc != 0
+            && *reinterpret_cast<const std::uint32_t *>(pc) == universal_jit_breakpoint) {
+            context->uc_mcontext->__ss.__x[0] = 0;
+            context->uc_mcontext->__ss.__pc = pc + sizeof(std::uint32_t);
+            g_unhandled_universal_jit_breakpoint.store(true, std::memory_order_relaxed);
+            static constexpr char message[] =
+                "Tsubomi: StikDebug detached during universal JIT preparation; aborting launch safely.\n";
+            write(STDERR_FILENO, message, sizeof(message) - 1);
+            return;
+        }
+    }
 #endif
     Dl_info dl_info{};
     const char *image = "?";
@@ -1091,7 +1248,7 @@ int main(int argc, char *argv[]) {
     // Library -> game -> library loop: quitting a game returns to the
     // library instead of leaving a dead process behind (the old "freeze").
     bool app_terminating = false;
-    bool jit_pool_prewarmed = false;
+    bool jit_pool_prewarmed = g_jit_pool_ready.load(std::memory_order_relaxed);
     while (!app_terminating) {
     auto launch_request = choose_boot_title(*emuenv);
     if (!launch_request)
@@ -1125,6 +1282,7 @@ int main(int argc, char *argv[]) {
                 if (!jit_pool_prewarmed) {
                     constexpr std::size_t IOS_JIT_CACHE_SIZE = 16 * 1024 * 1024;
                     constexpr std::size_t IOS_JIT_POOL_TARGET = 24;
+                    g_unhandled_universal_jit_breakpoint.store(false, std::memory_order_relaxed);
                     const std::size_t warmed_jit_regions =
                         prewarm_ios_jit_code_cache_pool(IOS_JIT_POOL_TARGET, IOS_JIT_CACHE_SIZE);
                     if (warmed_jit_regions < IOS_JIT_POOL_TARGET) {
@@ -1132,19 +1290,33 @@ int main(int argc, char *argv[]) {
                             IOS_JIT_POOL_TARGET, warmed_jit_regions);
                         if (auto logger = spdlog::default_logger())
                             logger->flush();
+                        boot_error = "StikDebug detached while Tsubomi was preparing JIT. Re-enable JIT, keep "
+                                     "StikDebug attached until the game starts, then try again.";
+                        vita3k_ios_set_jit_available(false);
+                    } else {
+                        jit_pool_prewarmed = true;
+                        g_jit_pool_ready.store(true, std::memory_order_relaxed);
                     }
-                    jit_pool_prewarmed = true;
                 }
 
-                SDL_Log("Vita3K iOS: load_and_run");
-                if (!session_controller.load_and_run())
+                if (boot_error.empty())
+                    SDL_Log("Vita3K iOS: load_and_run");
+                if (boot_error.empty() && !session_controller.load_and_run())
                     boot_error = "Could not load or start the game. If this is a retail dump, the "
                                  "content may still be encrypted — import the .pkg with its "
                                  "work.bin/zRIF instead of a pre-extracted copy.";
             }
         }
     } catch (const std::exception &error) {
-        boot_error = std::string("The game crashed during startup: ") + error.what();
+        if (!jit_pool_prewarmed
+            && (g_unhandled_universal_jit_breakpoint.exchange(false, std::memory_order_relaxed)
+                || !ios_debugger_attached())) {
+            boot_error = "StikDebug detached while Tsubomi was preparing JIT. Re-enable JIT, keep "
+                         "StikDebug attached until the game starts, then try again.";
+            vita3k_ios_set_jit_available(false);
+        } else {
+            boot_error = std::string("The game crashed during startup: ") + error.what();
+        }
     } catch (...) {
         boot_error = "The game crashed during startup.";
     }
@@ -1313,7 +1485,7 @@ int main(int argc, char *argv[]) {
 
         if (auto action = vita3k_ios_take_frontend_action()) {
             if (action->kind == Vita3KIOSFrontendActionKind::ShowTrophies)
-                show_trophies(*emuenv, g_current_trophy_id, g_current_title);
+                show_trophies(*emuenv, g_current_trophy_id, g_current_title, g_current_title_id);
         }
 
         if (auto request = emuenv->take_app_launch_request()) {

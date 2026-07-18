@@ -52,6 +52,10 @@ struct Vita3KIOSSettings {
     int anisotropic_filtering = 1;
     // Display-only: installed firmware version shown on the library header.
     std::string firmware_version;
+    // Games stay unavailable until all three official firmware packages have
+    // populated their canonical partitions (pd0, vs0, and sa0).
+    bool firmware_ready = false;
+    std::string missing_firmware;
 };
 
 enum class Vita3KIOSFrontendActionKind {

@@ -20,6 +20,10 @@
 #include <SDL3/SDL_audio.h>
 #include <SDL3/SDL_hints.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+
 #define SDL_CHECK_EXT(condition, ret)                         \
     do {                                                      \
         if (!(condition)) {                                   \
@@ -81,12 +85,14 @@ AudioOutPortPtr SDLAudioAdapter::open_port(int nb_channels, int freq, int nb_sam
     SDL_CHECK(SDL_GetAudioDeviceFormat(device_id, &dst_spec, &device_buffer_samples));
     const AudioStreamPtr stream(SDL_CreateAudioStream(&src_spec, &dst_spec), SDL_DestroyAudioStream);
     SDL_CHECK(stream);
-    SDL_CHECK(SDL_BindAudioStream(device_id, stream.get()));
     auto port = std::make_shared<SDLAudioOutPort>(stream, *this);
-    SDL_CHECK(SDL_SetAudioStreamGetCallback(stream.get(), SDLAudioAdapter::thread_wakeup_callback, port.get()));
     port->channels = nb_channels;
+    port->freq = freq;
+    port->len = nb_sample;
     port->len_microseconds = (nb_sample * 1'000'000ULL) / freq;
     port->len_bytes = nb_sample * nb_channels * sizeof(int16_t);
+    SDL_CHECK(SDL_BindAudioStream(device_id, stream.get()));
+    SDL_CHECK(SDL_SetAudioStreamGetCallback(stream.get(), SDLAudioAdapter::thread_wakeup_callback, port.get()));
     switch_state(false);
     return port;
 }
@@ -115,16 +121,26 @@ void SDLAudioAdapter::set_volume(AudioOutPort &out_port, float volume) {
 
 int SDLAudioAdapter::get_rest_sample(AudioOutPort &out_port) {
     auto &port = static_cast<SDLAudioOutPort &>(out_port);
-    // sceAudioOutGetRestSample asks how many guest sample frames remain queued
-    // for playback. SDL_GetAudioStreamAvailable reports converted output that
-    // can be pulled right now; SDL3 may legitimately keep that at zero while
-    // the resampler buffers input. Query the exact input queue instead and
-    // convert using the guest S16 channel count. This avoids telling games the
-    // port is empty while music is still queued (the VA-11 Hall-A transition
-    // stall captured on iOS).
+    // sceAudioOutGetRestSample asks how many guest frames have not played yet.
+    // SDL splits those frames between unconverted source bytes (Queued) and
+    // converted device-format bytes (Available). Reporting only either side
+    // briefly returns zero whenever the resampler transfers ownership, which
+    // can make audio-gated games advance or stall incorrectly. Sum both sides
+    // and express the converted portion back in guest-rate frames.
     const int bytes_queued = SDL_GetAudioStreamQueued(port.stream.get());
     SDL_CHECK_NEG(bytes_queued);
-    return bytes_queued / (port.channels * static_cast<int>(sizeof(int16_t)));
+    const int bytes_available = SDL_GetAudioStreamAvailable(port.stream.get());
+    SDL_CHECK_NEG(bytes_available);
+    const int guest_frame_bytes = port.channels * static_cast<int>(sizeof(int16_t));
+    const int output_sample_bytes = std::max(1, SDL_AUDIO_BITSIZE(dst_spec.format) / 8);
+    const int output_frame_bytes = output_sample_bytes * std::max(1, static_cast<int>(dst_spec.channels));
+    const std::int64_t queued_frames = bytes_queued / std::max(1, guest_frame_bytes);
+    const std::int64_t output_frames = bytes_available / std::max(1, output_frame_bytes);
+    const std::int64_t converted_guest_frames = dst_spec.freq > 0 && port.freq > 0
+        ? output_frames * port.freq / dst_spec.freq
+        : output_frames;
+    return static_cast<int>(std::clamp<std::int64_t>(queued_frames + converted_guest_frames,
+        0, std::numeric_limits<int>::max()));
 }
 
 void SDLAudioAdapter::wake_all_ports() {

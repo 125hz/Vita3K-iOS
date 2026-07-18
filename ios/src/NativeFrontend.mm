@@ -179,6 +179,7 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UILabel *titleLabel;
 @property(nonatomic, strong) UILabel *identifierLabel;
 @property(nonatomic, strong) UILabel *metadataLabel;
+@property(nonatomic, strong) UIView *separator;
 @property(nonatomic) BOOL listMode;
 - (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSString *)metadata
               iconPath:(NSString *)iconPath listMode:(BOOL)listMode;
@@ -220,6 +221,9 @@ std::string hex_bytes(const std::string &value) {
     self.metadataLabel.textColor = UIColor.secondaryLabelColor;
     self.metadataLabel.numberOfLines = 2;
     [self.glass.contentView addSubview:self.metadataLabel];
+    self.separator = [[UIView alloc] init];
+    self.separator.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1.0];
+    [self.glass.contentView addSubview:self.separator];
     return self;
 }
 
@@ -227,22 +231,29 @@ std::string hex_bytes(const std::string &value) {
     [super layoutSubviews];
     const CGFloat inset = 12;
     if (self.listMode) {
-        self.icon.frame = CGRectMake(inset, inset, 88, MAX(1, CGRectGetHeight(self.bounds) - inset * 2));
-        const CGFloat textX = CGRectGetMaxX(self.icon.frame) + 14;
+        const CGFloat iconSize = MAX(1, CGRectGetHeight(self.bounds) - 20);
+        self.icon.frame = CGRectMake(10, 10, iconSize, iconSize);
+        const CGFloat textX = CGRectGetMaxX(self.icon.frame) + 13;
         const CGFloat textWidth = MAX(1, CGRectGetWidth(self.bounds) - textX - inset);
-        self.titleLabel.frame = CGRectMake(textX, inset + 4, textWidth, 26);
-        self.identifierLabel.frame = CGRectMake(textX, CGRectGetMaxY(self.titleLabel.frame), textWidth, 18);
-        self.metadataLabel.frame = CGRectMake(textX, CGRectGetMaxY(self.identifierLabel.frame) + 4, textWidth, 38);
+        self.titleLabel.frame = CGRectMake(textX, self.identifierLabel.hidden ? 12 : 6, textWidth, 24);
+        self.identifierLabel.frame = CGRectMake(textX, CGRectGetMaxY(self.titleLabel.frame), textWidth, 17);
+        self.metadataLabel.frame = CGRectMake(textX,
+            self.identifierLabel.hidden ? CGRectGetMaxY(self.titleLabel.frame) + 7 : CGRectGetMaxY(self.identifierLabel.frame) + 3,
+            textWidth, 28);
+        self.separator.frame = CGRectMake(textX, CGRectGetHeight(self.bounds) - 1,
+            MAX(1, CGRectGetWidth(self.bounds) - textX), 1);
     } else {
-        const CGFloat labelHeight = 102;
+        const CGFloat labelHeight = self.identifierLabel.hidden ? 91 : 108;
         self.icon.frame = CGRectMake(inset, inset, CGRectGetWidth(self.bounds) - inset * 2,
             MAX(1, CGRectGetHeight(self.bounds) - labelHeight - inset * 2));
         self.titleLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.icon.frame) + 7,
             CGRectGetWidth(self.bounds) - inset * 2, 40);
         self.identifierLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.titleLabel.frame),
             CGRectGetWidth(self.bounds) - inset * 2, 17);
-        self.metadataLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.identifierLabel.frame) + 2,
+        self.metadataLabel.frame = CGRectMake(inset,
+            self.identifierLabel.hidden ? CGRectGetMaxY(self.titleLabel.frame) + 3 : CGRectGetMaxY(self.identifierLabel.frame) + 2,
             CGRectGetWidth(self.bounds) - inset * 2, 34);
+        self.separator.frame = CGRectZero;
     }
 }
 
@@ -261,6 +272,17 @@ std::string hex_bytes(const std::string &value) {
     self.identifierLabel.text = identifier;
     self.metadataLabel.text = metadata;
     self.identifierLabel.hidden = !show_title_ids();
+    self.separator.hidden = !listMode;
+    self.glass.effect = listMode ? nil : glass_effect(NO);
+    self.glass.backgroundColor = listMode ? UIColor.blackColor : UIColor.clearColor;
+    self.glass.layer.cornerRadius = listMode ? 0 : 26;
+    self.icon.layer.cornerRadius = listMode ? 8 : 18;
+    self.titleLabel.numberOfLines = listMode ? 1 : 2;
+    self.titleLabel.textColor = listMode ? UIColor.whiteColor : UIColor.labelColor;
+    self.identifierLabel.textColor = listMode
+        ? [UIColor colorWithWhite:0.72 alpha:1.0] : UIColor.secondaryLabelColor;
+    self.metadataLabel.textColor = listMode
+        ? [UIColor colorWithWhite:0.72 alpha:1.0] : UIColor.secondaryLabelColor;
     UIImage *image = iconPath.length ? [UIImage imageWithContentsOfFile:iconPath] : nil;
     if (iconPath.length && !image)
         LOG_ERROR("iOS library art could not be decoded at '{}'", iconPath.UTF8String);
@@ -304,10 +326,10 @@ std::string hex_bytes(const std::string &value) {
     self.opaque = YES;
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
-    self.scrollView = [[UIScrollView alloc] initWithFrame:self.bounds];
-    self.scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.scrollView = [[UIScrollView alloc] init];
+    self.scrollView.translatesAutoresizingMaskIntoConstraints = NO;
     self.scrollView.backgroundColor = self.backgroundColor;
-    self.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAlways;
+    self.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     [self addSubview:self.scrollView];
 
     self.stack = [[UIStackView alloc] init];
@@ -316,15 +338,14 @@ std::string hex_bytes(const std::string &value) {
     self.stack.translatesAutoresizingMaskIntoConstraints = NO;
     [self.scrollView addSubview:self.stack];
     [NSLayoutConstraint activateConstraints:@[
-        // Pin horizontally to the safe-area guide, not the raw scroll frame, so
-        // the dynamic island / notch does not clip the rows in landscape.
-        [self.stack.leadingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.leadingAnchor constant:20],
-        [self.stack.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-20],
-        [self.stack.topAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.topAnchor constant:18],
+        [self.stack.leadingAnchor constraintEqualToAnchor:self.scrollView.frameLayoutGuide.leadingAnchor constant:20],
+        [self.stack.trailingAnchor constraintEqualToAnchor:self.scrollView.frameLayoutGuide.trailingAnchor constant:-20],
+        [self.stack.topAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.topAnchor constant:10],
         [self.stack.bottomAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.bottomAnchor constant:-30],
     ]];
 
     UIStackView *header = [[UIStackView alloc] init];
+    header.translatesAutoresizingMaskIntoConstraints = NO;
     header.axis = UILayoutConstraintAxisHorizontal;
     header.alignment = UIStackViewAlignmentCenter;
     header.spacing = 14; // keep the "Settings" title off the back chevron
@@ -343,7 +364,17 @@ std::string hex_bytes(const std::string &value) {
     [header addArrangedSubview:back];
     [header addArrangedSubview:title];
     [header addArrangedSubview:save];
-    [self.stack addArrangedSubview:header];
+    [self addSubview:header];
+    [NSLayoutConstraint activateConstraints:@[
+        [header.leadingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.leadingAnchor constant:20],
+        [header.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-20],
+        [header.topAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.topAnchor constant:8],
+        [header.heightAnchor constraintEqualToConstant:50],
+        [self.scrollView.leadingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.leadingAnchor],
+        [self.scrollView.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor],
+        [self.scrollView.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:8],
+        [self.scrollView.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
+    ]];
 
     self.resolutionSlider = [[UISlider alloc] init];
     self.resolutionSlider.minimumValue = 1.0f;
@@ -612,6 +643,7 @@ std::string hex_bytes(const std::string &value) {
 - (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings;
 - (void)setJitAvailable:(BOOL)available;
 - (BOOL)jitAvailable;
+- (BOOL)firmwareReadyOrPresentAlert;
 @end
 
 @implementation Vita3KLibraryView
@@ -636,6 +668,7 @@ std::string hex_bytes(const std::string &value) {
     title.text = @"Tsubomi";
     title.font = [UIFont systemFontOfSize:38 weight:UIFontWeightBlack];
     title.textColor = UIColor.labelColor;
+    title.adjustsFontSizeToFitWidth = NO;
     title.tag = 101;
     [self addSubview:title];
 
@@ -652,10 +685,14 @@ std::string hex_bytes(const std::string &value) {
     // Attach the choices directly to the + button so iOS morphs the menu out
     // of the glass control itself instead of sliding an action sheet up from
     // the bottom of the screen.
+    __weak Vita3KLibraryView *weakSelf = self;
     UIAction *importGame = [UIAction actionWithTitle:@"Import game (.vpk / .zip / .pkg)"
         image:[UIImage systemImageNamed:@"arrow.down.doc"]
         identifier:nil
-        handler:^(__unused UIAction *action) { present_import_picker(NO); }];
+        handler:^(__unused UIAction *action) {
+            if ([weakSelf firmwareReadyOrPresentAlert])
+                present_import_picker(NO);
+        }];
     UIAction *importFirmware = [UIAction actionWithTitle:@"Import firmware (.PUP)"
         image:[UIImage systemImageNamed:@"cpu"]
         identifier:nil
@@ -690,7 +727,7 @@ std::string hex_bytes(const std::string &value) {
     self.jitBanner.clipsToBounds = YES;
     self.jitBanner.hidden = YES;
     self.jitBannerLabel = [[UILabel alloc] init];
-    self.jitBannerLabel.text = @"JIT is not enabled — games can’t be launched. Enable JIT (e.g. StikDebug), then relaunch Tsubomi.";
+    self.jitBannerLabel.text = @"JIT is not ready — open StikDebug, enable JIT, and keep it attached until Tsubomi finishes Preparing JIT.";
     self.jitBannerLabel.textColor = UIColor.labelColor;
     self.jitBannerLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
     self.jitBannerLabel.numberOfLines = 0;
@@ -705,7 +742,7 @@ std::string hex_bytes(const std::string &value) {
     layout.minimumInteritemSpacing = 14;
     layout.minimumLineSpacing = 18;
     self.collectionView = [[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout];
-    self.collectionView.backgroundColor = UIColor.clearColor;
+    self.collectionView.backgroundColor = _listMode ? UIColor.blackColor : UIColor.clearColor;
     self.collectionView.dataSource = self;
     self.collectionView.delegate = self;
     self.collectionView.alwaysBounceVertical = YES;
@@ -739,13 +776,18 @@ std::string hex_bytes(const std::string &value) {
     UIButton *settings = [self viewWithTag:103];
     UIButton *importButton = [self viewWithTag:104];
     UIButton *viewMode = [self viewWithTag:105];
-    title.frame = CGRectMake(safe.left + 22, safe.top + 14, 240, 50);
-    settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 60, safe.top + 16, 46, 46);
-    refresh.frame = CGRectMake(CGRectGetMinX(settings.frame) - 56, safe.top + 16, 46, 46);
-    importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - 56, safe.top + 16, 46, 46);
-    viewMode.frame = CGRectMake(CGRectGetMinX(importButton.frame) - 56, safe.top + 16, 46, 46);
-    title.frame = CGRectMake(safe.left + 22, safe.top + 14,
-        MAX(80, CGRectGetMinX(viewMode.frame) - safe.left - 32), 50);
+    const CGFloat usableWidth = CGRectGetWidth(self.bounds) - safe.left - safe.right;
+    const BOOL compactHeader = usableWidth < 600;
+    const CGFloat titleY = safe.top + 12;
+    const CGFloat controlsY = compactHeader ? titleY + 56 : safe.top + 16;
+    settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 60, controlsY, 46, 46);
+    refresh.frame = CGRectMake(CGRectGetMinX(settings.frame) - 56, controlsY, 46, 46);
+    importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - 56, controlsY, 46, 46);
+    viewMode.frame = CGRectMake(CGRectGetMinX(importButton.frame) - 56, controlsY, 46, 46);
+    title.frame = compactHeader
+        ? CGRectMake(safe.left + 20, titleY, MAX(1, usableWidth - 40), 50)
+        : CGRectMake(safe.left + 22, safe.top + 14,
+              MAX(80, CGRectGetMinX(viewMode.frame) - safe.left - 32), 50);
 
     [self.firmwareLabel sizeToFit];
     const CGFloat firmwareWidth = MIN(CGRectGetWidth(self.firmwareLabel.bounds) + 22, 200);
@@ -754,16 +796,15 @@ std::string hex_bytes(const std::string &value) {
         CGRectGetMaxY(settings.frame) + 6, firmwareWidth, firmwareHeight);
     self.firmwareLabel.frame = self.firmwareGlass.bounds;
 
-    self.statusLabel.frame = CGRectMake(CGRectGetMaxX(title.frame), safe.top + 20,
-        MAX(0, CGRectGetMinX(importButton.frame) - CGRectGetMaxX(title.frame) - 10), 38);
-
     // Start the grid below the tallest header element so the firmware badge —
     // which sits under the top-right buttons and can be wider/taller than the
     // fixed 78pt used before — never overlaps the first row in portrait.
     CGFloat headerBottom = MAX(CGRectGetMaxY(title.frame), CGRectGetMaxY(settings.frame));
     if (!self.firmwareGlass.hidden)
         headerBottom = MAX(headerBottom, CGRectGetMaxY(self.firmwareGlass.frame));
-    CGFloat contentTop = headerBottom + 14;
+    self.statusLabel.frame = CGRectMake(safe.left + 20, headerBottom + 5,
+        MAX(1, usableWidth - 40), 38);
+    CGFloat contentTop = CGRectGetMaxY(self.statusLabel.frame) + 10;
     if (!self.jitBanner.hidden) {
         const CGFloat bannerX = safe.left + 18;
         const CGFloat bannerWidth = CGRectGetWidth(self.bounds) - safe.left - safe.right - 36;
@@ -778,8 +819,9 @@ std::string hex_bytes(const std::string &value) {
         contentTop = CGRectGetMaxY(self.jitBanner.frame) + 10;
     }
 
-    self.collectionView.frame = CGRectMake(safe.left + 18, contentTop,
-        CGRectGetWidth(self.bounds) - safe.left - safe.right - 36,
+    const CGFloat collectionInset = compactHeader ? 10 : 18;
+    self.collectionView.frame = CGRectMake(safe.left + collectionInset, contentTop,
+        CGRectGetWidth(self.bounds) - safe.left - safe.right - collectionInset * 2,
         MAX(1, CGRectGetHeight(self.bounds) - contentTop - safe.bottom - 10));
     self.emptyLabel.frame = CGRectInset(self.collectionView.frame, 40, 40);
     const CGFloat width = CGRectGetWidth(self.collectionView.bounds);
@@ -794,6 +836,7 @@ std::string hex_bytes(const std::string &value) {
     [NSUserDefaults.standardUserDefaults setBool:_listMode forKey:@"tsubomi.libraryListMode"];
     [sender setImage:[UIImage systemImageNamed:_listMode ? @"square.grid.2x2" : @"list.bullet"]
             forState:UIControlStateNormal];
+    self.collectionView.backgroundColor = _listMode ? UIColor.blackColor : UIColor.clearColor;
     [self.collectionView.collectionViewLayout invalidateLayout];
     [self.collectionView reloadData];
 }
@@ -832,10 +875,24 @@ std::string hex_bytes(const std::string &value) {
     self.emptyLabel.hidden = !_games.empty();
     self.collectionView.hidden = _games.empty();
     NSString *firmware = [NSString stringWithUTF8String:settings.firmware_version.c_str()] ?: @"";
-    self.firmwareLabel.text = firmware;
+    self.firmwareLabel.text = settings.firmware_ready
+        ? firmware
+        : [NSString stringWithFormat:@"%@ - setup incomplete", firmware];
     self.firmwareGlass.hidden = (firmware.length == 0);
+    self.emptyLabel.text = settings.firmware_ready
+        ? @"No games yet\n\nTap + to import a game (.vpk/.zip/.pkg), or copy\nPC's Vita3K data into Documents/Tsubomi/vita"
+        : @"Complete firmware setup first\n\nUse + to install FONTPKG.PUP, PREINSTALL.PUP,\nand PSVUPDAT.PUP before importing games.";
     [self setNeedsLayout];
     [self.collectionView reloadData];
+}
+
+- (BOOL)firmwareReadyOrPresentAlert {
+    if (_settings.firmware_ready)
+        return YES;
+    NSString *missing = [NSString stringWithUTF8String:_settings.missing_firmware.c_str()] ?: @"required firmware";
+    present_alert(@"Complete firmware setup",
+        [NSString stringWithFormat:@"Install all three firmware packages before importing or playing games.\n\nMissing: %@\n\nUse + > Import firmware (.PUP).", missing]);
+    return NO;
 }
 
 - (BOOL)jitAvailable {
@@ -868,6 +925,7 @@ std::string hex_bytes(const std::string &value) {
     NSString *iconPath = [NSString stringWithUTF8String:game.icon_path.c_str()];
     [cell configureTitle:display_title(identifier, title) identifier:identifier metadata:game_metadata(game)
                   iconPath:iconPath listMode:_listMode];
+    cell.alpha = _settings.firmware_ready ? 1.0 : 0.55;
     return cell;
 }
 
@@ -938,6 +996,7 @@ std::string hex_bytes(const std::string &value) {
                     Vita3KIOSFrontendAction request;
                     request.kind = Vita3KIOSFrontendActionKind::ShowTrophies;
                     request.title_id = original.UTF8String;
+                    request.app_path = identifier.UTF8String;
                     request.trophy_id = trophyId.UTF8String;
                     queue_action(std::move(request));
                 }];
@@ -963,26 +1022,30 @@ std::string hex_bytes(const std::string &value) {
     (void)indexPath;
     const CGFloat width = CGRectGetWidth(collectionView.bounds);
     if (_listMode)
-        return CGSizeMake(floor(width), 112);
+        return CGSizeMake(floor(width), 82);
     const CGFloat spacing = 14;
-    // Choose the column count from a target cell width (~180pt) rather than a
+    // Choose the column count from a larger target cell width (~220pt) rather than a
     // couple of fixed width thresholds. Phone landscape (~750-800pt of grid)
     // then packs 4 sensible cells instead of 3 ballooned ones, while portrait
     // still lands on 2 columns.
-    const CGFloat targetItemWidth = 180;
+    const CGFloat targetItemWidth = 220;
     const NSInteger columns = MAX(2, static_cast<NSInteger>(floor((width + spacing) / (targetItemWidth + spacing))));
     const CGFloat itemWidth = floor((width - (columns - 1) * spacing) / columns);
-    return CGSizeMake(itemWidth, itemWidth * 0.9 + 90);
+    return CGSizeMake(itemWidth, itemWidth + (show_title_ids() ? 112 : 95));
 }
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
     (void)collectionView;
+    if (![self firmwareReadyOrPresentAlert]) {
+        [collectionView deselectItemAtIndexPath:indexPath animated:YES];
+        return;
+    }
     if (!_jitAvailable) {
         // Guest execution needs JIT; refuse the boot and explain why instead of
         // letting the launch path hit the missing-debugger crash boundary.
         [collectionView deselectItemAtIndexPath:indexPath animated:YES];
         present_alert(@"JIT required",
-            @"JIT is not enabled, so games can’t be launched. Enable JIT (e.g. with StikDebug) and relaunch Tsubomi.");
+            @"Open StikDebug, enable JIT, and keep it attached until Tsubomi finishes Preparing JIT.");
         return;
     }
     UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
@@ -1082,6 +1145,7 @@ static BOOL g_jit_available = YES;
 
 namespace {
 void reload_library_cells() {
+    [g_library.collectionView.collectionViewLayout invalidateLayout];
     [g_library.collectionView reloadData];
 }
 } // namespace

@@ -216,7 +216,7 @@ index bfa87d96..0314a4fb 100644
  class CodeBlock {
  public:
      explicit CodeBlock(std::size_t size)
-@@ -32,7 +220,29 @@ public:
+@@ -32,7 +220,31 @@ public:
          m_memory = (std::uint32_t*)VirtualAlloc(nullptr, size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
  #elif defined(__APPLE__)
  #    if TARGET_OS_IPHONE
@@ -229,8 +229,10 @@ index bfa87d96..0314a4fb 100644
 +            if (!detail::take_prepared_jit_region(size, region)) {
 +                const std::size_t available = detail::matching_region_count(size);
 +                detail::log_jit_region_pool_event(detail::JitRegionPoolEvent::Miss, size, available);
-+                if (!detail::is_process_traced())
++                if (!detail::is_process_traced()) {
 +                    detail::log_jit_region_pool_event(detail::JitRegionPoolEvent::SessionLost, size, available);
++                    throw std::bad_alloc{};
++                }
 +                region = detail::prepare_new_universal_jit_region(size);
 +            }
 +            m_memory = region.rx;
