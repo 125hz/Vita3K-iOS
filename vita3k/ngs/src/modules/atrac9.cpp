@@ -309,7 +309,18 @@ bool Atrac9Module::process(KernelState &kern, const MemState &mem, const SceUID 
 
     bool is_finished = false;
     // call decode more data until we either have an error or reached end of data
+    // A guest that keeps looping/swapping to empty buffers makes
+    // decode_more_data return true forever without producing frames, which
+    // wedges the whole voice scheduler update. Bound the loop.
+    int decode_iterations = 0;
     while (static_cast<int32_t>(logical->decoded_pcm.available_frames()) < data.parent->rack->system->granularity) {
+        if (++decode_iterations > 512) {
+            LOG_ERROR_ONCE("ATRAC9 voice made no decode progress after {} iterations (buffer={} pos={} bytes={}); treating as finished",
+                decode_iterations - 1, state->current_buffer, state->current_byte_position_in_buffer,
+                state->current_buffer >= 0 ? params->buffer_params[state->current_buffer].bytes_count : 0);
+            is_finished = true;
+            break;
+        }
         if (!decode_more_data(kern, mem, thread_id, data, params, state, logical, runtime, scheduler_lock, voice_lock)) {
             is_finished = true;
             break;

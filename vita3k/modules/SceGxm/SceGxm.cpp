@@ -19,6 +19,7 @@
 
 #include <modules/module_parent.h>
 
+#include <chrono>
 #include <span>
 #include <stack>
 #if defined(__x86_64__) && !defined(__APPLE__)
@@ -2985,7 +2986,27 @@ EXPORT(int, sceGxmNotificationWait, const SceGxmNotification *notification) {
 
     std::unique_lock<std::mutex> lock(emuenv.renderer->notification_mutex);
     if (*value != target_value) {
-        emuenv.renderer->notification_ready.wait(lock, [&]() { return *value == target_value || emuenv.display.abort.load(); });
+        // This wait is unbounded upstream and leaves the guest thread in run
+        // status, so a notification that is never signalled looks like a hard
+        // game freeze with no log evidence. Wait in slices and log if the
+        // notification stays unsignalled for seconds; on iOS give up after
+        // ten seconds so the title glitches instead of freezing forever.
+        const auto pred = [&]() { return *value == target_value || emuenv.display.abort.load(); };
+        int waited_seconds = 0;
+        while (!pred()) {
+            if (emuenv.renderer->notification_ready.wait_for(lock, std::chrono::seconds(1), pred))
+                break;
+            waited_seconds++;
+            if (waited_seconds == 2 || waited_seconds == 10)
+                LOG_WARN("sceGxmNotificationWait stuck for {}s: addr=0x{:X} value={} target={} (TID {})",
+                    waited_seconds, notification->address.address(), *value, target_value, thread_id);
+#ifdef VITA3K_PLATFORM_IOS
+            if (waited_seconds >= 10) {
+                LOG_ERROR("sceGxmNotificationWait giving up after {}s to avoid a permanent freeze", waited_seconds);
+                break;
+            }
+#endif
+        }
     }
 
     return 0;
