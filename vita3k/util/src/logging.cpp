@@ -39,7 +39,7 @@
 
 namespace logging {
 
-static const fs::path &LOG_FILE_NAME = "vita3k.log";
+static const fs::path &LOG_FILE_NAME = "tsubomi.log";
 static const char *LOG_PATTERN = "%^[%H:%M:%S.%e] |%L| [%!]: %v%$";
 static constexpr size_t ASYNC_LOG_QUEUE_SIZE = 65536;
 static std::vector<spdlog::sink_ptr> sinks;

@@ -27,7 +27,7 @@ std::filesystem::path log_file_path() {
         URLsForDirectory:NSDocumentDirectory
         inDomains:NSUserDomainMask];
     NSURL *documents = urls.firstObject;
-    return std::filesystem::path(documents.fileSystemRepresentation) / "vita3k.log";
+    return std::filesystem::path(documents.fileSystemRepresentation) / "tsubomi.log";
 }
 
 void initialize_logging() {

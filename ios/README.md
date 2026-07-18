@@ -9,7 +9,7 @@ The separation is intentional: upstream's current Apple target is a macOS deskto
 - `arm64` iPhone/iPad application bundle
 - unsigned IPA produced by GitHub Actions
 - UIKit lifecycle and an `MTKView` rendering host
-- unified logging plus `Documents/vita3k.log`
+- unified logging plus `Documents/tsubomi.log`
 - a `vita3k_ios_core` static library containing Vita3K's ARM instruction encoder and NID database
 - on-device self-tests proving the upstream core slice is linked and executing
 - sandbox directories under `Documents/Tsubomi`, with discovery of legal `.vpk`, `.self`, `.elf`, `.bin`, and `.sfo` import candidates

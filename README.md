@@ -1,91 +1,75 @@
-# Vita3K
+# Tsubomi
 
-[![C/C++ CI](https://github.com/Vita3K/Vita3K/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/Vita3K/Vita3K/actions/workflows/c-cpp.yml)
-[![Release](https://img.shields.io/github/v/release/Vita3K/Vita3K-builds?include_prereleases)](https://github.com/Vita3K/Vita3K/releases)
-[![Vita3K discord server](https://img.shields.io/discord/408916678911459329?color=5865F2&label=Vita3K%20&logo=discord&logoColor=white)](https://discord.gg/6aGwQzh)
+**Tsubomi** is an experimental PlayStation Vita emulator for iOS (iPhone/iPad).
 
-## Introduction
+Tsubomi is a **fork of [Vita3K](https://github.com/Vita3K/Vita3K)** and uses it as its
+emulation base. All of the heavy lifting — the CPU, GPU (GXM→Vulkan/MoltenVK), kernel
+and module HLE — is Vita3K's work; Tsubomi adds a native iOS front-end, an on-device
+import pipeline, a touch controller, and the platform glue needed to run on a
+non-jailbroken iPhone with JIT. Please support the upstream Vita3K project.
 
-Vita3K is an experimental PlayStation Vita emulator for Windows, Linux, macOS and Android.
+## ⚠️ Legal / piracy disclaimer
 
-An experimental iOS build pipeline is documented in
-[`ios/README.md`](ios/README.md). It produces an unsigned UIKit/Metal IPA,
-links the first dependency-free Vita3K core slice, completes one deliberately
-tiny VitaSDK program, presents one core-owned Metal diagnostic frame, and
-captures normalized UIKit touch plus GameController state. The iOS core also
-links Vita3K's upstream PARAM.SFO parser to identify Vita application metadata. It
-does not yet execute general Vita software or render Vita graphics. The remaining porting blockers are tracked
-in [`ios/PORTING.md`](ios/PORTING.md).
+Tsubomi does **not** condone or support piracy or any other illegal activity.
 
-* [Website](https://vita3k.org/) (information for users)
-* [Wiki](https://github.com/Vita3K/Vita3K/wiki) (information for developers)
-* [Discord server](https://discord.gg/MaWhJVH) (recommended)
+- You must **dump your own games and firmware from hardware you own.** Do not download
+  games you do not own.
+- Tsubomi ships with no games, firmware, or keys, and none are provided.
+- Booting Vitamin dumps or other pirated content is not supported.
 
-## Compatibility
+By using Tsubomi you agree that you are solely responsible for the content you load and
+that you are complying with the laws in your jurisdiction.
 
-The emulator currently runs most homebrew programs and commercial games.
+## Requirements
 
-- [Homebrew compatibility page](https://vita3k.org/compatibility-homebrew.html)
-- [Commercial compatibility page](https://vita3k.org/compatibility.html)
+- An iPhone/iPad on a recent iOS version, with a way to sideload an unsigned `.ipa`.
+- **JIT** must be enabled for games to run (Tsubomi shows a banner and refuses to boot
+  games when JIT is unavailable). [StikDebug](https://github.com/StephenDev0/StikDebug)
+  or a comparable JIT enabler works.
+- Your own **PS Vita firmware** and **game dumps**.
 
-## Gallery
+## Setup
 
-|               **Persona 4 Golden** by Atlus                   |                     **A Rose in the Twilight** by Nippon Ichi Software                         |
-| :-----------------------------------------------------------: | :--------------------------------------------------------------------------------------------: |
-| ![Persona 4 Golden screenshot](./_readme/screenshots/P4G.png) | ![A Rose in the Twilight screenshot](./_readme/screenshots/A%20Rose%20in%20the%20Twilight.png) |
+1. Sideload the unsigned `Tsubomi.ipa` and enable JIT for it (e.g. via StikDebug).
+2. Launch Tsubomi. On first run it creates its data folder at
+   **`Documents/Tsubomi`** (visible in the Files app — file sharing is enabled).
+3. Add content with the **+** button in the library:
+   - **Import game (.vpk / .zip)** — a Vita app package.
+   - **Import firmware (.PUP)** — a PS Vita firmware update.
+   - If a game is a NoNpDrm dump, Tsubomi prompts for its **work.bin** license and
+     decrypts the content in place.
+   Alternatively, copy your desktop **Vita3K** data folder into
+   `Documents/Tsubomi/vita` in the Files app and tap **Refresh**.
 
-|                  **Alone with You** by Benjamin Rivers                     |                 **VA-11 HALL-A** by Sukeban Games                    |
-| :------------------------------------------------------------------------: | :------------------------------------------------------------------: |
-| ![Alone with You screenshot](./_readme/screenshots/Alone%20With%20You.png) | ![VA-11 HALL-A screenshot](./_readme/screenshots/VA-11%20HALL-A.png) |
+### Data layout (`Documents/Tsubomi/`)
 
-|              **Fruit Ninja** by Halfbrick Studios                  |                **Jetpack Joyride** by Halfbrick Studios                    |
-| :----------------------------------------------------------------: | :------------------------------------------------------------------------: |
-| ![Fruit Ninja Screenshot](./_readme/screenshots/Fruit%20Ninja.png) | ![Jetpack Joyride Screenshot](./_readme/screenshots/Jetpack%20Joyride.png) |
+```
+Tsubomi/
+  vita/            the Vita filesystem (ux0, vs0, sa0, …)
+    ux0/app/<TITLEID>/        installed games
+    ux0/user/00/savedata/     save data
+    ux0/license/              NoNpDrm .rif licenses
+  cache/           shader / pipeline caches (persist across reinstalls)
+  tsubomi.log      the log file — attach this when reporting issues
+```
 
-## License
+`Documents` survives app reinstalls, so games, saves, and firmware are kept when you
+sideload a new build.
 
-Vita3K is licensed under the **GPLv2** license. This is largely dictated by external dependencies, most notably Unicorn.
+## Screenshots
 
-## Downloads
+![Amagami ebKore+](_readme/screenshots/Amagami%20ebKore+.jpg)
 
-You can download the latest builds from [here](https://github.com/Vita3K/Vita3K/releases/tag/continuous).
-
-* Windows
-  * Requirements:
-    * [Microsoft Visual C++ 2015-2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe)
-* Linux
-  * Arch based:
-    * [vita3k-bin](https://aur.archlinux.org/packages/vita3k-bin)<sup><small>AUR</small></sup>
-    * [vita3k-git](https://aur.archlinux.org/packages/vita3k-git)<sup><small>AUR</small></sup>
-  * Requirements:
-    * xdg-desktop-portal
-* Android
-    * [Adreno drivers](https://github.com/K11MCH1/AdrenoToolsDrivers/releases/)
-* Others
-  * [Download Artifact](https://github.com/Vita3K/Vita3K/actions?query=event%3Apush+is%3Asuccess+branch%3Amaster)
-  * [Old builds](https://github.com/Vita3K/Vita3K-builds/releases)
+_More screenshots will be added as compatibility improves._
 
 ## Building
 
-Please see [`building.md`](./building.md).
+Tsubomi builds for `arm64` iOS through the `Build upstream-core iOS IPA` GitHub Actions
+workflow (`.github/workflows/ios-upstream.yml`), producing an unsigned `.ipa` you sign
+and sideload yourself. iOS is the only supported target.
 
-## Running
-Check our [quickstart guide](https://vita3k.org/quickstart) to make sure your computer meets the minimum requirements to run Vita3K.  
-Don't forget to have your graphics driver up to date and to install the [Visual C++ 2015-2022 Redistributable](https://aka.ms/vs/17/release/VC_redist.x64.exe) if you are a Windows user.  
+## Credits
 
-## Bugs and issues
-The project is in an early stage, so please be mindful when opening new issues. Expect crashes, glitches, low compatibility and poor performance.
-
-## Thanks
-Thanks go out to people who offered advice or otherwise made this project possible, such as Davee, korruptor, Rinnegatamante, ScHlAuChi, Simon Kilroy, TheFlow, xerpi, xyz, Yifan Lu and many others.
-
-## Donations
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/vita3k)
-<br>
-Thank you to the supporters and to all those who support us on our [ko-fi](https://ko-fi.com/vita3K).
-* Among them, those who subscribed to the Nibble Tier and upper: **j0hnnybrav0, Mored4u, TacoOblivion, Undeadbob and uplush**
-
-## Note
-The purpose of this emulator is not to enable illegal activity. You can dump games from a Vita by using [NoNpDrm](https://github.com/TheOfficialFloW/NoNpDrm) or [FAGDec](https://github.com/CelesteBlue-dev/PSVita-RE-tools/tree/master/FAGDec/build). You can get homebrew programs from [VitaDB](https://www.rinnegatamante.eu/vitadb/#/).
-
-PlayStation, PlayStation Vita and PlayStation Network are all registered trademarks of Sony Interactive Entertainment Inc. This emulator is not related to or endorsed by Sony, or derived from confidential materials belonging to Sony.
+- **[Vita3K](https://github.com/Vita3K/Vita3K)** and its contributors — the emulator
+  Tsubomi is built on.
+- The Tsubomi iOS port.

@@ -389,7 +389,7 @@ void start_import(EmuEnvState &emuenv, const std::string &path, const bool firmw
             if (job->firmware) {
                 const std::string version = install_pup(emuenv.vita_fs_path, fs::path(path), nullptr);
                 if (version.empty()) {
-                    job->message = "Firmware install failed (see vita3k.log)";
+                    job->message = "Firmware install failed (see tsubomi.log)";
                 } else {
                     fs::ofstream out(emuenv.log_path / "fw_version.txt");
                     out << version;
