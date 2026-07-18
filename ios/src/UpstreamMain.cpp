@@ -42,6 +42,7 @@
 #include <cpu/functions.h>
 #include <display/state.h>
 #include <emuenv/state.h>
+#include <io/state.h>
 #include <modules/module_parent.h>
 #include <np/trophy/collection.h>
 #include <renderer/frame_host.h>
