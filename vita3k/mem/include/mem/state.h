@@ -21,6 +21,7 @@
 #include <mem/functions.h>
 #include <mem/util.h>
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -77,4 +78,9 @@ struct MemState {
     bool use_page_table = false;
     PageTable page_table;
     std::map<uint64_t, MemExternalMapping, std::greater<>> external_mapping;
+
+    // Diagnostic: guest access-violation traps handled by the protect system.
+    // On iOS each of these costs a debugger round trip, so the watchdog dump
+    // reports the count to correlate trap bursts with process-wide stalls.
+    std::atomic<uint64_t> access_violations_handled{ 0 };
 };

@@ -31,6 +31,8 @@
 
 #include <SDL3/SDL_cpuinfo.h>
 
+#include <algorithm>
+
 // don't use the dispatch version, because we always hash a small amount
 // with a known size
 #define XXH_INLINE_ALL
@@ -237,6 +239,13 @@ void PipelineCache::init(bool support_rasterized_order_access) {
         nb_worker_threads = 2;
     else
         nb_worker_threads = 1;
+#ifdef VITA3K_PLATFORM_IOS
+    // The first boot of a title in each app process pays the full
+    // SPIR-V -> MSL -> Metal binary cost for every pipeline while draws are
+    // skipped (the white-screen wait). The 6-core A-series chips land on two
+    // workers with the desktop table; give the burst more parallelism.
+    nb_worker_threads = std::max(nb_worker_threads, 4);
+#endif
 
     if (use_async_compilation) {
         // we could not initialize the worker threads previously
