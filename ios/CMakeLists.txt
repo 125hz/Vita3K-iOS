@@ -16,7 +16,12 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
         src/NativeFrontend.mm
         src/UpstreamMain.cpp
         src/VirtualController.mm
+        ${CMAKE_CURRENT_SOURCE_DIR}/Assets.xcassets
     )
+    # Compile the app-icon asset catalog (Xcode generator runs actool) so the
+    # Tsubomi flower is the home-screen icon.
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/Assets.xcassets
+        PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     target_include_directories(Vita3KiOS PRIVATE include)
     target_compile_features(Vita3KiOS PRIVATE cxx_std_23)
     target_compile_options(Vita3KiOS PRIVATE -Wall -Wextra)
@@ -26,6 +31,7 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
         audio
         packages
         SDL3::SDL3
+        "-framework AVFoundation"
         "-framework CoreGraphics"
         "-framework Foundation"
         "-framework GameController"
@@ -69,6 +75,11 @@ else()
         "-framework UIKit"
         "-framework UniformTypeIdentifiers"
     )
+endif()
+
+if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
+    set_target_properties(Vita3KiOS PROPERTIES
+        XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon")
 endif()
 
 set_target_properties(Vita3KiOS PROPERTIES

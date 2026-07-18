@@ -70,6 +70,12 @@ void vita3k_ios_prompt_license_import(const std::string &title_id);
 // smooth while the SDL/UIKit thread is also polling emulator state.
 void vita3k_ios_pump_runloop(double seconds);
 
+// Configures and activates an AVAudioSession (Playback) before SDL opens the
+// audio device. Without an active session iOS may not run the audio unit, so
+// the SDL stream never drains and games that gate on audio playback (movie
+// clocks, music sync) freeze. Safe to call once at startup.
+void vita3k_ios_configure_audio_session();
+
 // In-game performance HUD. Called ~once per second from the frontend loop
 // with the guest frame rate; battery/RAM are sampled on the UIKit side. The
 // HUD only appears when the user enabled at least one metric in settings.

@@ -737,6 +737,11 @@ int main(int argc, char *argv[]) {
 
     install_fatal_signal_logger();
 
+    // Activate the iOS audio session before SDL opens the audio device, so the
+    // audio unit actually runs and the SDL stream drains (otherwise games that
+    // wait on audio playback position freeze).
+    vita3k_ios_configure_audio_session();
+
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "Portrait LandscapeLeft LandscapeRight");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         LOG_ERROR("SDL_Init failed: {}", SDL_GetError());

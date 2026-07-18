@@ -371,8 +371,12 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     button.backgroundColor = UIColor.clearColor;
     button.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.62].CGColor;
     button.layer.borderWidth = 1.25;
-    button.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
+    // SELECT/START carry a whole word inside a small capsule; use a smaller
+    // font so the label fits instead of hugging the edges.
+    const BOOL wordLabel = [key isEqualToString:@"select"] || [key isEqualToString:@"start"];
+    button.titleLabel.font = [UIFont systemFontOfSize:wordLabel ? 10 : 17 weight:UIFontWeightBold];
     button.titleLabel.adjustsFontSizeToFitWidth = YES;
+    button.titleLabel.minimumScaleFactor = 0.7;
     [button setTitle:title forState:UIControlStateNormal];
     [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     [button setTitleColor:UIColor.systemCyanColor forState:UIControlStateHighlighted];

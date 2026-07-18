@@ -11,6 +11,7 @@
 // uses it. MacTypes.h is fully included (and include-guarded) inside this
 // region, so later transitive includes are no-ops.
 #define Ptr MacTypesPtr
+#import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -32,6 +33,7 @@ void queue_action(Vita3KIOSFrontendAction action) {
 }
 
 void present_import_picker(BOOL firmware);
+void reload_library_cells();
 
 UIWindow *active_window() {
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -72,6 +74,17 @@ NSString *title_override_key(NSString *identifier) {
 NSString *display_title(NSString *identifier, NSString *original) {
     NSString *override = [NSUserDefaults.standardUserDefaults stringForKey:title_override_key(identifier)];
     return override.length ? override : original;
+}
+
+// Whether library cells show the PCSG00291-style title id. Defaults ON.
+BOOL show_title_ids() {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    return [defaults objectForKey:@"tsubomi.showTitleIds"] ? [defaults boolForKey:@"tsubomi.showTitleIds"] : YES;
+}
+
+NSString *tsubomi_app_version() {
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    return version.length ? version : @"0.5.0";
 }
 
 UIVisualEffect *glass_effect(const BOOL interactive = YES) {
@@ -200,6 +213,7 @@ std::string hex_bytes(const std::string &value) {
 - (void)configureTitle:(NSString *)title identifier:(NSString *)identifier iconPath:(NSString *)iconPath {
     self.titleLabel.text = title;
     self.identifierLabel.text = identifier;
+    self.identifierLabel.hidden = !show_title_ids();
     UIImage *image = iconPath.length ? [UIImage imageWithContentsOfFile:iconPath] : nil;
     if (iconPath.length && !image)
         LOG_ERROR("iOS library art could not be decoded at '{}'", iconPath.UTF8String);
@@ -260,6 +274,7 @@ std::string hex_bytes(const std::string &value) {
     UIStackView *header = [[UIStackView alloc] init];
     header.axis = UILayoutConstraintAxisHorizontal;
     header.alignment = UIStackViewAlignmentCenter;
+    header.spacing = 14; // keep the "Settings" title off the back chevron
     UIButton *back = symbol_button(@"chevron.left", @"Back", @"Back to library");
     [back addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside];
     [back.widthAnchor constraintEqualToConstant:46].active = YES;
@@ -289,6 +304,9 @@ std::string hex_bytes(const std::string &value) {
     UIStackView *resolutionAccessory = [[UIStackView alloc] initWithArrangedSubviews:@[self.resolutionSlider, self.resolutionValue]];
     resolutionAccessory.axis = UILayoutConstraintAxisHorizontal;
     resolutionAccessory.spacing = 10;
+    // Keep the slider usable in portrait, where accessory content-hugging
+    // otherwise squeezes it to almost nothing.
+    [self.resolutionSlider.widthAnchor constraintGreaterThanOrEqualToConstant:170].active = YES;
     [self addSection:@"Video" rows:@[
         [self row:@"Resolution multiplier" hint:@"Higher values are sharper but increase GPU load." accessory:resolutionAccessory],
         [self switchRow:@"V-Sync" hint:@"Synchronizes presentation to the display." value:values.v_sync output:&_vsyncSwitch],
@@ -332,7 +350,53 @@ std::string hex_bytes(const std::string &value) {
         [self row:@"Show battery %" hint:@"Device battery level while playing."
             accessory:[self defaultsSwitch:@"vita3k.perf.battery" defaults:defaults]],
     ]];
+
+    UISwitch *titleIds = [[UISwitch alloc] init];
+    titleIds.on = show_title_ids();
+    [titleIds addTarget:self action:@selector(showTitleIdsChanged:) forControlEvents:UIControlEventValueChanged];
+    [self addSection:@"Library" rows:@[
+        [self row:@"Show title IDs" hint:@"Show the PCSG… identifier under each game." accessory:titleIds],
+    ]];
+
+    UIButton *changelog = [UIButton buttonWithType:UIButtonTypeSystem];
+    [changelog setTitle:@"Changelog" forState:UIControlStateNormal];
+    changelog.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    [changelog addTarget:self action:@selector(showChangelog) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *forkLink = [UIButton buttonWithType:UIButtonTypeSystem];
+    [forkLink setTitle:@"Vita3K ↗" forState:UIControlStateNormal];
+    forkLink.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    [forkLink addTarget:self action:@selector(openVita3K) forControlEvents:UIControlEventTouchUpInside];
+    [self addSection:@"About" rows:@[
+        [self row:@"Version" hint:@"Tsubomi — an iOS PS Vita emulator." accessory:[self valueLabel:tsubomi_app_version()]],
+        [self row:@"What's new" hint:@"Changes in this version." accessory:changelog],
+        [self row:@"Forked from" hint:@"Tsubomi is built on the Vita3K emulator." accessory:forkLink],
+        [self row:@"Developed by" hint:@"twitter / discord" accessory:[self valueLabel:@"@halcyonpalace"]],
+        [self row:@"Thanks to" hint:@"" accessory:[self valueLabel:@"Bloom, Craig, Thomasina"]],
+    ]];
     return self;
+}
+
+- (void)showTitleIdsChanged:(UISwitch *)sender {
+    [NSUserDefaults.standardUserDefaults setBool:sender.on forKey:@"tsubomi.showTitleIds"];
+    reload_library_cells();
+}
+
+- (void)openVita3K {
+    [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://github.com/Vita3K/Vita3K"]
+                                    options:@{}
+                          completionHandler:nil];
+}
+
+- (void)showChangelog {
+    present_alert(@"What's new in 0.5.0",
+        @"• Renamed to Tsubomi (data now in Documents/Tsubomi).\n"
+        @"• iOS audio session fix and movie/audio decode work.\n"
+        @"• Import fixes: zip symlink false-reject, NoNpDrm work.bin decrypt, "
+        @"failed boots return to the library.\n"
+        @"• JIT banner no longer reappears after StikDebug detaches.\n"
+        @"• Library: long-press to rename a game, Show title IDs toggle, "
+        @"landscape spacing, firmware version badge.\n"
+        @"• App icon, About section, and various UI polish.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -482,6 +546,8 @@ std::string hex_bytes(const std::string &value) {
     if (!self)
         return nil;
     _jitAvailable = YES;
+    // Enable battery monitoring once (not per perf-overlay tick).
+    UIDevice.currentDevice.batteryMonitoringEnabled = YES;
     self.backgroundColor = UIColor.systemBackgroundColor;
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.backgroundGradient = [CAGradientLayer layer];
@@ -643,10 +709,11 @@ std::string hex_bytes(const std::string &value) {
     // Dark: deep navy → plum → teal. Light: near-white with a faint pink/cyan
     // wash so the brand feel survives without a heavy tint.
     if (dark) {
+        // True-black base with only a whisper of brand tint at the edges.
         self.backgroundGradient.colors = @[
-            (id)[UIColor colorWithRed:0.02 green:0.035 blue:0.09 alpha:1].CGColor,
-            (id)[UIColor colorWithRed:0.14 green:0.035 blue:0.16 alpha:1].CGColor,
-            (id)[UIColor colorWithRed:0.015 green:0.08 blue:0.11 alpha:1].CGColor,
+            (id)UIColor.blackColor.CGColor,
+            (id)[UIColor colorWithRed:0.05 green:0.01 blue:0.06 alpha:1].CGColor,
+            (id)UIColor.blackColor.CGColor,
         ];
     } else {
         self.backgroundGradient.colors = @[
@@ -880,6 +947,12 @@ static Vita3KLibraryView *g_library = nil;
 // banner is correct even across library rebuilds between game sessions.
 static BOOL g_jit_available = YES;
 
+namespace {
+void reload_library_cells() {
+    [g_library.collectionView reloadData];
+}
+} // namespace
+
 // Presents the Files picker and hands the copied file to the emulator loop.
 @interface Vita3KImportPicker : NSObject <UIDocumentPickerDelegate>
 @property(nonatomic) Vita3KIOSFrontendActionKind kind;
@@ -1074,7 +1147,9 @@ void vita3k_ios_update_perf_overlay(const float guest_fps) {
                 [parts addObject:[NSString stringWithFormat:@"%.0f MB", vm_info.phys_footprint / (1024.0 * 1024.0)]];
         }
         if (show_battery) {
-            UIDevice.currentDevice.batteryMonitoringEnabled = YES;
+            // batteryMonitoringEnabled is set once at library init, not here.
+            // iOS still reports batteryLevel in 5% steps; that granularity is an
+            // OS limitation (no public finer API — IOKit is private).
             const float level = UIDevice.currentDevice.batteryLevel;
             if (level >= 0)
                 [parts addObject:[NSString stringWithFormat:@"%.0f%%", level * 100.0f]];
@@ -1142,6 +1217,27 @@ void vita3k_ios_prompt_license_import(const std::string &title_id) {
         [prompt addAction:[UIAlertAction actionWithTitle:@"Not now" style:UIAlertActionStyleCancel handler:nil]];
         [root presentViewController:prompt animated:YES completion:nil];
     });
+}
+
+void vita3k_ios_configure_audio_session() {
+    NSError *error = nil;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    // Playback so audio keeps running with the mute switch on and the audio
+    // unit is actually scheduled; MixWithOthers keeps us polite.
+    if (![session setCategory:AVAudioSessionCategoryPlayback
+                         mode:AVAudioSessionModeDefault
+                      options:AVAudioSessionCategoryOptionMixWithOthers
+                        error:&error]) {
+        LOG_ERROR("iOS audio session setCategory failed: {}",
+            error.localizedDescription.UTF8String ?: "unknown");
+        error = nil;
+    }
+    if (![session setActive:YES error:&error]) {
+        LOG_ERROR("iOS audio session activation failed: {}",
+            error.localizedDescription.UTF8String ?: "unknown");
+    } else {
+        LOG_INFO("iOS audio session active (Playback), sample rate {} Hz", session.sampleRate);
+    }
 }
 
 void vita3k_ios_pump_runloop(const double seconds) {
