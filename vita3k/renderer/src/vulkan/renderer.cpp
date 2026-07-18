@@ -990,6 +990,20 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
     surface_cache.can_mprotect_mapped_memory = mapping_method == MappingMethod::DoubleBuffer
         || std::string_view(physical_device_properties.deviceName).contains("NVIDIA");
 #endif
+#if defined(VITA3K_PLATFORM_IOS)
+    // Sideloaded JIT keeps a debugger (StikDebug) attached, so every guest
+    // access-violation trap becomes a debug-link round trip before the
+    // in-process handler runs. Surface protection faults arrive in bursts when
+    // a title starts writing new content near cached surfaces (iOS also uses
+    // 16 KiB pages, so protected ranges swallow unrelated neighbours), which
+    // stalls guest threads for seconds or kills the process when a forwarded
+    // signal is mishandled. Spurious dirty marks from those merged pages also
+    // made titles re-sample render targets from never-synced guest RAM.
+    // Disable fault-based surface tracking; with memory mapping unavailable
+    // here, surface sync is inert, so this only removes the traps.
+    surface_cache.can_mprotect_mapped_memory = false;
+    LOG_INFO("iOS: fault-based surface dirty tracking disabled (traps are debugger-delivered)");
+#endif
 
     pipeline_cache.init(support_rasterized_order_access);
 

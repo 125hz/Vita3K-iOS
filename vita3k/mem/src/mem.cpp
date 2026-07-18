@@ -297,6 +297,12 @@ bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcep
     if (LOG_PROTECT) {
         fmt::print("Access: {}\n", log_hex(vaddr));
     }
+#ifdef VITA3K_PLATFORM_IOS
+    // With StikDebug attached every one of these traps costs a debug-link
+    // round trip, so any code path that still installs guest-memory
+    // protections must be found and removed. Surface tracking no longer does.
+    LOG_WARN_ONCE("Guest access-violation trap handled at 0x{:X} (write={}); traps are debugger-delivered on iOS", vaddr, write);
+#endif
 
     auto it = state.protect_tree.lower_bound(vaddr);
     if (it == state.protect_tree.end()) {
