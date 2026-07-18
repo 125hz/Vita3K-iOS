@@ -224,7 +224,7 @@ std::string hex_bytes(const std::string &value) {
     self.metadataLabel.numberOfLines = 2;
     [self.glass.contentView addSubview:self.metadataLabel];
     self.separator = [[UIView alloc] init];
-    self.separator.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1.0];
+    self.separator.backgroundColor = UIColor.separatorColor;
     [self.glass.contentView addSubview:self.separator];
     return self;
 }
@@ -275,22 +275,22 @@ std::string hex_bytes(const std::string &value) {
     self.metadataLabel.text = metadata;
     self.identifierLabel.hidden = !show_title_ids();
     self.separator.hidden = !listMode;
+    // List rows sit directly on the background like a system list: no
+    // material, no forced palette — every color adapts to light/dark mode.
     self.glass.effect = listMode ? nil : glass_effect(NO);
-    self.glass.backgroundColor = listMode ? UIColor.blackColor : UIColor.clearColor;
+    self.glass.backgroundColor = UIColor.clearColor;
     self.glass.layer.cornerRadius = listMode ? 0 : 26;
     self.icon.layer.cornerRadius = listMode ? 8 : 18;
     self.titleLabel.numberOfLines = listMode ? 1 : 2;
-    self.titleLabel.textColor = listMode ? UIColor.whiteColor : UIColor.labelColor;
-    self.identifierLabel.textColor = listMode
-        ? [UIColor colorWithWhite:0.72 alpha:1.0] : UIColor.secondaryLabelColor;
-    self.metadataLabel.textColor = listMode
-        ? [UIColor colorWithWhite:0.72 alpha:1.0] : UIColor.secondaryLabelColor;
+    self.titleLabel.textColor = UIColor.labelColor;
+    self.identifierLabel.textColor = UIColor.secondaryLabelColor;
+    self.metadataLabel.textColor = UIColor.secondaryLabelColor;
     UIImage *image = iconPath.length ? [UIImage imageWithContentsOfFile:iconPath] : nil;
     if (iconPath.length && !image)
         LOG_ERROR("iOS library art could not be decoded at '{}'", iconPath.UTF8String);
     self.icon.image = image ?: [UIImage systemImageNamed:@"gamecontroller.fill"];
     self.icon.tintColor = UIColor.systemPinkColor;
-    self.icon.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.55];
+    self.icon.backgroundColor = UIColor.secondarySystemFillColor;
     [self setNeedsLayout];
 }
 
@@ -637,6 +637,7 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UILabel *emptyLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UIView *busyOverlay;
+@property(nonatomic, strong) UIVisualEffectView *headerGlass;
 @property(nonatomic, strong) CAGradientLayer *backgroundGradient;
 @property(nonatomic, strong) UIVisualEffectView *firmwareGlass;
 @property(nonatomic, strong) UILabel *firmwareLabel;
@@ -665,6 +666,15 @@ std::string hex_bytes(const std::string &value) {
     self.backgroundGradient.endPoint = CGPointMake(1, 1);
     [self.layer insertSublayer:self.backgroundGradient atIndex:0];
     [self updateGradientColors];
+
+    // The library scrolls edge-to-edge underneath the header; this bar blurs
+    // whatever passes below the title/controls, exactly like a system
+    // navigation bar's scroll-edge appearance. It stays invisible while the
+    // content is at rest at the top.
+    self.headerGlass = [[UIVisualEffectView alloc]
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterial]];
+    self.headerGlass.alpha = 0;
+    [self addSubview:self.headerGlass];
 
     UILabel *title = [[UILabel alloc] init];
     title.text = @"Tsubomi";
@@ -744,12 +754,16 @@ std::string hex_bytes(const std::string &value) {
     layout.minimumInteritemSpacing = 14;
     layout.minimumLineSpacing = 18;
     self.collectionView = [[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout];
-    self.collectionView.backgroundColor = _listMode ? UIColor.blackColor : UIColor.clearColor;
+    self.collectionView.backgroundColor = UIColor.clearColor;
     self.collectionView.dataSource = self;
     self.collectionView.delegate = self;
     self.collectionView.alwaysBounceVertical = YES;
+    // Full-bleed: the collection view covers the whole screen and the header
+    // floats above it; contentInset (set in layoutSubviews) keeps the resting
+    // position below the header while scrolled content slides underneath.
+    self.collectionView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     [self.collectionView registerClass:Vita3KGameCell.class forCellWithReuseIdentifier:@"game"];
-    [self addSubview:self.collectionView];
+    [self insertSubview:self.collectionView belowSubview:self.headerGlass];
 
     self.emptyLabel = [[UILabel alloc] init];
     self.emptyLabel.text = @"No games yet\n\nTap + to import a game (.vpk/.zip/.pkg), or copy\nPC's Vita3K data into Documents/Tsubomi/vita";
@@ -822,15 +836,38 @@ std::string hex_bytes(const std::string &value) {
     }
 
     const CGFloat collectionInset = compactHeader ? 10 : 18;
-    self.collectionView.frame = CGRectMake(safe.left + collectionInset, contentTop,
-        CGRectGetWidth(self.bounds) - safe.left - safe.right - collectionInset * 2,
-        MAX(1, CGRectGetHeight(self.bounds) - contentTop - safe.bottom - 10));
-    self.emptyLabel.frame = CGRectInset(self.collectionView.frame, 40, 40);
-    const CGFloat width = CGRectGetWidth(self.collectionView.bounds);
+    // The header bar blurs everything that scrolls beneath the controls; it
+    // reaches just under the firmware badge (the status label floats over
+    // content when it appears).
+    self.headerGlass.frame = CGRectMake(0, 0, CGRectGetWidth(self.bounds), headerBottom + 8);
+    self.collectionView.frame = self.bounds;
+    self.collectionView.contentInset = UIEdgeInsetsMake(contentTop, safe.left + collectionInset,
+        safe.bottom + 12, safe.right + collectionInset);
+    self.collectionView.verticalScrollIndicatorInsets = UIEdgeInsetsMake(headerBottom + 8, 0, safe.bottom, 0);
+    self.emptyLabel.frame = CGRectMake(safe.left + 40, contentTop + 40,
+        MAX(1, usableWidth - 80),
+        MAX(1, CGRectGetHeight(self.bounds) - contentTop - safe.bottom - 80));
+    const CGFloat width = CGRectGetWidth(self.collectionView.bounds)
+        - self.collectionView.contentInset.left - self.collectionView.contentInset.right;
     if (fabs(width - _lastCollectionWidth) > 0.5) {
         _lastCollectionWidth = width;
         [self.collectionView.collectionViewLayout invalidateLayout];
     }
+    [self updateHeaderGlassVisibility];
+}
+
+// Fade the header material in only when content is actually behind it, the
+// way a navigation bar transitions from its scroll-edge appearance.
+- (void)updateHeaderGlassVisibility {
+    const CGFloat scrolled = self.collectionView.contentOffset.y + self.collectionView.contentInset.top;
+    const CGFloat alpha = MAX(0.0, MIN(1.0, scrolled / 24.0));
+    if (fabs(self.headerGlass.alpha - alpha) > 0.01)
+        self.headerGlass.alpha = alpha;
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    if (scrollView == self.collectionView)
+        [self updateHeaderGlassVisibility];
 }
 
 - (void)toggleViewMode:(UIButton *)sender {
@@ -838,7 +875,6 @@ std::string hex_bytes(const std::string &value) {
     [NSUserDefaults.standardUserDefaults setBool:_listMode forKey:@"tsubomi.libraryListMode"];
     [sender setImage:[UIImage systemImageNamed:_listMode ? @"square.grid.2x2" : @"list.bullet"]
             forState:UIControlStateNormal];
-    self.collectionView.backgroundColor = _listMode ? UIColor.blackColor : UIColor.clearColor;
     [self.collectionView.collectionViewLayout invalidateLayout];
     [self.collectionView reloadData];
 }
@@ -1021,7 +1057,8 @@ std::string hex_bytes(const std::string &value) {
 - (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)layout sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
     (void)layout;
     (void)indexPath;
-    const CGFloat width = CGRectGetWidth(collectionView.bounds);
+    const CGFloat width = CGRectGetWidth(collectionView.bounds)
+        - collectionView.contentInset.left - collectionView.contentInset.right;
     if (_listMode)
         return CGSizeMake(floor(width), 82);
     const CGFloat spacing = 14;
