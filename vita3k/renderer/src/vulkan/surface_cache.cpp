@@ -485,8 +485,23 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
     uint32_t start_sourced_line = static_cast<uint32_t>((data_delta / stride_bytes) * state.res_multiplier);
     uint32_t start_x = static_cast<uint32_t>((data_delta % stride_bytes) / bytes_per_pixel_requested * state.res_multiplier);
 
-    if (static_cast<uint16_t>(start_sourced_line + height) > info.height)
-        LOG_WARN_ONCE("Trying to use texture partially in the surface cache");
+    const bool partial_surface = static_cast<uint64_t>(start_x) + width > info.width
+        || static_cast<uint64_t>(start_sourced_line) + height > info.height;
+    if (partial_surface) {
+        LOG_WARN_ONCE("Using a partial cached color surface: requested={}x{} offset={},{} cached={}x{}",
+            width, height, start_x, start_sourced_line, info.width, info.height);
+    }
+
+    // No valid GPU-rendered texels overlap the requested texture. Falling
+    // back to the normal texture cache is safer than issuing an out-of-bounds
+    // Vulkan copy.
+    if (start_x >= info.width || start_sourced_line >= info.height)
+        return std::nullopt;
+
+    // The typeless conversion path uses a row-strided transition buffer and
+    // cannot safely synthesize texels outside the cached surface.
+    if (partial_surface && bytes_per_pixel_requested != bytes_per_pixel_in_store)
+        return std::nullopt;
 
     // We should be able to use this texture, so set it as mru
     color_surface_queue.set_as_mru(&info);
@@ -494,7 +509,15 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
     const vk::ImageView color_handle_view = reinterpret_cast<VKContext *>(state.context)->current_color_view;
     const bool is_same_image = (color_handle_view == info.texture.view) || (color_handle_view == info.alternate_view);
 
-    if (state.features.use_texture_viewport && base_format == info.format) {
+    // MoltenVK clamps Persona 4 Golden's out-of-range viewport sampling to an
+    // all-white result. Normal surfaces keep the fast path (important for
+    // titles such as Amagami); only a genuinely partial surface uses the
+    // initialized copy/crop fallback below.
+    if (state.features.use_texture_viewport && base_format == info.format
+#if defined(VITA3K_PLATFORM_IOS)
+        && !partial_surface
+#endif
+    ) {
         // use a texture viewport
         *texture_viewport = {
             .ratio = {
@@ -597,7 +620,15 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
 
         casted->scene_timestamp = scene_timestamp;
 
+        if (partial_surface) {
+            const vk::ClearColorValue clear_color{ std::array<float, 4>({ 0.0f, 0.0f, 0.0f, 0.0f }) };
+            cmd_buffer.clearColorImage(casted->texture.image, vk::ImageLayout::eTransferDstOptimal,
+                clear_color, vkutil::color_subresource_range);
+        }
+
         if (bytes_per_pixel_requested == bytes_per_pixel_in_store) {
+            const uint32_t copy_width = std::min(width, info.width - start_x);
+            const uint32_t copy_height = std::min(height, info.height - start_sourced_line);
             vk::ImageCopy image_copy{
                 .srcSubresource = vkutil::color_subresource_layer,
                 .srcOffset = { static_cast<int32_t>(start_x), static_cast<int32_t>(start_sourced_line), 0 },
@@ -606,9 +637,9 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
                     0,
                     0 },
                 .extent = {
-                    // Don't try to copy what is in the stride
-                    std::min<uint32_t>(width, info.width),
-                    std::min<uint32_t>(height, info.height),
+                    // Copy only the part that the guest actually rendered.
+                    copy_width,
+                    copy_height,
                     1 }
             };
             cmd_buffer.copyImage(info.texture.image, vk::ImageLayout::eGeneral, casted->texture.image, vk::ImageLayout::eTransferDstOptimal, image_copy);
