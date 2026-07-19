@@ -294,7 +294,6 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UISlider *resolutionSlider;
 @property(nonatomic, strong) UILabel *resolutionValue;
 @property(nonatomic, strong) UISwitch *vsyncSwitch;
-@property(nonatomic, strong) UISwitch *fpsHackSwitch;
 @property(nonatomic, strong) UISlider *fpsSlider;
 @property(nonatomic, strong) UILabel *fpsValue;
 @property(nonatomic, strong) UISwitch *cpuSwitch;
@@ -309,16 +308,35 @@ std::string hex_bytes(const std::string &value) {
 
 @implementation Vita3KSettingsView
 
+- (void)updateOpaqueBackground {
+    UIColor *background = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
+        ? UIColor.blackColor
+        : UIColor.whiteColor;
+    self.backgroundColor = background;
+    self.scrollView.backgroundColor = background;
+}
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    [self updateOpaqueBackground];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
+    [super traitCollectionDidChange:previousTraitCollection];
+    if (previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle)
+        [self updateOpaqueBackground];
+}
+
 - (instancetype)initWithFrame:(CGRect)frame values:(const Vita3KIOSSettings &)values {
     self = [super initWithFrame:frame];
     if (!self)
         return nil;
     self.values = values;
-    // Adaptive base (white in light mode, near-black in dark) instead of the
-    // old fixed navy; the settings panel now matches the rest of the UI.
-    self.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
-        return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? UIColor.blackColor : UIColor.whiteColor;
-    }];
+    // Use a resolved opaque color. A translucent/material settings root can
+    // otherwise reveal the last rendered game frame underneath the library.
+    self.backgroundColor = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
+        ? UIColor.blackColor
+        : UIColor.whiteColor;
     self.opaque = YES;
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
@@ -402,9 +420,6 @@ std::string hex_bytes(const std::string &value) {
     [self addSection:@"Video" rows:@[
         [self row:@"Resolution multiplier" hint:@"Higher values are sharper but increase GPU load." accessory:resolutionAccessory],
         [self switchRow:@"V-Sync" hint:@"Synchronizes presentation to the display." value:values.v_sync output:&_vsyncSwitch],
-        [self switchRow:@"Reduce motion blur (60 FPS hack)"
-            hint:@"Reduces frame-rate-tied blur in games such as Persona 4 Golden. Game-dependent; may alter timing."
-            value:values.fps_hack output:&_fpsHackSwitch],
         [self row:@"FPS limiter" hint:@"Caps presentation without changing the Vita's 60 Hz timing." accessory:fpsAccessory],
     ]];
 
@@ -506,7 +521,7 @@ std::string hex_bytes(const std::string &value) {
     [button setTitleColor:UIColor.labelColor forState:UIControlStateNormal];
     [button setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
     button.tintColor = color;
-    button.backgroundColor = [color colorWithAlphaComponent:0.13];
+    button.backgroundColor = UIColor.secondarySystemBackgroundColor;
     button.layer.cornerRadius = 20;
     button.contentEdgeInsets = UIEdgeInsetsMake(0, 18, 0, 18);
     [button.heightAnchor constraintEqualToConstant:68].active = YES;
@@ -579,14 +594,13 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.8.0",
-        @"• Speeds up VA-11 Hall-A's New Game transition by keeping bulk "
-        @"memory operations on Vita3K's native iOS fast path.\n"
-        @"• Places L2/R2 above L1/R1 in landscape and clears the HUD.\n"
-        @"• Adds optional alignment snapping and guides while editing controls.\n"
-        @"• Adds frametime text and a light/dark frametime graph to the HUD.\n"
-        @"• Reorganizes Settings into colored category pages with a compact About link.\n"
-        @"• Adds a game-dependent 60 FPS option that reduces frame-rate-tied motion blur.");
+    present_alert(@"What's new in 0.9.0",
+        @"• Fixes a thread-start diagnostic stall seen at Gravity Rush's boot screen.\n"
+        @"• Corrects Persona 4 Golden's partial cached-surface composition on iOS.\n"
+        @"• Removes the game-dependent motion-blur/FPS-hack setting and clears old saved values.\n"
+        @"• Uses neutral Settings category cards with color reserved for their glyphs.\n"
+        @"• Removes repeated category titles and makes the Settings background fully opaque.\n"
+        @"• Hardens VA-11 Hall-A diagnostics against scalar thread arguments.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -648,32 +662,27 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)addSection:(NSString *)title rows:(NSArray<UIView *> *)rows {
-    UILabel *label = [[UILabel alloc] init];
-    label.text = title.uppercaseString;
-    label.textColor = UIColor.systemPinkColor;
-    label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    (void)title; // The navigation header already names the active category.
     UIStackView *content = [[UIStackView alloc] init];
     content.axis = UILayoutConstraintAxisVertical;
     content.spacing = 1;
-    [content addArrangedSubview:label];
     for (UIView *row in rows)
         [content addArrangedSubview:row];
-    // Plain adaptive material, not interactive glass: live glass refraction on
-    // every section made the settings scroll visibly stutter. The ...Dark
-    // variant was also wrong in light mode.
-    UIVisualEffectView *glass = [[UIVisualEffectView alloc]
-        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
-    glass.layer.cornerRadius = 24;
-    glass.clipsToBounds = YES;
-    [glass.contentView addSubview:content];
+    // An opaque adaptive card prevents the running game's last frame from
+    // bleeding through UIKit material views.
+    UIView *card = [[UIView alloc] init];
+    card.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    card.layer.cornerRadius = 24;
+    card.clipsToBounds = YES;
+    [card addSubview:content];
     content.translatesAutoresizingMaskIntoConstraints = NO;
     [NSLayoutConstraint activateConstraints:@[
-        [content.leadingAnchor constraintEqualToAnchor:glass.contentView.leadingAnchor constant:14],
-        [content.trailingAnchor constraintEqualToAnchor:glass.contentView.trailingAnchor constant:-14],
-        [content.topAnchor constraintEqualToAnchor:glass.contentView.topAnchor constant:14],
-        [content.bottomAnchor constraintEqualToAnchor:glass.contentView.bottomAnchor constant:-14],
+        [content.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:14],
+        [content.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-14],
+        [content.topAnchor constraintEqualToAnchor:card.topAnchor constant:14],
+        [content.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-14],
     ]];
-    [self.stack addArrangedSubview:glass];
+    [self.stack addArrangedSubview:card];
 }
 
 - (void)resolutionChanged:(UISlider *)slider {
@@ -706,7 +715,6 @@ std::string hex_bytes(const std::string &value) {
     action.kind = Vita3KIOSFrontendActionKind::ApplySettings;
     action.settings.resolution_multiplier = self.resolutionSlider.value;
     action.settings.v_sync = self.vsyncSwitch.on;
-    action.settings.fps_hack = self.fpsHackSwitch.on;
     action.settings.fps_limit = (int)self.fpsSlider.value;
     [NSUserDefaults.standardUserDefaults setInteger:action.settings.fps_limit forKey:@"tsubomi.fpsLimit"];
     action.settings.cpu_opt = self.cpuSwitch.on;

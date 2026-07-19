@@ -553,7 +553,6 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
     return {
         .resolution_multiplier = current.resolution_multiplier,
         .v_sync = current.v_sync,
-        .fps_hack = current.fps_hack,
         .fps_limit = vita3k_ios_load_fps_limit(),
         .cpu_opt = current.cpu_opt,
         .ngs_enable = current.ngs_enable,
@@ -914,7 +913,9 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     auto apply = [&](Config::CurrentConfig &current) {
         current.resolution_multiplier = settings.resolution_multiplier;
         current.v_sync = settings.v_sync;
-        current.fps_hack = settings.fps_hack;
+        // The game-dependent FPS hack was removed from the iOS UI because it
+        // changes guest timing. Clear any value persisted by an older build.
+        current.fps_hack = false;
         current.cpu_opt = settings.cpu_opt;
         current.ngs_enable = settings.ngs_enable;
         current.async_pipeline_compilation = settings.async_pipeline_compilation;
@@ -924,7 +925,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     apply(desired.current_config);
     desired.resolution_multiplier = settings.resolution_multiplier;
     desired.v_sync = settings.v_sync;
-    desired.fps_hack = settings.fps_hack;
+    desired.fps_hack = false;
     desired.cpu_opt = settings.cpu_opt;
     desired.ngs_enable = settings.ngs_enable;
     desired.async_pipeline_compilation = settings.async_pipeline_compilation;
@@ -932,7 +933,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     desired.audio_backend = "SDL";
 
     const auto result = app::commit_settings(emuenv, desired);
-    emuenv.display.fps_hack = settings.fps_hack;
+    emuenv.display.fps_hack = false;
     emuenv.display.fps_limit.store(std::clamp(settings.fps_limit, 15, 60), std::memory_order_relaxed);
     std::vector<std::string> restart_required;
     restart_required.reserve(result.restart_required_settings.size());
@@ -1361,7 +1362,8 @@ int main(int argc, char *argv[]) {
     }
 
     LOG_INFO("Game started: {} ({})", emuenv->current_app_title, launch_request->app_path);
-    emuenv->display.fps_hack = emuenv->cfg.current_config.fps_hack;
+    // Never inherit the removed iOS FPS-hack setting from an older config.
+    emuenv->display.fps_hack = false;
     emuenv->display.fps_limit.store(vita3k_ios_load_fps_limit(), std::memory_order_relaxed);
 
     const bool has_virtual_controller = vita3k_ios_attach_virtual_controller();

@@ -45,7 +45,6 @@ struct Vita3KIOSTrophyCollection {
 struct Vita3KIOSSettings {
     float resolution_multiplier = 1.0f;
     bool v_sync = true;
-    bool fps_hack = false;
     int fps_limit = 60;
     bool cpu_opt = true;
     bool ngs_enable = true;

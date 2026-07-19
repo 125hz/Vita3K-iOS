@@ -746,7 +746,12 @@ EXPORT(int, _sceKernelStartThread, SceUID thid, SceSize arglen, Ptr<void> argp) 
             thread->name, thread->id, indirect_context);
 
         constexpr uint32_t context_bytes = 9 * sizeof(uint32_t);
-        if (indirect_context != 0 && indirect_context <= 0xFFFFFFFFU - context_bytes
+        // arg0 is not necessarily a pointer (thread IDs and small flags are
+        // common). Reject scalar/unaligned values before touching guest memory;
+        // the range helper alone intentionally accepts the mapped zero page.
+        if ((indirect_context & (alignof(uint32_t) - 1)) == 0
+            && is_valid_addr(emuenv.mem, indirect_context)
+            && indirect_context <= 0xFFFFFFFFU - context_bytes
             && is_valid_addr_range(emuenv.mem, indirect_context, indirect_context + context_bytes)) {
             const uint32_t *context = Ptr<const uint32_t>(indirect_context).get(emuenv.mem);
             const Address callback = context[1];
