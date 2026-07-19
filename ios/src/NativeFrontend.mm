@@ -1034,7 +1034,7 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.14.0",
+    present_alert(@"What's new in 0.14.1",
         @"• Gravity Rush render-target sampling now keeps each required color format and component swizzle in its own Vulkan image view.\n"
         @"• Onboarding is smaller, wraps correctly, follows light and dark mode, and uses smooth page transitions.\n"
         @"• A new homepage help button explains when to use High accuracy.\n"

@@ -117,7 +117,7 @@ void VKSurfaceCache::destroy_surface(ColorSurfaceCacheInfo &info) {
     }
     info.casted_textures.clear();
 
-    for (const auto &sampled_view : info.sampled_views)
+    for (auto &sampled_view : info.sampled_views)
         destroy_queue.add(sampled_view.view);
     info.sampled_views.clear();
 
