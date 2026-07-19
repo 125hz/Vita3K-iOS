@@ -460,6 +460,14 @@ ExitCode init_config(Config &cfg, int argc, char **argv, const Root &root_paths,
     if (!cfg.console) {
         LOG_INFO_IF(cfg.load_config, "Custom configuration file loaded successfully.");
 
+#ifdef VITA3K_PLATFORM_IOS
+        // Trace logging (the default, and what desktop config copies carry)
+        // floods tsubomi.log with per-instruction shader-translation and TTY
+        // lines — measurable CPU/IO cost and device heat. Debug keeps every
+        // diagnostic line the iOS logs have ever needed.
+        if (cfg.log_level < 1 /* SPDLOG_LEVEL_DEBUG */)
+            cfg.log_level = 1;
+#endif
         logging::set_level(static_cast<spdlog::level::level_enum>(cfg.log_level));
         static constexpr std::array LIST_LOG_LEVEL = SPDLOG_LEVEL_NAMES;
 

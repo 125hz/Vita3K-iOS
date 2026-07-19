@@ -100,7 +100,10 @@ COMMAND(new_frame) {
         display->next_rendered_frame = *next_frame;
         delete next_frame;
 
-        renderer.should_display = true;
+        // The FPS limiter must also gate the prediction fast path; presenting
+        // unconditionally here made the limiter a no-op for predicted games.
+        if (display->presentation_due_now())
+            renderer.should_display = true;
     }
 
     if (renderer.current_backend == Backend::Vulkan) {

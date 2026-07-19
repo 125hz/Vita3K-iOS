@@ -40,6 +40,12 @@ void present_license_picker();
 void present_save_picker(NSString *titleId);
 void reload_library_cells();
 
+} // namespace
+
+static void set_metal_drawables_hidden(UIWindow *window, BOOL hidden);
+
+namespace {
+
 UIWindow *active_window() {
     UIWindow *fallback = nil;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -266,6 +272,8 @@ Vita3KIOSSettings game_settings_or(NSString *titleId, const Vita3KIOSSettings &f
         settings.async_pipeline_compilation = [stored[@"asyncPipelines"] boolValue];
     if (stored[@"anisotropic"])
         settings.anisotropic_filtering = [stored[@"anisotropic"] intValue];
+    if (stored[@"highAccuracy"])
+        settings.high_accuracy = [stored[@"highAccuracy"] boolValue];
     return settings;
 }
 
@@ -278,6 +286,7 @@ void store_game_settings(NSString *titleId, const Vita3KIOSSettings &settings) {
         @"ngs": @(settings.ngs_enable),
         @"asyncPipelines": @(settings.async_pipeline_compilation),
         @"anisotropic": @(settings.anisotropic_filtering),
+        @"highAccuracy": @(settings.high_accuracy),
     } forKey:game_settings_key(titleId)];
 }
 
@@ -640,6 +649,7 @@ CGFloat library_card_label_height() {
 @property(nonatomic, strong) UISwitch *cpuSwitch;
 @property(nonatomic, strong) UISwitch *ngsSwitch;
 @property(nonatomic, strong) UISwitch *asyncSwitch;
+@property(nonatomic, strong) UISwitch *highAccuracySwitch;
 @property(nonatomic, strong) UISegmentedControl *anisotropicControl;
 @property(nonatomic, strong) UILabel *headerTitle;
 @property(nonatomic, strong) NSDictionary<NSString *, NSArray<UIView *> *> *pages;
@@ -786,6 +796,7 @@ CGFloat library_card_label_height() {
     }
     [self addSection:@"Graphics" rows:@[
         [self row:@"Resolution multiplier" hint:@"Higher values are sharper but increase GPU load; below 1x renders faster." accessory:resolutionAccessory],
+        [self switchRow:@"High accuracy" hint:@"Uses slower but more accurate render paths. Try this if a game's graphics look broken." value:values.high_accuracy output:&_highAccuracySwitch],
         [self switchRow:@"Async pipeline compilation" hint:@"Reduces shader stutter while new scenes compile." value:values.async_pipeline_compilation output:&_asyncSwitch],
         [self row:@"Anisotropic filtering" hint:@"Sharpens textures viewed at an angle." accessory:self.anisotropicControl],
     ]];
@@ -1019,17 +1030,16 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.11.0",
-        @"• Gravity Rush no longer crashes after long play: exited threads return their JIT memory to the pool (now 32 regions).\n"
-        @"• Quitting a game reliably returns to the library instead of a black screen.\n"
-        @"• Physical controller face buttons are positionally correct (Cross/Circle and Square/Triangle were swapped).\n"
-        @"• Per-game settings: long-press a game > Game settings; Use global settings restores.\n"
-        @"• Custom cover art from your Photos, with crop adjust and reset.\n"
-        @"• Landscape card view is a centered cover carousel with looping scroll.\n"
-        @"• Trophy counts on every game, and save export/import now carries trophy progress.\n"
-        @"• Resolution multiplier moved to Graphics and can go below 1x.\n"
-        @"• List view is the default; totals at the bottom; version and size lines can be hidden.\n"
-        @"• Brighter in-game menu button; toasts sit on glass; layout editor keeps buttons exactly where you drop them.");
+    present_alert(@"What's new in 0.12.0",
+        @"• Much faster and cooler: a per-frame JIT cache rebuild on the display thread was recompiling code every flip (the VA-11 slowdown), and trace logging is no longer forced on.\n"
+        @"• FPS limiter actually limits now — the prediction fast path was bypassing it.\n"
+        @"• Rendering is back to exact desktop parity (removed the iOS-only texture shortcut experiments). New Graphics > High accuracy switch: try it if a game's graphics look broken.\n"
+        @"• Landscape carousel: no more vertical drag, and swiping by touch no longer flickers.\n"
+        @"• Adjust cover crop now also works on a game's built-in art.\n"
+        @"• Performance overlay sits below the game screen in portrait, and you can drag it anywhere in Controller > Edit Layout.\n"
+        @"• Long-press a game > Delete game (saves and trophies are kept).\n"
+        @"• Tap a trophy to see its art full screen.\n"
+        @"• The last game frame can no longer appear behind the settings page.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -1150,6 +1160,7 @@ CGFloat library_card_label_height() {
     action.settings.ngs_enable = self.ngsSwitch.on;
     action.settings.async_pipeline_compilation = self.asyncSwitch.on;
     action.settings.anisotropic_filtering = anisotropicValues[self.anisotropicControl.selectedSegmentIndex];
+    action.settings.high_accuracy = self.highAccuracySwitch.on;
     if (self.perGameTitleId) {
         store_game_settings(self.perGameTitleId, action.settings);
         [self close];
@@ -1507,8 +1518,12 @@ CGFloat library_card_label_height() {
     // content when it appears).
     self.headerGlass.frame = CGRectMake(0, 0, CGRectGetWidth(self.bounds), headerBottom + 8);
     self.collectionView.frame = self.bounds;
-    self.collectionView.contentInset = UIEdgeInsetsMake(contentTop, safe.left + collectionInset,
-        safe.bottom + 12, safe.right + collectionInset);
+    // In carousel mode syncCarouselMode owns the insets; writing the grid
+    // insets first made every layout pass ping-pong them and stutter touch
+    // scrolling.
+    if (![self carouselShouldBeActive])
+        self.collectionView.contentInset = UIEdgeInsetsMake(contentTop, safe.left + collectionInset,
+            safe.bottom + 12, safe.right + collectionInset);
     self.collectionView.verticalScrollIndicatorInsets = UIEdgeInsetsMake(headerBottom + 8, 0, safe.bottom, 0);
     self.emptyLabel.frame = CGRectMake(safe.left + 40, contentTop + 40,
         MAX(1, usableWidth - 80),
@@ -1548,6 +1563,14 @@ static const NSInteger kCarouselRepeat = 400;
         layout.scrollDirection = _carouselActive
             ? UICollectionViewScrollDirectionHorizontal
             : UICollectionViewScrollDirectionVertical;
+        // The carousel scrolls on one axis only; vertical bounce let the whole
+        // row drag up and down.
+        self.collectionView.alwaysBounceVertical = !_carouselActive;
+        self.collectionView.alwaysBounceHorizontal = _carouselActive;
+        self.collectionView.showsHorizontalScrollIndicator = NO;
+        self.collectionView.decelerationRate = _carouselActive
+            ? UIScrollViewDecelerationRateFast
+            : UIScrollViewDecelerationRateNormal;
         _carouselNeedsCentering = _carouselActive;
         [layout invalidateLayout];
         [self.collectionView reloadData];
@@ -1561,7 +1584,10 @@ static const NSInteger kCarouselRepeat = 400;
         const CGFloat verticalSpace = CGRectGetHeight(self.bounds) - contentTop - safe.bottom;
         const CGFloat topInset = contentTop + MAX(0, (verticalSpace - itemHeight) / 2);
         const CGFloat horizontalInset = MAX(0, (CGRectGetWidth(self.bounds) - side) / 2);
-        self.collectionView.contentInset = UIEdgeInsetsMake(topInset, horizontalInset, safe.bottom, horizontalInset);
+        const UIEdgeInsets desired = UIEdgeInsetsMake(topInset, horizontalInset, safe.bottom, horizontalInset);
+        // Re-setting an identical inset mid-gesture stutters the scroll.
+        if (!UIEdgeInsetsEqualToEdgeInsets(self.collectionView.contentInset, desired))
+            self.collectionView.contentInset = desired;
         if (_carouselNeedsCentering) {
             _carouselNeedsCentering = NO;
             [self.collectionView layoutIfNeeded];
@@ -1592,6 +1618,23 @@ static const NSInteger kCarouselRepeat = 400;
         cell.transform = CGAffineTransformMakeScale(scale, scale);
         cell.alpha = 0.5 + 0.5 * closeness;
     }
+}
+
+// Reused cells enter the screen untransformed for one frame otherwise — the
+// visible "flicker" while swiping the carousel by touch.
+- (void)collectionView:(UICollectionView *)collectionView
+       willDisplayCell:(UICollectionViewCell *)cell
+    forItemAtIndexPath:(NSIndexPath *)indexPath {
+    (void)collectionView;
+    (void)indexPath;
+    if (!_carouselActive)
+        return;
+    const CGFloat centerX = self.collectionView.contentOffset.x + CGRectGetWidth(self.collectionView.bounds) / 2;
+    const CGFloat distance = fabs(cell.center.x - centerX) / MAX(1, [self carouselStride]);
+    const CGFloat closeness = MAX(0.0, 1.0 - MIN(distance, 1.0));
+    const CGFloat scale = 0.78 + 0.22 * closeness;
+    cell.transform = CGAffineTransformMakeScale(scale, scale);
+    cell.alpha = 0.5 + 0.5 * closeness;
 }
 
 - (void)scrollViewWillEndDragging:(UIScrollView *)scrollView
@@ -1758,6 +1801,29 @@ static const NSInteger kCarouselRepeat = 400;
     return cell;
 }
 
+// Deleting removes the installed content (app/patch/DLC). Saves, licenses,
+// and trophy progress stay so a reinstall picks them back up.
+- (void)confirmDeleteGame:(NSString *)identifier title:(NSString *)title {
+    UIViewController *root = active_window().rootViewController;
+    if (!root)
+        return;
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:[NSString stringWithFormat:@"Delete %@?", title]
+                         message:@"The installed game, its update, and DLC are removed from this device. Saves and trophies are kept."
+                  preferredStyle:UIAlertControllerStyleAlert];
+    __weak Vita3KLibraryView *weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive
+        handler:^(__unused UIAlertAction *action) {
+            [weakSelf showBusyOverlay:@"Deleting game…" blockInteraction:YES];
+            Vita3KIOSFrontendAction request;
+            request.kind = Vita3KIOSFrontendActionKind::DeleteGame;
+            request.title_id = identifier.UTF8String;
+            queue_action(std::move(request));
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [root presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)promptRename:(NSString *)identifier original:(NSString *)original {
     UIViewController *root = active_window().rootViewController;
     if (!root)
@@ -1846,16 +1912,24 @@ static const NSInteger kCarouselRepeat = 400;
                     }];
                 [children addObject:globalSettings];
             }
-            if ([NSFileManager.defaultManager fileExistsAtPath:cover_original_path(identifier)]) {
-                UIAction *adjustCrop = [UIAction actionWithTitle:@"Adjust cover crop"
-                    image:[UIImage systemImageNamed:@"crop"]
-                    identifier:nil
-                    handler:^(__unused UIAction *action) {
-                        UIImage *original = [UIImage imageWithContentsOfFile:cover_original_path(identifier)];
-                        present_cover_crop(identifier, original);
-                    }];
-                [children addObject:adjustCrop];
-            }
+            // Crop works on the picked photo when one exists, otherwise on the
+            // game's default art — so the built-in cover can be reframed too.
+            NSString *defaultArtPath = [NSString stringWithUTF8String:game.icon_path.c_str()] ?: @"";
+            UIAction *adjustCrop = [UIAction actionWithTitle:@"Adjust cover crop"
+                image:[UIImage systemImageNamed:@"crop"]
+                identifier:nil
+                handler:^(__unused UIAction *action) {
+                    UIImage *source = [UIImage imageWithContentsOfFile:cover_original_path(identifier)]
+                        ?: [UIImage imageWithContentsOfFile:defaultArtPath];
+                    present_cover_crop(identifier, source);
+                }];
+            [children addObject:adjustCrop];
+            UIAction *deleteGame = [UIAction actionWithTitle:@"Delete game"
+                image:[UIImage systemImageNamed:@"trash"]
+                identifier:nil
+                handler:^(__unused UIAction *action) { [weakSelf confirmDeleteGame:identifier title:original]; }];
+            deleteGame.attributes = UIMenuElementAttributesDestructive;
+            [children addObject:deleteGame];
             if (has_custom_cover(identifier)) {
                 UIAction *resetCover = [UIAction actionWithTitle:@"Reset cover art"
                     image:[UIImage systemImageNamed:@"photo.badge.arrow.down"]
@@ -2041,6 +2115,9 @@ static const NSInteger kCarouselRepeat = 400;
     Vita3KSettingsView *settings = [[Vita3KSettingsView alloc] initWithFrame:self.bounds values:_settings];
     settings.alpha = 0;
     [self addSubview:settings];
+    // Belt and braces: a lingering game drawable must never be visible under
+    // the settings page.
+    set_metal_drawables_hidden(self.window, YES);
     [UIView animateWithDuration:0.22 animations:^{ settings.alpha = 1; }];
 }
 
@@ -2567,7 +2644,10 @@ void present_save_picker(NSString *titleId) {
 static void set_metal_drawables_hidden(UIWindow *window, BOOL hidden) {
     if (!window)
         return;
-    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:window.rootViewController.view ?: window];
+    // Walk the entire window: SDL's drawable normally lives under the root
+    // view controller, but a drawable parented to the window itself must be
+    // caught too or it keeps showing the last game frame behind settings.
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:window];
     while (pending.count) {
         UIView *view = pending.lastObject;
         [pending removeLastObject];
@@ -2696,6 +2776,48 @@ std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action() {
     cell.imageView.tintColor = [row[@"earned"] boolValue] ? UIColor.systemYellowColor : UIColor.tertiaryLabelColor;
     cell.accessoryView = nil;
     return cell;
+}
+
+// Tap a trophy to view its art full screen (tap anywhere to dismiss).
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    NSDictionary *row = self.rows[indexPath.row];
+    NSString *path = row[@"icon"];
+    UIImage *image = path.length ? [UIImage imageWithContentsOfFile:path] : nil;
+    if (!image)
+        return;
+    UIViewController *viewer = [[UIViewController alloc] init];
+    viewer.view.backgroundColor = UIColor.blackColor;
+    // OverFullScreen keeps this controller's view in place, so its
+    // viewDidDisappear (which returns to the in-game menu) does not fire.
+    viewer.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    viewer.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+    UIImageView *imageView = [[UIImageView alloc] initWithImage:image];
+    imageView.contentMode = UIViewContentModeScaleAspectFit;
+    imageView.frame = viewer.view.bounds;
+    imageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [viewer.view addSubview:imageView];
+    UILabel *caption = [[UILabel alloc] init];
+    caption.text = row[@"name"];
+    caption.textColor = UIColor.whiteColor;
+    caption.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    caption.textAlignment = NSTextAlignmentCenter;
+    caption.frame = CGRectMake(20, CGRectGetHeight(viewer.view.bounds) - 90,
+        CGRectGetWidth(viewer.view.bounds) - 40, 24);
+    caption.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleWidth;
+    [viewer.view addSubview:caption];
+    UITapGestureRecognizer *dismiss = [[UITapGestureRecognizer alloc] initWithTarget:self
+                                                                              action:@selector(dismissTrophyArt:)];
+    [viewer.view addGestureRecognizer:dismiss];
+    [self presentViewController:viewer animated:YES completion:nil];
+}
+
+- (void)dismissTrophyArt:(UITapGestureRecognizer *)recognizer {
+    (void)recognizer;
+    // Dismisses the art viewer this controller presented (not the trophy
+    // sheet itself; that requires the Done button).
+    if (self.presentedViewController)
+        [self.presentedViewController dismissViewControllerAnimated:YES completion:nil];
 }
 @end
 
@@ -2887,7 +3009,31 @@ void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime
         const CGFloat width = MAX(CGRectGetWidth(g_perf_label.bounds) + 20, show_graph ? 170.0 : 0.0);
         const CGFloat height = show_graph ? 58.0 : 24.0;
         const UIEdgeInsets safe = window.safeAreaInsets;
-        g_perf_hud.frame = CGRectMake(safe.left + 10, safe.top + 6, width, height);
+        const CGFloat windowWidth = CGRectGetWidth(window.bounds);
+        const CGFloat windowHeight = CGRectGetHeight(window.bounds);
+        const BOOL portrait = windowHeight > windowWidth;
+        // User-placed position from the layout editor (normalized center, per
+        // orientation); defaults: below the letterboxed game image in
+        // portrait, top-left in landscape.
+        NSString *keyX = portrait ? @"tsubomi.perfPos.portrait.x" : @"tsubomi.perfPos.landscape.x";
+        NSString *keyY = portrait ? @"tsubomi.perfPos.portrait.y" : @"tsubomi.perfPos.landscape.y";
+        CGFloat centerX;
+        CGFloat centerY;
+        if ([defaults objectForKey:keyX] && [defaults objectForKey:keyY]) {
+            centerX = [defaults doubleForKey:keyX] * windowWidth;
+            centerY = [defaults doubleForKey:keyY] * windowHeight;
+        } else if (portrait) {
+            const CGFloat gameHeight = windowWidth * 544.0 / 960.0;
+            centerX = windowWidth / 2;
+            centerY = (windowHeight + gameHeight) / 2 + height / 2 + 10;
+        } else {
+            centerX = safe.left + 10 + width / 2;
+            centerY = safe.top + 6 + height / 2;
+        }
+        centerX = std::clamp(centerX, safe.left + width / 2, windowWidth - safe.right - width / 2);
+        centerY = std::clamp(centerY, safe.top + height / 2, windowHeight - safe.bottom - height / 2);
+        g_perf_hud.bounds = CGRectMake(0, 0, width, height);
+        g_perf_hud.center = CGPointMake(centerX, centerY);
         g_perf_label.frame = CGRectMake(10, 3, width - 20, 18);
         g_perf_graph.hidden = !show_graph;
         g_perf_graph.frame = CGRectMake(10, 27, width - 20, 25);

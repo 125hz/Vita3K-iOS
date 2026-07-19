@@ -356,6 +356,7 @@ static void hapticTick() {
 @property(nonatomic, strong) NSMutableArray<UIView *> *controllerElements;
 @property(nonatomic, strong) UIButton *menuButton;
 @property(nonatomic, strong) UIButton *editDoneButton;
+@property(nonatomic, strong) UIButton *perfProxyButton;
 @property(nonatomic, strong) UIView *verticalGuide;
 @property(nonatomic, strong) UIView *horizontalGuide;
 @property(nonatomic) BOOL layoutEditing;
@@ -434,6 +435,22 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     self.editDoneButton.hidden = YES;
     [self.editDoneButton addTarget:self action:@selector(finishEditing) forControlEvents:UIControlEventTouchUpInside];
     [self addSubview:self.editDoneButton];
+
+    // Draggable stand-in for the performance overlay, visible only while
+    // editing; its normalized center is what the real HUD reads.
+    self.perfProxyButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    [self.perfProxyButton setTitle:@"60 FPS · 16.7 ms" forState:UIControlStateNormal];
+    self.perfProxyButton.titleLabel.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
+    [self.perfProxyButton setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    self.perfProxyButton.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
+    self.perfProxyButton.layer.cornerRadius = 12;
+    self.perfProxyButton.layer.borderColor = UIColor.systemCyanColor.CGColor;
+    self.perfProxyButton.layer.borderWidth = 1.25;
+    self.perfProxyButton.hidden = YES;
+    self.perfProxyButton.userInteractionEnabled = YES;
+    [self.perfProxyButton addGestureRecognizer:[[UIPanGestureRecognizer alloc]
+        initWithTarget:self action:@selector(perfProxyPanned:)]];
+    [self addSubview:self.perfProxyButton];
 
     for (UIView *elementView in self.controllerElements) {
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(elementPanned:)];
@@ -614,6 +631,9 @@ static constexpr NSInteger triggerTagOffset = 1000;
     _layoutEditing = editing;
     self.editDoneButton.hidden = !editing;
     self.menuButton.hidden = editing;
+    self.perfProxyButton.hidden = !editing;
+    if (editing)
+        [self positionPerfProxy];
     for (UIView *elementView in self.controllerElements) {
         elementView.hidden = editing ? ![elementConfig(elementView.accessibilityIdentifier)[@"visible"] boolValue] : elementView.hidden;
         elementView.layer.borderColor = editing ? UIColor.systemCyanColor.CGColor : [UIColor colorWithWhite:1 alpha:0.62].CGColor;
@@ -624,6 +644,50 @@ static constexpr NSInteger triggerTagOffset = 1000;
     }
     if (!editing)
         [self applyConfiguration];
+}
+
+// Mirrors the default-position rule in NativeFrontend's
+// vita3k_ios_update_perf_overlay: saved normalized center per orientation,
+// else below the letterboxed game image in portrait / top-left in landscape.
+- (void)positionPerfProxy {
+    const CGFloat width = CGRectGetWidth(self.bounds);
+    const CGFloat height = CGRectGetHeight(self.bounds);
+    const BOOL portrait = height > width;
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSString *keyX = portrait ? @"tsubomi.perfPos.portrait.x" : @"tsubomi.perfPos.landscape.x";
+    NSString *keyY = portrait ? @"tsubomi.perfPos.portrait.y" : @"tsubomi.perfPos.landscape.y";
+    self.perfProxyButton.bounds = CGRectMake(0, 0, 150, 24);
+    const UIEdgeInsets safe = self.safeAreaInsets;
+    if ([defaults objectForKey:keyX] && [defaults objectForKey:keyY]) {
+        self.perfProxyButton.center = CGPointMake([defaults doubleForKey:keyX] * width,
+            [defaults doubleForKey:keyY] * height);
+    } else if (portrait) {
+        const CGFloat gameHeight = width * 544.0 / 960.0;
+        self.perfProxyButton.center = CGPointMake(width / 2, (height + gameHeight) / 2 + 22);
+    } else {
+        self.perfProxyButton.center = CGPointMake(safe.left + 85, safe.top + 18);
+    }
+}
+
+- (void)perfProxyPanned:(UIPanGestureRecognizer *)recognizer {
+    if (!self.layoutEditing)
+        return;
+    const CGPoint translation = [recognizer translationInView:self];
+    self.perfProxyButton.center = CGPointMake(self.perfProxyButton.center.x + translation.x,
+        self.perfProxyButton.center.y + translation.y);
+    [recognizer setTranslation:CGPointZero inView:self];
+    if (recognizer.state == UIGestureRecognizerStateEnded) {
+        const CGFloat width = CGRectGetWidth(self.bounds);
+        const CGFloat height = CGRectGetHeight(self.bounds);
+        const BOOL portrait = height > width;
+        const CGFloat x = std::clamp(static_cast<CGFloat>(self.perfProxyButton.center.x / width), 0.05, 0.95);
+        const CGFloat y = std::clamp(static_cast<CGFloat>(self.perfProxyButton.center.y / height), 0.03, 0.97);
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        [defaults setDouble:x forKey:portrait ? @"tsubomi.perfPos.portrait.x" : @"tsubomi.perfPos.landscape.x"];
+        [defaults setDouble:y forKey:portrait ? @"tsubomi.perfPos.portrait.y" : @"tsubomi.perfPos.landscape.y"];
+        self.perfProxyButton.center = CGPointMake(x * width, y * height);
+        hapticTick();
+    }
 }
 
 - (void)elementPanned:(UIPanGestureRecognizer *)recognizer {

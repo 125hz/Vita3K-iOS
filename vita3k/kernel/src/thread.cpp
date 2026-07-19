@@ -135,6 +135,7 @@ int ThreadState::start(SceSize arglen, const Ptr<void> argp, bool run_entry_call
         return SCE_KERNEL_ERROR_RUNNING;
 
     run_start_callback = run_entry_callback;
+    ++start_count;
     // Materialize the code cache under the thread mutex so stop()/exit_delete()
     // never race the swap; on iOS this also surfaces JIT-pool exhaustion here,
     // where we can fail the start instead of aborting the process.
@@ -241,9 +242,12 @@ void ThreadState::run_loop() {
 #if defined(VITA3K_PLATFORM_IOS)
                 // Dormant threads keep their ThreadState until deleted; give
                 // the pooled 16 MiB JIT region back so exited-but-not-deleted
-                // threads cannot exhaust the iOS JIT region pool. start()
-                // re-acquires a region if the thread is restarted.
-                if (!delete_requested)
+                // threads cannot exhaust the iOS JIT region pool. Threads that
+                // have restarted are cyclic (the GXM display queue parks per
+                // frame) — releasing theirs meant a fresh Dynarmic cache and a
+                // full retranslation every flip, which crawled and cooked the
+                // device. Only one-shot threads give their region back.
+                if (!delete_requested && start_count <= 1)
                     release_code_cache(*cpu);
 #endif
             }

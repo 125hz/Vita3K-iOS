@@ -564,6 +564,7 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
         .ngs_enable = current.ngs_enable,
         .async_pipeline_compilation = current.async_pipeline_compilation,
         .anisotropic_filtering = current.anisotropic_filtering,
+        .high_accuracy = current.high_accuracy,
         .firmware_version = firmware_version_display(emuenv),
         .firmware_ready = missing.empty(),
         .missing_firmware = std::move(missing_text),
@@ -1019,6 +1020,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
         current.ngs_enable = settings.ngs_enable;
         current.async_pipeline_compilation = settings.async_pipeline_compilation;
         current.anisotropic_filtering = settings.anisotropic_filtering;
+        current.high_accuracy = settings.high_accuracy;
         current.audio_backend = "SDL";
     };
     apply(desired.current_config);
@@ -1029,6 +1031,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     desired.ngs_enable = settings.ngs_enable;
     desired.async_pipeline_compilation = settings.async_pipeline_compilation;
     desired.anisotropic_filtering = settings.anisotropic_filtering;
+    desired.high_accuracy = settings.high_accuracy;
     desired.audio_backend = "SDL";
 
     const auto result = app::commit_settings(emuenv, desired);
@@ -1054,6 +1057,7 @@ void apply_game_session_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &s
     current.ngs_enable = settings.ngs_enable;
     current.async_pipeline_compilation = settings.async_pipeline_compilation;
     current.anisotropic_filtering = settings.anisotropic_filtering;
+    current.high_accuracy = settings.high_accuracy;
     emuenv.display.fps_limit.store(std::clamp(settings.fps_limit, 15, 60), std::memory_order_relaxed);
     LOG_INFO("Per-game settings override active: res x{} vsync={} fps={} cpu_opt={} ngs={} async={} aniso={}",
         settings.resolution_multiplier, settings.v_sync, settings.fps_limit, settings.cpu_opt,
@@ -1202,6 +1206,32 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
             case Vita3KIOSFrontendActionKind::ShowTrophies:
                 show_trophies(emuenv, action->trophy_id, action->title_id, action->app_path);
                 break;
+            case Vita3KIOSFrontendActionKind::DeleteGame: {
+                if (!safe_identifier(action->title_id, 16)) {
+                    vita3k_ios_report_import_result("Delete rejected an invalid title ID", false);
+                    break;
+                }
+                LOG_INFO("Deleting installed title {} (app/patch/addcont)", action->title_id);
+                boost::system::error_code remove_error;
+                bool removed_any = false;
+                for (const char *content_root : { "ux0/app", "ux0/patch", "ux0/addcont" }) {
+                    const fs::path target = emuenv.vita_fs_path / content_root / action->title_id;
+                    boost::system::error_code exists_error;
+                    if (fs::exists(target, exists_error) && !exists_error) {
+                        fs::remove_all(target, remove_error);
+                        removed_any = removed_any || !remove_error;
+                    }
+                }
+                if (!app::init_apps_list(emuenv))
+                    LOG_ERROR("Failed to rescan apps list after delete.");
+                games = native_games(emuenv);
+                vita3k_ios_update_library(games, native_settings(emuenv));
+                vita3k_ios_report_import_result(
+                    removed_any ? "Game deleted (saves and trophies kept)"
+                                : "Nothing to delete for " + action->title_id,
+                    removed_any);
+                break;
+            }
             case Vita3KIOSFrontendActionKind::Quit:
                 vita3k_ios_hide_library();
                 return std::nullopt;

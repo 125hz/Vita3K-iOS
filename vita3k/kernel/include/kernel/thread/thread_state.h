@@ -134,6 +134,9 @@ private:
     bool run_start_callback = false;
     // when calling sceKernelExitThread or sceKernelExitDeleteThread
     bool run_end_callback = false;
+    // Times start() has run. Threads that restart (GXM display queue runs its
+    // callback per frame) must keep their JIT cache across dormant parks.
+    uint32_t start_count = 0;
 
     MemState &mem;
 };

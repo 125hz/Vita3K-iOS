@@ -48,8 +48,6 @@ static constexpr size_t TextureCacheSize = 1024;
 typedef std::array<uint32_t, 4> TextureGxmDataRepr;
 struct TextureCacheInfo {
     uint64_t hash = 0;
-    // scene timestamp when the hash was last computed (0 = never)
-    uint64_t last_hashed_scene = 0;
     SceGxmTexture texture;
     int index = 0;
     uint32_t texture_size = 0;

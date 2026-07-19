@@ -704,7 +704,6 @@ void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemS
             else
                 // the xor 1 is to make sure it won't be the same as hash_texture_nostride
                 info->hash = hash_texture_data(gxm_texture, info->texture_size, mem) ^ 1;
-            info->last_hashed_scene = current_scene_timestamp;
         }
     } else {
         // Texture is cached.
@@ -712,22 +711,16 @@ void TextureCache::cache_and_bind_texture(const SceGxmTexture &gxm_texture, MemS
         info = gxm_it->second;
         configure = false;
         if (info->use_hash) {
-            // Guest code cannot legally modify a texture mid-scene (the real
-            // GPU reads it deferred), so one hash per scene is enough. This
-            // matters most on iOS where hashing replaces fault-based dirty
-            // tracking and otherwise runs on every single bind.
-            if (current_scene_timestamp != 0 && info->last_hashed_scene == current_scene_timestamp) {
-                upload = false;
-            } else {
-                const uint64_t previous_hash = info->hash;
-                if (import_textures || export_textures)
-                    info->hash = hash_texture_nostride(gxm_texture, mem);
-                else
-                    info->hash = hash_texture_data(gxm_texture, info->texture_size, mem) ^ 1;
+            // Hash on every bind, exactly like desktop. A once-per-scene
+            // dedupe was tried here for iOS and could serve stale texture
+            // content when guest CPU writes race the renderer.
+            const uint64_t previous_hash = info->hash;
+            if (import_textures || export_textures)
+                info->hash = hash_texture_nostride(gxm_texture, mem);
+            else
+                info->hash = hash_texture_data(gxm_texture, info->texture_size, mem) ^ 1;
 
-                upload = previous_hash != info->hash;
-                info->last_hashed_scene = current_scene_timestamp;
-            }
+            upload = previous_hash != info->hash;
         } else {
             range_protect_begin = align(gxm_texture.data_addr << 2, mem.host_page_size);
             range_protect_end = align_down((gxm_texture.data_addr << 2) + info->texture_size, mem.host_page_size);

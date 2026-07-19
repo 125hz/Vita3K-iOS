@@ -21,6 +21,7 @@
 #include <mem/ptr.h>
 #include <util/types.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -88,6 +89,21 @@ struct DisplayState {
     // this limit. A value of 60 (or greater) is effectively uncapped.
     std::atomic<int> fps_limit{ 60 };
     std::chrono::steady_clock::time_point last_present_time{};
+
+    // Single gate for every present site (both the prediction fast path and
+    // the SetFrameBuf path must respect the cap). Caller holds
+    // display_info_mutex; on true the presentation timestamp is consumed.
+    bool presentation_due_now() {
+        const int limit = std::clamp(fps_limit.load(std::memory_order_relaxed), 15, 60);
+        const auto now = std::chrono::steady_clock::now();
+        if (limit >= 60
+            || last_present_time.time_since_epoch().count() == 0
+            || now - last_present_time >= std::chrono::microseconds(1000000 / limit)) {
+            last_present_time = now;
+            return true;
+        }
+        return false;
+    }
 
     // should contain the list of sync objects / swapchain images (in the order they appear in the cycle)
     std::vector<PredictedDisplayFrame> predicted_frames;

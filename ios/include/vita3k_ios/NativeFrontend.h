@@ -53,6 +53,10 @@ struct Vita3KIOSSettings {
     bool ngs_enable = true;
     bool async_pipeline_compilation = true;
     int anisotropic_filtering = 1;
+    // Upstream's accurate render paths (no texture-viewport shortcut, shader
+    // interlock where available). Slower, but bypasses the fast paths that
+    // misrender some titles under MoltenVK.
+    bool high_accuracy = false;
     // Display-only: installed firmware version shown on the library header.
     std::string firmware_version;
     // Games stay unavailable until all three official firmware packages have
@@ -73,6 +77,8 @@ enum class Vita3KIOSFrontendActionKind {
     ImportSave,
     ExportSave,
     ShowTrophies,
+    // title_id carries the title to remove from ux0 (app/patch/addcont).
+    DeleteGame,
     Quit,
 };
 
