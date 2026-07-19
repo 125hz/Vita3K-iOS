@@ -262,8 +262,7 @@ Vita3KIOSSettings game_settings_or(NSString *titleId, const Vita3KIOSSettings &f
         settings.resolution_multiplier = [stored[@"resolution"] floatValue];
     if (stored[@"vsync"])
         settings.v_sync = [stored[@"vsync"] boolValue];
-    if (stored[@"fpsLimit"])
-        settings.fps_limit = [stored[@"fpsLimit"] intValue];
+    settings.fps_limit = 60;
     if (stored[@"cpuOpt"])
         settings.cpu_opt = [stored[@"cpuOpt"] boolValue];
     if (stored[@"ngs"])
@@ -281,7 +280,6 @@ void store_game_settings(NSString *titleId, const Vita3KIOSSettings &settings) {
     [NSUserDefaults.standardUserDefaults setObject:@{
         @"resolution": @(settings.resolution_multiplier),
         @"vsync": @(settings.v_sync),
-        @"fpsLimit": @(settings.fps_limit),
         @"cpuOpt": @(settings.cpu_opt),
         @"ngs": @(settings.ngs_enable),
         @"asyncPipelines": @(settings.async_pipeline_compilation),
@@ -644,8 +642,6 @@ CGFloat library_card_label_height() {
 @property(nonatomic, strong) UISlider *resolutionSlider;
 @property(nonatomic, strong) UILabel *resolutionValue;
 @property(nonatomic, strong) UISwitch *vsyncSwitch;
-@property(nonatomic, strong) UISlider *fpsSlider;
-@property(nonatomic, strong) UILabel *fpsValue;
 @property(nonatomic, strong) UISwitch *cpuSwitch;
 @property(nonatomic, strong) UISwitch *ngsSwitch;
 @property(nonatomic, strong) UISwitch *asyncSwitch;
@@ -769,22 +765,8 @@ CGFloat library_card_label_height() {
     resolutionAccessory.spacing = 10;
     resolutionAccessory.accessibilityIdentifier = @"wideAccessory";
 
-    self.fpsSlider = [[UISlider alloc] init];
-    self.fpsSlider.minimumValue = 15;
-    self.fpsSlider.maximumValue = 60;
-    self.fpsSlider.value = values.fps_limit;
-    [self.fpsSlider addTarget:self action:@selector(fpsChanged:) forControlEvents:UIControlEventValueChanged];
-    self.fpsValue = [[UILabel alloc] init];
-    self.fpsValue.textColor = UIColor.systemCyanColor;
-    self.fpsValue.font = [UIFont monospacedDigitSystemFontOfSize:14 weight:UIFontWeightSemibold];
-    UIStackView *fpsAccessory = [[UIStackView alloc] initWithArrangedSubviews:@[self.fpsSlider, self.fpsValue]];
-    fpsAccessory.axis = UILayoutConstraintAxisHorizontal;
-    fpsAccessory.spacing = 10;
-    fpsAccessory.accessibilityIdentifier = @"wideAccessory";
-    [self fpsChanged:self.fpsSlider];
     [self addSection:@"Video" rows:@[
         [self switchRow:@"V-Sync" hint:@"Synchronizes presentation to the display." value:values.v_sync output:&_vsyncSwitch],
-        [self row:@"FPS limiter" hint:@"Caps presentation without changing the Vita's 60 Hz timing." accessory:fpsAccessory],
     ]];
 
     self.anisotropicControl = [[UISegmentedControl alloc] initWithItems:@[@"Off", @"2x", @"4x", @"8x", @"16x"]];
@@ -1030,16 +1012,12 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.12.0",
-        @"• Much faster and cooler: a per-frame JIT cache rebuild on the display thread was recompiling code every flip (the VA-11 slowdown), and trace logging is no longer forced on.\n"
-        @"• FPS limiter actually limits now — the prediction fast path was bypassing it.\n"
-        @"• Rendering is back to exact desktop parity (removed the iOS-only texture shortcut experiments). New Graphics > High accuracy switch: try it if a game's graphics look broken.\n"
-        @"• Landscape carousel: no more vertical drag, and swiping by touch no longer flickers.\n"
-        @"• Adjust cover crop now also works on a game's built-in art.\n"
-        @"• Performance overlay sits below the game screen in portrait, and you can drag it anywhere in Controller > Edit Layout.\n"
-        @"• Long-press a game > Delete game (saves and trophies are kept).\n"
-        @"• Tap a trophy to see its art full screen.\n"
-        @"• The last game frame can no longer appear behind the settings page.");
+    present_alert(@"What's new in 0.13.0",
+        @"• Per-game settings now survive title-profile setup, so High accuracy and every other override actually reach the renderer.\n"
+        @"• New installs get a required, firmware-aware setup walkthrough for PREINSTALL.PUP, FONTPKG.PUP, and PSVUPDAT.PUP. Existing complete installs skip it automatically.\n"
+        @"• The FPS limiter was removed; Vita presentation stays at the native 60 Hz timing.\n"
+        @"• The portrait performance HUD now starts directly below the top-anchored game image and stays beneath open menus.\n"
+        @"• Completed watchdog diagnostics poll less often and memory-headroom logging is quieter.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -1129,11 +1107,6 @@ CGFloat library_card_label_height() {
     [self updateResolutionLabel];
 }
 
-- (void)fpsChanged:(UISlider *)slider {
-    slider.value = roundf(slider.value / 5.0f) * 5.0f;
-    self.fpsValue.text = [NSString stringWithFormat:@"%.0f FPS", slider.value];
-}
-
 - (void)updateResolutionLabel {
     // %.3g keeps quarter steps exact ("0.75x", "1.25x") where %.2g rounded.
     self.resolutionValue.text = [NSString stringWithFormat:@"%.3gx", self.resolutionSlider.value];
@@ -1155,7 +1128,7 @@ CGFloat library_card_label_height() {
     action.kind = Vita3KIOSFrontendActionKind::ApplySettings;
     action.settings.resolution_multiplier = self.resolutionSlider.value;
     action.settings.v_sync = self.vsyncSwitch.on;
-    action.settings.fps_limit = (int)self.fpsSlider.value;
+    action.settings.fps_limit = 60;
     action.settings.cpu_opt = self.cpuSwitch.on;
     action.settings.ngs_enable = self.ngsSwitch.on;
     action.settings.async_pipeline_compilation = self.asyncSwitch.on;
@@ -1166,7 +1139,6 @@ CGFloat library_card_label_height() {
         [self close];
         return;
     }
-    [NSUserDefaults.standardUserDefaults setInteger:action.settings.fps_limit forKey:@"tsubomi.fpsLimit"];
     queue_action(std::move(action));
     [self close];
 }
@@ -1277,6 +1249,225 @@ CGFloat library_card_label_height() {
 @end
 
 
+@interface Vita3KOnboardingView : UIView {
+    Vita3KIOSSettings _firmwareSettings;
+    Vita3KIOSSettings _importSnapshot;
+}
+@property(nonatomic) NSInteger pageIndex;
+@property(nonatomic, strong) UIImageView *symbolView;
+@property(nonatomic, strong) UILabel *titleLabel;
+@property(nonatomic, strong) UILabel *bodyLabel;
+@property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UIButton *primaryButton;
+@property(nonatomic, strong) UIButton *nextButton;
+- (instancetype)initWithFrame:(CGRect)frame settings:(const Vita3KIOSSettings &)settings;
+- (void)updateFirmwareSettings:(const Vita3KIOSSettings &)settings;
+- (void)handleImportResult:(NSString *)message success:(BOOL)success;
+@end
+
+@implementation Vita3KOnboardingView
+
+- (instancetype)initWithFrame:(CGRect)frame settings:(const Vita3KIOSSettings &)settings {
+    self = [super initWithFrame:frame];
+    if (!self)
+        return nil;
+    self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.backgroundColor = UIColor.systemBackgroundColor;
+    _firmwareSettings = settings;
+    self.pageIndex = 0;
+
+    CAGradientLayer *gradient = [CAGradientLayer layer];
+    gradient.colors = @[(id)[UIColor colorWithRed:0.15 green:0.12 blue:0.35 alpha:1].CGColor,
+        (id)[UIColor colorWithRed:0.04 green:0.18 blue:0.35 alpha:1].CGColor];
+    gradient.frame = self.bounds;
+    gradient.name = @"onboardingGradient";
+    [self.layer addSublayer:gradient];
+
+    UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithEffect:glass_effect(YES)];
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    card.layer.cornerRadius = 28;
+    card.clipsToBounds = YES;
+    [self addSubview:card];
+
+    self.symbolView = [[UIImageView alloc] init];
+    self.symbolView.contentMode = UIViewContentModeScaleAspectFit;
+    self.symbolView.tintColor = UIColor.systemCyanColor;
+    [self.symbolView.heightAnchor constraintEqualToConstant:82].active = YES;
+    self.titleLabel = [[UILabel alloc] init];
+    self.titleLabel.font = [UIFont systemFontOfSize:34 weight:UIFontWeightBold];
+    self.titleLabel.textColor = UIColor.labelColor;
+    self.titleLabel.textAlignment = NSTextAlignmentCenter;
+    self.titleLabel.numberOfLines = 0;
+    self.bodyLabel = [[UILabel alloc] init];
+    self.bodyLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightRegular];
+    self.bodyLabel.textColor = UIColor.secondaryLabelColor;
+    self.bodyLabel.textAlignment = NSTextAlignmentCenter;
+    self.bodyLabel.numberOfLines = 0;
+    self.statusLabel = [[UILabel alloc] init];
+    self.statusLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+    self.statusLabel.textColor = UIColor.systemOrangeColor;
+    self.statusLabel.textAlignment = NSTextAlignmentCenter;
+    self.statusLabel.numberOfLines = 0;
+    self.primaryButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.primaryButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    self.primaryButton.layer.cornerRadius = 13;
+    self.primaryButton.backgroundColor = UIColor.systemCyanColor;
+    [self.primaryButton setTitleColor:UIColor.blackColor forState:UIControlStateNormal];
+    [self.primaryButton.heightAnchor constraintEqualToConstant:50].active = YES;
+    [self.primaryButton addTarget:self action:@selector(primaryPressed) forControlEvents:UIControlEventTouchUpInside];
+    self.nextButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.nextButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [self.nextButton setTitle:@"Next" forState:UIControlStateNormal];
+    [self.nextButton.heightAnchor constraintEqualToConstant:46].active = YES;
+    [self.nextButton addTarget:self action:@selector(nextPressed) forControlEvents:UIControlEventTouchUpInside];
+
+    UIStackView *content = [[UIStackView alloc] initWithArrangedSubviews:@[
+        self.symbolView, self.titleLabel, self.bodyLabel, self.statusLabel,
+        self.primaryButton, self.nextButton]];
+    content.translatesAutoresizingMaskIntoConstraints = NO;
+    content.axis = UILayoutConstraintAxisVertical;
+    content.alignment = UIStackViewAlignmentFill;
+    content.spacing = 18;
+    [card.contentView addSubview:content];
+    NSLayoutConstraint *cardWidth = [card.widthAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.widthAnchor multiplier:0.88];
+    cardWidth.priority = UILayoutPriorityDefaultHigh;
+    [NSLayoutConstraint activateConstraints:@[
+        [card.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor],
+        [card.centerYAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerYAnchor],
+        [card.widthAnchor constraintLessThanOrEqualToConstant:560],
+        cardWidth,
+        [content.leadingAnchor constraintEqualToAnchor:card.contentView.leadingAnchor constant:28],
+        [content.trailingAnchor constraintEqualToAnchor:card.contentView.trailingAnchor constant:-28],
+        [content.topAnchor constraintEqualToAnchor:card.contentView.topAnchor constant:30],
+        [content.bottomAnchor constraintEqualToAnchor:card.contentView.bottomAnchor constant:-26],
+    ]];
+    [self renderPageAnimated:NO];
+    return self;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CALayer *gradient = self.layer.sublayers.firstObject;
+    if ([gradient.name isEqualToString:@"onboardingGradient"])
+        gradient.frame = self.bounds;
+}
+
+- (BOOL)requiredPackageReady {
+    if (self.pageIndex == 2)
+        return _firmwareSettings.preinstalled_package_ready;
+    if (self.pageIndex == 3)
+        return _firmwareSettings.font_package_ready;
+    if (self.pageIndex == 4)
+        return _firmwareSettings.main_firmware_ready;
+    return YES;
+}
+
+- (void)renderPageAnimated:(BOOL)animated {
+    NSArray<NSString *> *symbols = @[@"sparkles", @"checkmark.shield", @"shippingbox",
+        @"textformat", @"gearshape.2", @"flask"];
+    NSArray<NSString *> *titles = @[@"Welcome to Tsubomi", @"Bring Your Own Games",
+        @"Install PREINSTALL.PUP", @"Install FONTPKG.PUP", @"Install PSVUPDAT.PUP",
+        @"Experimental Software"];
+    NSArray<NSString *> *bodies = @[
+        @"Tsubomi brings Vita3K to iPhone and iPad with a native library, touch controls, and the upstream emulator core.",
+        @"Piracy is not supported. You must supply your own legally obtained game dumps and license files; Tsubomi does not include games, firmware, keys, or licenses.",
+        @"Choose the official PREINSTALL.PUP from your own Vita firmware files. This installs the preinstalled system content required by games.",
+        @"Choose the official FONTPKG.PUP. This installs the Vita system fonts used by games and the emulator.",
+        @"Choose the official PSVUPDAT.PUP. This installs the main Vita system firmware.",
+        @"Not every game works yet. Expect graphics glitches, crashes, missing features, and performance issues—and please keep useful logs when something breaks."
+    ];
+    void (^changes)(void) = ^{
+        self.symbolView.image = [UIImage systemImageNamed:symbols[self.pageIndex]];
+        self.titleLabel.text = titles[self.pageIndex];
+        self.bodyLabel.text = bodies[self.pageIndex];
+        self.statusLabel.text = @"";
+        const BOOL firmwarePage = self.pageIndex >= 2 && self.pageIndex <= 4;
+        self.primaryButton.hidden = !firmwarePage && self.pageIndex != 5;
+        self.nextButton.hidden = self.pageIndex == 5;
+        if (firmwarePage) {
+            [self.primaryButton setTitle:@"Choose PUP" forState:UIControlStateNormal];
+            self.nextButton.enabled = [self requiredPackageReady];
+            self.nextButton.alpha = self.nextButton.enabled ? 1 : 0.35;
+            if (self.nextButton.enabled) {
+                self.statusLabel.text = @"Installed ✓";
+                self.statusLabel.textColor = UIColor.systemGreenColor;
+            }
+        } else if (self.pageIndex == 5) {
+            [self.primaryButton setTitle:@"Get Started" forState:UIControlStateNormal];
+            self.primaryButton.enabled = _firmwareSettings.firmware_ready;
+        } else {
+            self.nextButton.enabled = YES;
+            self.nextButton.alpha = 1;
+        }
+    };
+    if (animated) {
+        [UIView transitionWithView:self duration:0.36 options:UIViewAnimationOptionTransitionCrossDissolve
+            animations:changes completion:nil];
+    } else {
+        changes();
+    }
+}
+
+- (void)primaryPressed {
+    if (self.pageIndex >= 2 && self.pageIndex <= 4) {
+        _importSnapshot = _firmwareSettings;
+        present_import_picker(YES);
+        return;
+    }
+    if (self.pageIndex == 5 && _firmwareSettings.firmware_ready) {
+        [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"tsubomi.onboarded"];
+        [UIView animateWithDuration:0.35 animations:^{ self.alpha = 0; }
+            completion:^(__unused BOOL finished) { [self removeFromSuperview]; }];
+    }
+}
+
+- (void)nextPressed {
+    if ((self.pageIndex >= 2 && self.pageIndex <= 4) && ![self requiredPackageReady])
+        return;
+    if (self.pageIndex < 5) {
+        ++self.pageIndex;
+        [self renderPageAnimated:YES];
+    }
+}
+
+- (void)updateFirmwareSettings:(const Vita3KIOSSettings &)settings {
+    _firmwareSettings = settings;
+    if (self.pageIndex >= 2 && self.pageIndex <= 4)
+        [self renderPageAnimated:NO];
+}
+
+- (void)handleImportResult:(NSString *)message success:(BOOL)success {
+    if (self.pageIndex < 2 || self.pageIndex > 4)
+        return;
+    if (!success) {
+        self.statusLabel.text = message;
+        self.statusLabel.textColor = UIColor.systemRedColor;
+        return;
+    }
+    if ([self requiredPackageReady]) {
+        self.statusLabel.text = @"Installed successfully. Tap Next to continue.";
+        self.statusLabel.textColor = UIColor.systemGreenColor;
+        self.nextButton.enabled = YES;
+        self.nextButton.alpha = 1;
+        return;
+    }
+    NSString *installed = nil;
+    if (!_importSnapshot.preinstalled_package_ready && _firmwareSettings.preinstalled_package_ready)
+        installed = @"PREINSTALL.PUP";
+    else if (!_importSnapshot.font_package_ready && _firmwareSettings.font_package_ready)
+        installed = @"FONTPKG.PUP";
+    else if (!_importSnapshot.main_firmware_ready && _firmwareSettings.main_firmware_ready)
+        installed = @"PSVUPDAT.PUP";
+    self.statusLabel.text = installed
+        ? [NSString stringWithFormat:@"You selected %@. This page needs %@; please choose that file.", installed,
+            self.pageIndex == 2 ? @"PREINSTALL.PUP" : (self.pageIndex == 3 ? @"FONTPKG.PUP" : @"PSVUPDAT.PUP")]
+        : message;
+    self.statusLabel.textColor = UIColor.systemOrangeColor;
+}
+
+@end
+
+
 @interface Vita3KLibraryView : UIView <UICollectionViewDataSource, UICollectionViewDelegateFlowLayout> {
 @public
     std::vector<Vita3KIOSGameEntry> _games;
@@ -1299,6 +1490,7 @@ CGFloat library_card_label_height() {
 @property(nonatomic, strong) UILabel *firmwareLabel;
 @property(nonatomic, strong) UIVisualEffectView *jitBanner;
 @property(nonatomic, strong) UILabel *jitBannerLabel;
+@property(nonatomic, strong) Vita3KOnboardingView *onboardingView;
 - (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings;
 - (void)setJitAvailable:(BOOL)available;
 - (void)presentPadActionsForItem:(NSInteger)item;
@@ -1727,6 +1919,7 @@ static const NSInteger kCarouselRepeat = 400;
 - (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings {
     _games = games;
     _settings = settings;
+    [self.onboardingView updateFirmwareSettings:settings];
     self.emptyLabel.hidden = !_games.empty();
     self.collectionView.hidden = _games.empty();
     NSString *firmware = [NSString stringWithUTF8String:settings.firmware_version.c_str()] ?: @"";
@@ -2688,6 +2881,23 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         g_library.hidden = NO;
         [g_library updateGames:gamesCopy settings:settingsCopy];
         [g_library setJitAvailable:g_jit_available];
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        if (settingsCopy.firmware_ready) {
+            // Existing installs that already contain all three packages never
+            // see onboarding, even when upgrading from a build predating it.
+            [defaults setBool:YES forKey:@"tsubomi.onboarded"];
+            [g_library.onboardingView removeFromSuperview];
+            g_library.onboardingView = nil;
+        } else if (![defaults boolForKey:@"tsubomi.onboarded"] || !settingsCopy.firmware_ready) {
+            if (!g_library.onboardingView) {
+                g_library.onboardingView = [[Vita3KOnboardingView alloc]
+                    initWithFrame:g_library.bounds settings:settingsCopy];
+                [g_library addSubview:g_library.onboardingView];
+            } else {
+                [g_library.onboardingView updateFirmwareSettings:settingsCopy];
+            }
+            [g_library bringSubviewToFront:g_library.onboardingView];
+        }
         [g_library.superview bringSubviewToFront:g_library];
         set_metal_drawables_hidden(window, YES);
         [Vita3KPadNavigator.shared start];
@@ -2822,10 +3032,7 @@ std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action() {
 @end
 
 int vita3k_ios_load_fps_limit() {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    if (![defaults objectForKey:@"tsubomi.fpsLimit"])
-        return 60;
-    return (int)std::clamp<NSInteger>([defaults integerForKey:@"tsubomi.fpsLimit"], 15, 60);
+    return 60;
 }
 
 void vita3k_ios_present_trophies(const Vita3KIOSTrophyCollection &collection) {
@@ -2978,10 +3185,11 @@ void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime
             g_perf_graph = [[Vita3KFrametimeGraph alloc] init];
             [g_perf_hud.contentView addSubview:g_perf_graph];
         }
-        if (g_perf_hud.superview != window)
+        if (g_perf_hud.superview != window) {
             [window addSubview:g_perf_hud];
+            [window bringSubviewToFront:g_perf_hud];
+        }
         g_perf_hud.hidden = NO;
-        [window bringSubviewToFront:g_perf_hud];
 
         NSMutableArray<NSString *> *parts = [NSMutableArray array];
         if (show_fps)
@@ -3025,7 +3233,7 @@ void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime
         } else if (portrait) {
             const CGFloat gameHeight = windowWidth * 544.0 / 960.0;
             centerX = windowWidth / 2;
-            centerY = (windowHeight + gameHeight) / 2 + height / 2 + 10;
+            centerY = safe.top + gameHeight + height / 2 + 10;
         } else {
             centerX = safe.left + 10 + width / 2;
             centerY = safe.top + 6 + height / 2;
@@ -3055,6 +3263,7 @@ void vita3k_ios_report_import_result(const std::string &message, const bool succ
     NSString *text = [NSString stringWithUTF8String:message.c_str()] ?: @"Import finished";
     perform_on_main(^{
         [g_library hideBusyOverlay];
+        [g_library.onboardingView handleImportResult:text success:success];
         if (success) {
             g_library.statusLabel.text = text;
             [g_library setNeedsLayout];

@@ -62,6 +62,9 @@ struct Vita3KIOSSettings {
     // Games stay unavailable until all three official firmware packages have
     // populated their canonical partitions (pd0, vs0, and sa0).
     bool firmware_ready = false;
+    bool font_package_ready = false;
+    bool preinstalled_package_ready = false;
+    bool main_firmware_ready = false;
     std::string missing_firmware;
 };
 

@@ -559,7 +559,7 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
     return {
         .resolution_multiplier = current.resolution_multiplier,
         .v_sync = current.v_sync,
-        .fps_limit = vita3k_ios_load_fps_limit(),
+        .fps_limit = 60,
         .cpu_opt = current.cpu_opt,
         .ngs_enable = current.ngs_enable,
         .async_pipeline_compilation = current.async_pipeline_compilation,
@@ -567,6 +567,9 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
         .high_accuracy = current.high_accuracy,
         .firmware_version = firmware_version_display(emuenv),
         .firmware_ready = missing.empty(),
+        .font_package_ready = firmware.font_package,
+        .preinstalled_package_ready = firmware.preinstalled_package,
+        .main_firmware_ready = firmware.main_firmware,
         .missing_firmware = std::move(missing_text),
     };
 }
@@ -1036,7 +1039,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
 
     const auto result = app::commit_settings(emuenv, desired);
     emuenv.display.fps_hack = false;
-    emuenv.display.fps_limit.store(std::clamp(settings.fps_limit, 15, 60), std::memory_order_relaxed);
+    emuenv.display.fps_limit.store(60, std::memory_order_relaxed);
     std::vector<std::string> restart_required;
     restart_required.reserve(result.restart_required_settings.size());
     for (const auto setting : result.restart_required_settings)
@@ -1058,10 +1061,11 @@ void apply_game_session_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &s
     current.async_pipeline_compilation = settings.async_pipeline_compilation;
     current.anisotropic_filtering = settings.anisotropic_filtering;
     current.high_accuracy = settings.high_accuracy;
-    emuenv.display.fps_limit.store(std::clamp(settings.fps_limit, 15, 60), std::memory_order_relaxed);
-    LOG_INFO("Per-game settings override active: res x{} vsync={} fps={} cpu_opt={} ngs={} async={} aniso={}",
-        settings.resolution_multiplier, settings.v_sync, settings.fps_limit, settings.cpu_opt,
-        settings.ngs_enable, settings.async_pipeline_compilation, settings.anisotropic_filtering);
+    emuenv.display.fps_limit.store(60, std::memory_order_relaxed);
+    LOG_INFO("Per-game settings override active: res x{} vsync={} fps=60 cpu_opt={} ngs={} async={} aniso={} high_accuracy={}",
+        settings.resolution_multiplier, settings.v_sync, settings.cpu_opt,
+        settings.ngs_enable, settings.async_pipeline_compilation, settings.anisotropic_filtering,
+        settings.high_accuracy);
 }
 
 std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
@@ -1469,13 +1473,10 @@ int main(int argc, char *argv[]) {
     // this session only, and restore the snapshot when the session ends.
     const auto session_settings = std::exchange(g_pending_game_settings, std::nullopt);
     const auto saved_current_config = emuenv->cfg.current_config;
-    if (session_settings)
-        apply_game_session_settings(*emuenv, *session_settings);
     const auto restore_global_config = [&] {
         if (session_settings) {
             emuenv->cfg.current_config = saved_current_config;
-            emuenv->display.fps_limit.store(std::clamp(vita3k_ios_load_fps_limit(), 15, 60),
-                std::memory_order_relaxed);
+            emuenv->display.fps_limit.store(60, std::memory_order_relaxed);
         }
     };
 
@@ -1486,6 +1487,11 @@ int main(int argc, char *argv[]) {
         restore_global_config();
         continue;
     }
+    // begin_launch() selects the title's upstream config profile. Apply the
+    // native per-game override afterwards so setup_game_launch() cannot
+    // overwrite it before Vulkan and the runtime read current_config.
+    if (session_settings)
+        apply_game_session_settings(*emuenv, *session_settings);
 
     IOSFrameHost frame_host(window);
 
@@ -1549,10 +1555,7 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Game started: {} ({})", emuenv->current_app_title, launch_request->app_path);
     // Never inherit the removed iOS FPS-hack setting from an older config.
     emuenv->display.fps_hack = false;
-    emuenv->display.fps_limit.store(session_settings
-            ? std::clamp(session_settings->fps_limit, 15, 60)
-            : vita3k_ios_load_fps_limit(),
-        std::memory_order_relaxed);
+    emuenv->display.fps_limit.store(60, std::memory_order_relaxed);
 
     const bool has_virtual_controller = vita3k_ios_attach_virtual_controller();
     if (has_virtual_controller) {
@@ -1583,7 +1586,8 @@ int main(int argc, char *argv[]) {
         LOG_INFO("iOS guest watchdog started: first snapshot at {}ms", scheduled_dump_at_ms[0]);
 
         while (!stop_guest_watchdog.load(std::memory_order_relaxed)) {
-            std::this_thread::sleep_for(250ms);
+            const bool scheduled_diagnostics_complete = next_scheduled_dump >= std::size(scheduled_dump_at_ms);
+            std::this_thread::sleep_for(scheduled_diagnostics_complete ? 1s : 250ms);
             if (stop_guest_watchdog.load(std::memory_order_relaxed))
                 break;
 
@@ -1594,11 +1598,11 @@ int main(int argc, char *argv[]) {
                 last_setframe_change_ms = now_ms;
             }
 
-            // Sample the OS memory headroom every ~2s. If a freeze is really a
+            // Sample the OS memory headroom every ~10s. If a freeze is really a
             // jetsam kill, the log shows this number collapsing toward zero
             // right before the process dies (no signal is delivered for jetsam).
             static Uint64 last_mem_log_ms = 0;
-            if (now_ms - last_mem_log_ms >= 2000) {
+            if (now_ms - last_mem_log_ms >= 10000) {
                 last_mem_log_ms = now_ms;
                 LOG_INFO("iOS memory headroom: {} MiB available before jetsam",
                     static_cast<unsigned long long>(os_proc_available_memory() / (1024 * 1024)));

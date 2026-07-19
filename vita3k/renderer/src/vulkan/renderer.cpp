@@ -949,6 +949,8 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
     if (support_standard_layout && !use_high_accuracy) {
         LOG_INFO("The Vulkan renderer is using texture viewport for better performance");
         features.use_texture_viewport = true;
+    } else if (use_high_accuracy) {
+        LOG_INFO("High accuracy enabled: texture viewport disabled");
     }
 
     // parse the mapping method

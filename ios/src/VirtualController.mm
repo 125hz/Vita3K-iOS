@@ -663,7 +663,8 @@ static constexpr NSInteger triggerTagOffset = 1000;
             [defaults doubleForKey:keyY] * height);
     } else if (portrait) {
         const CGFloat gameHeight = width * 544.0 / 960.0;
-        self.perfProxyButton.center = CGPointMake(width / 2, (height + gameHeight) / 2 + 22);
+        self.perfProxyButton.center = CGPointMake(width / 2,
+            safe.top + gameHeight + CGRectGetHeight(self.perfProxyButton.bounds) / 2 + 10);
     } else {
         self.perfProxyButton.center = CGPointMake(safe.left + 85, safe.top + 18);
     }
