@@ -121,7 +121,8 @@ AacDecoderState::AacDecoderState(uint32_t sample_rate, uint32_t channels) {
         }
     } else {
         LOG_WARN("AAC: no AudioSpecificConfig for sample_rate={} channels={}; "
-                 "raw access units may fail to decode.", sample_rate, channels);
+                 "raw access units may fail to decode.",
+            sample_rate, channels);
     }
 #endif
 

@@ -216,7 +216,8 @@ EXPORT(int, sceAudioOutOutput, int port, const void *buf) {
     const auto output_start = std::chrono::steady_clock::now();
     emuenv.audio.audio_output(*prt, buf);
     const auto output_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - output_start).count();
+        std::chrono::steady_clock::now() - output_start)
+                               .count();
     // Both the P4G movie and VA-11's intro-music freeze coincide with a guest
     // audio-out thread parking inside this call. If host output ever blocks for
     // seconds (device not draining, stream restart), this is the smoking gun.
