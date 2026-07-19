@@ -93,8 +93,8 @@ static NSMutableDictionary *landscapeElements() {
         @"dpad_left": element(0.08, 0.76, YES), @"dpad_right": element(0.20, 0.76, YES),
         @"triangle": element(0.86, 0.66, YES), @"cross": element(0.86, 0.86, YES),
         @"square": element(0.80, 0.76, YES), @"circle": element(0.92, 0.76, YES),
-        @"left_shoulder": element(0.09, 0.10, YES), @"right_shoulder": element(0.91, 0.10, YES),
-        @"left_trigger": element(0.09, 0.22, YES), @"right_trigger": element(0.91, 0.22, YES),
+        @"left_trigger": element(0.09, 0.13, YES), @"right_trigger": element(0.91, 0.13, YES),
+        @"left_shoulder": element(0.09, 0.25, YES), @"right_shoulder": element(0.91, 0.25, YES),
         @"select": element(0.43, 0.91, YES), @"start": element(0.57, 0.91, YES),
         @"left_stick": element(0.29, 0.73, YES), @"right_stick": element(0.71, 0.73, YES),
         @"menu": element(0.95, 0.17, YES),
@@ -121,7 +121,8 @@ static NSMutableDictionary *defaultConfig() {
         @"scale": @1.0,
         @"hideWhenPhysical": @YES,
         @"haptics": @YES,
-        @"layoutVersion": @3,
+        @"snapGuides": @YES,
+        @"layoutVersion": @4,
         @"layouts": [@{@"landscape": landscapeElements(), @"portrait": portraitElements()} mutableCopy],
     } mutableCopy];
 }
@@ -152,7 +153,7 @@ static void loadConfig() {
     if (![decoded isKindOfClass:NSDictionary.class])
         return;
     NSDictionary *saved = decoded;
-    for (NSString *key in @[@"opacity", @"scale", @"hideWhenPhysical", @"haptics"]) {
+    for (NSString *key in @[@"opacity", @"scale", @"hideWhenPhysical", @"haptics", @"snapGuides"]) {
         if (saved[key])
             g_controls_config[key] = saved[key];
     }
@@ -216,6 +217,24 @@ static void loadConfig() {
         migrateLandscapeX(@"square", 0.78, 0.80);
         migrateLandscapeX(@"circle", 0.94, 0.92);
         g_controls_config[@"layoutVersion"] = @3;
+        saveConfig();
+    }
+
+    // Put L2/R2 above L1/R1 in landscape and lower the whole shoulder stack
+    // enough to clear the top-left performance HUD. Only exact v3 defaults
+    // migrate; customized layouts remain untouched.
+    if ([saved[@"layoutVersion"] integerValue] < 4) {
+        void (^migrateLandscapeY)(NSString *, CGFloat, CGFloat) =
+            ^(NSString *key, CGFloat oldY, CGFloat newY) {
+                NSMutableDictionary *entry = g_controls_config[@"layouts"][@"landscape"][key];
+                if (fabs([entry[@"y"] doubleValue] - oldY) < 0.0001)
+                    entry[@"y"] = @(newY);
+            };
+        migrateLandscapeY(@"left_shoulder", 0.10, 0.25);
+        migrateLandscapeY(@"right_shoulder", 0.10, 0.25);
+        migrateLandscapeY(@"left_trigger", 0.22, 0.13);
+        migrateLandscapeY(@"right_trigger", 0.22, 0.13);
+        g_controls_config[@"layoutVersion"] = @4;
         saveConfig();
     }
 }
@@ -538,8 +557,10 @@ static constexpr NSInteger triggerTagOffset = 1000;
     const CGFloat nativeScale = self.window.screen.nativeScale > 0
         ? self.window.screen.nativeScale : UIScreen.mainScreen.scale;
     g_safe_area_top_pixels.store(static_cast<float>(safe.top * nativeScale), std::memory_order_release);
-    self.verticalGuide.frame = CGRectMake(CGRectGetMidX(self.bounds), safe.top, 1, CGRectGetHeight(self.bounds) - safe.top - safe.bottom);
-    self.horizontalGuide.frame = CGRectMake(safe.left, CGRectGetMidY(self.bounds), CGRectGetWidth(self.bounds) - safe.left - safe.right, 1);
+    if (self.verticalGuide.hidden)
+        self.verticalGuide.frame = CGRectMake(CGRectGetMidX(self.bounds), safe.top, 1, CGRectGetHeight(self.bounds) - safe.top - safe.bottom);
+    if (self.horizontalGuide.hidden)
+        self.horizontalGuide.frame = CGRectMake(safe.left, CGRectGetMidY(self.bounds), CGRectGetWidth(self.bounds) - safe.left - safe.right, 1);
     self.editDoneButton.frame = CGRectMake(CGRectGetMidX(self.bounds) - 68, safe.top + 10, 136, 36);
     [self applyConfiguration];
 }
@@ -605,10 +626,41 @@ static constexpr NSInteger triggerTagOffset = 1000;
 - (void)elementPanned:(UIPanGestureRecognizer *)recognizer {
     UIView *elementView = recognizer.view;
     const CGPoint translation = [recognizer translationInView:self];
-    elementView.center = CGPointMake(elementView.center.x + translation.x, elementView.center.y + translation.y);
+    CGPoint center = CGPointMake(elementView.center.x + translation.x, elementView.center.y + translation.y);
     [recognizer setTranslation:CGPointZero inView:self];
-    self.verticalGuide.hidden = recognizer.state == UIGestureRecognizerStateEnded || recognizer.state == UIGestureRecognizerStateCancelled;
-    self.horizontalGuide.hidden = self.verticalGuide.hidden;
+    const BOOL finished = recognizer.state == UIGestureRecognizerStateEnded
+        || recognizer.state == UIGestureRecognizerStateCancelled;
+    BOOL snappedX = NO;
+    BOOL snappedY = NO;
+    if (!finished && [g_controls_config[@"snapGuides"] boolValue]) {
+        constexpr CGFloat snapDistance = 9.0;
+        CGFloat bestX = snapDistance + 1;
+        CGFloat bestY = snapDistance + 1;
+        for (UIView *candidate in self.controllerElements) {
+            if (candidate == elementView || candidate.hidden)
+                continue;
+            const CGFloat dx = fabs(center.x - candidate.center.x);
+            const CGFloat dy = fabs(center.y - candidate.center.y);
+            if (dx < bestX && dx <= snapDistance) {
+                bestX = dx;
+                center.x = candidate.center.x;
+                snappedX = YES;
+            }
+            if (dy < bestY && dy <= snapDistance) {
+                bestY = dy;
+                center.y = candidate.center.y;
+                snappedY = YES;
+            }
+        }
+    }
+    elementView.center = center;
+    const UIEdgeInsets safe = self.safeAreaInsets;
+    self.verticalGuide.frame = CGRectMake(center.x, safe.top, 1,
+        CGRectGetHeight(self.bounds) - safe.top - safe.bottom);
+    self.horizontalGuide.frame = CGRectMake(safe.left, center.y,
+        CGRectGetWidth(self.bounds) - safe.left - safe.right, 1);
+    self.verticalGuide.hidden = finished || !snappedX;
+    self.horizontalGuide.hidden = finished || !snappedY;
     if (recognizer.state == UIGestureRecognizerStateEnded) {
         // Save the exact normalized position (no grid snapping) so elements
         // stay exactly where they were dropped; only clamp to keep them fully
@@ -793,6 +845,11 @@ static constexpr NSInteger triggerTagOffset = 1000;
     haptics.accessibilityIdentifier = @"haptics";
     [haptics addTarget:self action:@selector(optionSwitch:) forControlEvents:UIControlEventValueChanged];
     [stack addArrangedSubview:[self labeled:@"Haptic ticks" control:haptics]];
+    UISwitch *snapGuides = [[UISwitch alloc] init];
+    snapGuides.on = [g_controls_config[@"snapGuides"] boolValue];
+    snapGuides.accessibilityIdentifier = @"snapGuides";
+    [snapGuides addTarget:self action:@selector(optionSwitch:) forControlEvents:UIControlEventValueChanged];
+    [stack addArrangedSubview:[self labeled:@"Alignment snapping & guides" control:snapGuides]];
 
     UILabel *visibility = [[UILabel alloc] init];
     visibility.text = @"VISIBLE ELEMENTS";
@@ -1061,6 +1118,8 @@ static Vita3KGameMenuTarget *g_game_menu_target = nil;
     [stack addArrangedSubview:subtitle];
 
     [stack addArrangedSubview:[self switchRow:@"FPS" key:@"vita3k.perf.fps"]];
+    [stack addArrangedSubview:[self switchRow:@"Frametime (ms)" key:@"vita3k.perf.frametime"]];
+    [stack addArrangedSubview:[self switchRow:@"Frametime graph" key:@"vita3k.perf.frametimeGraph"]];
     [stack addArrangedSubview:[self switchRow:@"Memory use" key:@"vita3k.perf.ram"]];
     [stack addArrangedSubview:[self switchRow:@"Battery" key:@"vita3k.perf.battery"]];
     [stack addArrangedSubview:menuAction(@"Back", nil, @"chevron.left", @selector(back), self)];
@@ -1180,7 +1239,7 @@ static void presentGameMenu() {
     [stack addArrangedSubview:menuAction(@"Resume", nil, @"play.fill", @selector(resume), g_game_menu_target)];
     [stack addArrangedSubview:menuAction(@"Trophies", @"Progress and unlock dates", @"trophy.fill", @selector(trophies), g_game_menu_target)];
     [stack addArrangedSubview:menuAction(@"Controller Options", @"Layout, visibility, scale and opacity", @"gamecontroller.fill", @selector(layout), g_game_menu_target)];
-    [stack addArrangedSubview:menuAction(@"Performance HUD", @"FPS, memory and battery overlay", @"gauge.with.dots.needle.67percent",
+    [stack addArrangedSubview:menuAction(@"Performance HUD", @"FPS, frametime, graph, memory and battery", @"gauge.with.dots.needle.67percent",
         @selector(perfHud), g_game_menu_target)];
     [stack addArrangedSubview:menuAction(@"Hide Menu Button", @"Restore it with a three-finger tap", @"eye.slash.fill",
         @selector(hideMenuButton), g_game_menu_target)];

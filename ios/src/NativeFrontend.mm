@@ -294,12 +294,16 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UISlider *resolutionSlider;
 @property(nonatomic, strong) UILabel *resolutionValue;
 @property(nonatomic, strong) UISwitch *vsyncSwitch;
+@property(nonatomic, strong) UISwitch *fpsHackSwitch;
 @property(nonatomic, strong) UISlider *fpsSlider;
 @property(nonatomic, strong) UILabel *fpsValue;
 @property(nonatomic, strong) UISwitch *cpuSwitch;
 @property(nonatomic, strong) UISwitch *ngsSwitch;
 @property(nonatomic, strong) UISwitch *asyncSwitch;
 @property(nonatomic, strong) UISegmentedControl *anisotropicControl;
+@property(nonatomic, strong) UILabel *headerTitle;
+@property(nonatomic, strong) NSDictionary<NSString *, NSArray<UIView *> *> *pages;
+@property(nonatomic) BOOL showingRoot;
 - (instancetype)initWithFrame:(CGRect)frame values:(const Vita3KIOSSettings &)values;
 @end
 
@@ -342,19 +346,19 @@ std::string hex_bytes(const std::string &value) {
     header.alignment = UIStackViewAlignmentCenter;
     header.spacing = 14; // keep the "Settings" title off the back chevron
     UIButton *back = symbol_button(@"chevron.left", @"Back", @"Back to library");
-    [back addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside];
+    [back addTarget:self action:@selector(navigateBack) forControlEvents:UIControlEventTouchUpInside];
     [back.widthAnchor constraintEqualToConstant:46].active = YES;
     [back.heightAnchor constraintEqualToConstant:46].active = YES;
-    UILabel *title = [[UILabel alloc] init];
-    title.text = @"Settings";
-    title.font = [UIFont systemFontOfSize:32 weight:UIFontWeightBold];
-    title.textColor = UIColor.labelColor;
+    self.headerTitle = [[UILabel alloc] init];
+    self.headerTitle.text = @"Settings";
+    self.headerTitle.font = [UIFont systemFontOfSize:32 weight:UIFontWeightBold];
+    self.headerTitle.textColor = UIColor.labelColor;
     UIButton *save = [UIButton buttonWithType:UIButtonTypeSystem];
     [save setTitle:@"Save" forState:UIControlStateNormal];
     save.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     [save addTarget:self action:@selector(save) forControlEvents:UIControlEventTouchUpInside];
     [header addArrangedSubview:back];
-    [header addArrangedSubview:title];
+    [header addArrangedSubview:self.headerTitle];
     [header addArrangedSubview:save];
     [self addSubview:header];
     [NSLayoutConstraint activateConstraints:@[
@@ -398,6 +402,9 @@ std::string hex_bytes(const std::string &value) {
     [self addSection:@"Video" rows:@[
         [self row:@"Resolution multiplier" hint:@"Higher values are sharper but increase GPU load." accessory:resolutionAccessory],
         [self switchRow:@"V-Sync" hint:@"Synchronizes presentation to the display." value:values.v_sync output:&_vsyncSwitch],
+        [self switchRow:@"Reduce motion blur (60 FPS hack)"
+            hint:@"Reduces frame-rate-tied blur in games such as Persona 4 Golden. Game-dependent; may alter timing."
+            value:values.fps_hack output:&_fpsHackSwitch],
         [self row:@"FPS limiter" hint:@"Caps presentation without changing the Vita's 60 Hz timing." accessory:fpsAccessory],
     ]];
 
@@ -433,6 +440,10 @@ std::string hex_bytes(const std::string &value) {
     [self addSection:@"Performance overlay" rows:@[
         [self row:@"Show FPS" hint:@"Guest frames per second, sampled every second."
             accessory:[self defaultsSwitch:@"vita3k.perf.fps" defaults:defaults]],
+        [self row:@"Show frametime" hint:@"Average guest frame duration in milliseconds."
+            accessory:[self defaultsSwitch:@"vita3k.perf.frametime" defaults:defaults]],
+        [self row:@"Show frametime graph" hint:@"Minimal history graph; white in dark mode and black in light mode."
+            accessory:[self defaultsSwitch:@"vita3k.perf.frametimeGraph" defaults:defaults]],
         [self row:@"Show RAM usage" hint:@"This app's physical memory footprint."
             accessory:[self defaultsSwitch:@"vita3k.perf.ram" defaults:defaults]],
         [self row:@"Show battery %" hint:@"Current device battery level."
@@ -465,7 +476,89 @@ std::string hex_bytes(const std::string &value) {
         [self row:@"Developed by" hint:@"twitter / discord" accessory:developerLink],
         [self row:@"Thanks to" hint:@"" accessory:[self valueLabel:@"Bloom, Craig, Thomasina"]],
     ]];
+    NSArray<UIView *> *sections = [self.stack.arrangedSubviews copy];
+    self.pages = @{
+        @"Video": @[sections[0]],
+        @"Graphics": @[sections[1]],
+        @"Audio": @[sections[2]],
+        @"System & Input": @[sections[3]],
+        @"Performance Overlay": @[sections[4]],
+        @"Library": @[sections[5]],
+        @"About": @[sections[6]],
+    };
+    [self showSettingsRoot];
     return self;
+}
+
+- (void)clearSettingsStack {
+    for (UIView *view in [self.stack.arrangedSubviews copy]) {
+        [self.stack removeArrangedSubview:view];
+        [view removeFromSuperview];
+    }
+}
+
+- (UIButton *)categoryButton:(NSString *)title symbol:(NSString *)symbol color:(UIColor *)color {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.accessibilityIdentifier = title;
+    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
+    button.titleLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightSemibold];
+    [button setTitle:[NSString stringWithFormat:@"  %@", title] forState:UIControlStateNormal];
+    [button setTitleColor:UIColor.labelColor forState:UIControlStateNormal];
+    [button setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
+    button.tintColor = color;
+    button.backgroundColor = [color colorWithAlphaComponent:0.13];
+    button.layer.cornerRadius = 20;
+    button.contentEdgeInsets = UIEdgeInsetsMake(0, 18, 0, 18);
+    [button.heightAnchor constraintEqualToConstant:68].active = YES;
+    [button addTarget:self action:@selector(openCategory:) forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
+- (void)showSettingsRoot {
+    [self clearSettingsStack];
+    self.showingRoot = YES;
+    self.headerTitle.text = @"Settings";
+    NSArray<NSArray *> *categories = @[
+        @[@"Video", @"play.rectangle.fill", UIColor.systemBlueColor],
+        @[@"Graphics", @"sparkles", UIColor.systemPurpleColor],
+        @[@"Audio", @"speaker.wave.2.fill", UIColor.systemOrangeColor],
+        @[@"System & Input", @"gamecontroller.fill", UIColor.systemGreenColor],
+        @[@"Performance Overlay", @"gauge.with.dots.needle.67percent", UIColor.systemPinkColor],
+        @[@"Library", @"square.grid.2x2.fill", UIColor.systemTealColor],
+    ];
+    for (NSArray *category in categories)
+        [self.stack addArrangedSubview:[self categoryButton:category[0] symbol:category[1] color:category[2]]];
+
+    UIButton *about = [UIButton buttonWithType:UIButtonTypeSystem];
+    about.accessibilityIdentifier = @"About";
+    [about setTitle:[NSString stringWithFormat:@"About  ·  Tsubomi %@", tsubomi_app_version()]
+            forState:UIControlStateNormal];
+    [about setTitleColor:UIColor.secondaryLabelColor forState:UIControlStateNormal];
+    about.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    about.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
+    [about addTarget:self action:@selector(openCategory:) forControlEvents:UIControlEventTouchUpInside];
+    [about.heightAnchor constraintEqualToConstant:36].active = YES;
+    [self.stack addArrangedSubview:about];
+}
+
+- (void)openCategory:(UIButton *)sender {
+    NSString *category = sender.accessibilityIdentifier;
+    NSArray<UIView *> *views = self.pages[category];
+    if (!views)
+        return;
+    [self clearSettingsStack];
+    self.showingRoot = NO;
+    self.headerTitle.text = category;
+    for (UIView *view in views)
+        [self.stack addArrangedSubview:view];
+    [self.scrollView setContentOffset:CGPointZero animated:NO];
+}
+
+- (void)navigateBack {
+    if (self.showingRoot)
+        [self close];
+    else
+        [self showSettingsRoot];
 }
 
 - (void)openDeveloperProfile {
@@ -486,14 +579,14 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.7.0",
-        @"• New L2/R2 touch buttons. They act like a controller's triggers "
-        @"(used by games with PSTV-style extended controls) and can be "
-        @"moved, resized, or hidden in Controller Options.\n"
-        @"\n"
-        @"Recent: fixed the P4G/VA-11/gallery freezes and second-quit "
-        @"crash, faster first boot, glass header, rotation fixes, "
-        @"Performance HUD panel, exact battery %.");
+    present_alert(@"What's new in 0.8.0",
+        @"• Speeds up VA-11 Hall-A's New Game transition by keeping bulk "
+        @"memory operations on Vita3K's native iOS fast path.\n"
+        @"• Places L2/R2 above L1/R1 in landscape and clears the HUD.\n"
+        @"• Adds optional alignment snapping and guides while editing controls.\n"
+        @"• Adds frametime text and a light/dark frametime graph to the HUD.\n"
+        @"• Reorganizes Settings into colored category pages with a compact About link.\n"
+        @"• Adds a game-dependent 60 FPS option that reduces frame-rate-tied motion blur.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -506,6 +599,8 @@ std::string hex_bytes(const std::string &value) {
 
 - (void)perfToggleChanged:(UISwitch *)sender {
     [NSUserDefaults.standardUserDefaults setBool:sender.on forKey:sender.accessibilityIdentifier];
+    if (sender.on)
+        [NSUserDefaults.standardUserDefaults setBool:NO forKey:@"vita3k.perf.hidden"];
 }
 
 - (UILabel *)valueLabel:(NSString *)value {
@@ -611,6 +706,7 @@ std::string hex_bytes(const std::string &value) {
     action.kind = Vita3KIOSFrontendActionKind::ApplySettings;
     action.settings.resolution_multiplier = self.resolutionSlider.value;
     action.settings.v_sync = self.vsyncSwitch.on;
+    action.settings.fps_hack = self.fpsHackSwitch.on;
     action.settings.fps_limit = (int)self.fpsSlider.value;
     [NSUserDefaults.standardUserDefaults setInteger:action.settings.fps_limit forKey:@"tsubomi.fpsLimit"];
     action.settings.cpu_opt = self.cpuSwitch.on;
@@ -1496,16 +1592,74 @@ void vita3k_ios_request_current_trophies() {
     queue_action(std::move(action));
 }
 
+@interface Vita3KFrametimeGraph : UIView
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *samples;
+- (void)addSample:(CGFloat)value;
+@end
+
+@implementation Vita3KFrametimeGraph
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        self.backgroundColor = UIColor.clearColor;
+        self.opaque = NO;
+        self.samples = [NSMutableArray array];
+    }
+    return self;
+}
+- (void)addSample:(CGFloat)value {
+    if (!isfinite(value) || value <= 0)
+        return;
+    [self.samples addObject:@(value)];
+    while (self.samples.count > 60)
+        [self.samples removeObjectAtIndex:0];
+    [self setNeedsDisplay];
+}
+- (void)drawRect:(CGRect)rect {
+    if (self.samples.count < 2)
+        return;
+    CGFloat maximum = 16.67;
+    for (NSNumber *sample in self.samples)
+        maximum = MAX(maximum, MIN((CGFloat)sample.doubleValue, 100.0));
+    UIBezierPath *path = [UIBezierPath bezierPath];
+    const CGFloat step = CGRectGetWidth(rect) / MAX((CGFloat)self.samples.count - 1, 1);
+    [self.samples enumerateObjectsUsingBlock:^(NSNumber *sample, NSUInteger index, __unused BOOL *stop) {
+        const CGFloat value = MIN((CGFloat)sample.doubleValue, maximum);
+        CGPoint point = CGPointMake(index * step,
+            CGRectGetHeight(rect) - (value / maximum) * (CGRectGetHeight(rect) - 2) - 1);
+        if (index == 0)
+            [path moveToPoint:point];
+        else
+            [path addLineToPoint:point];
+    }];
+    UIColor *line = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
+        ? UIColor.whiteColor : UIColor.blackColor;
+    [line setStroke];
+    path.lineWidth = 1.35;
+    path.lineJoinStyle = kCGLineJoinRound;
+    path.lineCapStyle = kCGLineCapRound;
+    [path stroke];
+}
+- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
+    [super traitCollectionDidChange:previousTraitCollection];
+    [self setNeedsDisplay];
+}
+@end
+
 static UIVisualEffectView *g_perf_hud = nil;
 static UILabel *g_perf_label = nil;
+static Vita3KFrametimeGraph *g_perf_graph = nil;
 
-void vita3k_ios_update_perf_overlay(const float guest_fps) {
+void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime_ms) {
     perform_on_main(^{
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
         const BOOL show_fps = [defaults boolForKey:@"vita3k.perf.fps"];
+        const BOOL show_frametime = [defaults boolForKey:@"vita3k.perf.frametime"];
+        const BOOL show_graph = [defaults boolForKey:@"vita3k.perf.frametimeGraph"];
         const BOOL show_ram = [defaults boolForKey:@"vita3k.perf.ram"];
         const BOOL show_battery = [defaults boolForKey:@"vita3k.perf.battery"];
-        if ([defaults boolForKey:@"vita3k.perf.hidden"] || (!show_fps && !show_ram && !show_battery)) {
+        if ([defaults boolForKey:@"vita3k.perf.hidden"]
+            || (!show_fps && !show_frametime && !show_graph && !show_ram && !show_battery)) {
             g_perf_hud.hidden = YES;
             return;
         }
@@ -1524,6 +1678,8 @@ void vita3k_ios_update_perf_overlay(const float guest_fps) {
             g_perf_label.textColor = UIColor.labelColor;
             g_perf_label.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
             [g_perf_hud.contentView addSubview:g_perf_label];
+            g_perf_graph = [[Vita3KFrametimeGraph alloc] init];
+            [g_perf_hud.contentView addSubview:g_perf_graph];
         }
         if (g_perf_hud.superview != window)
             [window addSubview:g_perf_hud];
@@ -1533,6 +1689,9 @@ void vita3k_ios_update_perf_overlay(const float guest_fps) {
         NSMutableArray<NSString *> *parts = [NSMutableArray array];
         if (show_fps)
             [parts addObject:[NSString stringWithFormat:@"%.0f FPS", guest_fps]];
+        if (show_frametime)
+            [parts addObject:frametime_ms > 0
+                ? [NSString stringWithFormat:@"%.1f ms", frametime_ms] : @"-- ms"];
         if (show_ram) {
             task_vm_info_data_t vm_info{};
             mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
@@ -1550,10 +1709,15 @@ void vita3k_ios_update_perf_overlay(const float guest_fps) {
         }
         g_perf_label.text = [parts componentsJoinedByString:@"  ·  "];
         [g_perf_label sizeToFit];
-        const CGFloat width = CGRectGetWidth(g_perf_label.bounds) + 20;
+        const CGFloat width = MAX(CGRectGetWidth(g_perf_label.bounds) + 20, show_graph ? 170.0 : 0.0);
+        const CGFloat height = show_graph ? 58.0 : 24.0;
         const UIEdgeInsets safe = window.safeAreaInsets;
-        g_perf_hud.frame = CGRectMake(safe.left + 10, safe.top + 6, width, 24);
+        g_perf_hud.frame = CGRectMake(safe.left + 10, safe.top + 6, width, height);
         g_perf_label.frame = CGRectMake(10, 3, width - 20, 18);
+        g_perf_graph.hidden = !show_graph;
+        g_perf_graph.frame = CGRectMake(10, 27, width - 20, 25);
+        if (show_graph)
+            [g_perf_graph addSample:frametime_ms];
     });
 }
 
@@ -1562,6 +1726,7 @@ void vita3k_ios_hide_perf_overlay() {
         [g_perf_hud removeFromSuperview];
         g_perf_hud = nil;
         g_perf_label = nil;
+        g_perf_graph = nil;
     });
 }
 

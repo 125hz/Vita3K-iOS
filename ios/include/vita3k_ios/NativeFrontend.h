@@ -45,6 +45,7 @@ struct Vita3KIOSTrophyCollection {
 struct Vita3KIOSSettings {
     float resolution_multiplier = 1.0f;
     bool v_sync = true;
+    bool fps_hack = false;
     int fps_limit = 60;
     bool cpu_opt = true;
     bool ngs_enable = true;
@@ -117,7 +118,7 @@ void vita3k_ios_configure_audio_session();
 // In-game performance HUD. Called ~once per second from the frontend loop
 // with the guest frame rate; battery/RAM are sampled on the UIKit side. The
 // HUD only appears when the user enabled at least one metric in settings.
-void vita3k_ios_update_perf_overlay(float guest_fps);
+void vita3k_ios_update_perf_overlay(float guest_fps, float frametime_ms);
 void vita3k_ios_hide_perf_overlay();
 
 // Dismisses the import-in-progress overlay and shows the outcome. Failures are

@@ -263,6 +263,25 @@ static bool load_func_exports(SceKernelModuleInfo *kernel_module_info, const uin
             continue;
         }
 
+#if defined(VITA3K_PLATFORM_IOS)
+        // Several GameMaker titles ship their own SceLibc and spend tens of
+        // seconds in its guest ARM bulk-memory loops while constructing a new
+        // room. Vita3K's HLE implementations are equivalent host memcpy/
+        // memmove/memset operations. Keep the already-bound HLE import stubs
+        // for these three functions on iOS instead of replacing them with the
+        // LLE entry points below. Other SceLibc exports and every non-iOS
+        // platform retain the normal automatic-LLE policy.
+        constexpr uint32_t NID_MEMCPY = 0x7205BFDB;
+        constexpr uint32_t NID_MEMMOVE = 0xAF5C218D;
+        constexpr uint32_t NID_MEMSET = 0x6DC1F0D8;
+        const bool keep_hle_bulk_memory = std::strcmp(kernel_module_info->module_name, "SceLibc") == 0
+            && (nid == NID_MEMCPY || nid == NID_MEMMOVE || nid == NID_MEMSET);
+        if (keep_hle_bulk_memory) {
+            LOG_INFO("iOS: keeping HLE {} fast path instead of SceLibc LLE entry 0x{:08X}",
+                import_name(nid), entry.address());
+            continue;
+        }
+#endif
         kernel.export_nids.emplace(nid, entry.address());
         // substitute supervisor calls to direct function calls in loaded modules
         auto range = kernel.func_binding_infos.equal_range(nid);

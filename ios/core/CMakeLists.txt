@@ -30,10 +30,25 @@ add_library(vita3k_ios_core STATIC
     ../../vita3k/packages/src/sfo.cpp
     ../../vita3k/packages/src/archive.cpp
     ../../vita3k/util/src/arm.cpp
+    ../../external/boost/libs/filesystem/src/codecvt_error_category.cpp
+    ../../external/boost/libs/filesystem/src/exception.cpp
+    ../../external/boost/libs/filesystem/src/operations.cpp
+    ../../external/boost/libs/filesystem/src/directory.cpp
+    ../../external/boost/libs/filesystem/src/path.cpp
+    ../../external/boost/libs/filesystem/src/path_traits.cpp
+    ../../external/boost/libs/filesystem/src/portability.cpp
+    ../../external/boost/libs/filesystem/src/unique_path.cpp
+    ../../external/boost/libs/filesystem/src/utf8_codecvt_facet.cpp
 )
+if(WIN32)
+    target_sources(vita3k_ios_core PRIVATE ../../external/boost/libs/filesystem/src/windows_file_codecvt.cpp)
+endif()
 
 target_compile_features(vita3k_ios_core PUBLIC cxx_std_23)
-target_compile_definitions(vita3k_ios_core PUBLIC VITA3K_PLATFORM_IOS=1)
+target_compile_definitions(vita3k_ios_core
+    PUBLIC VITA3K_PLATFORM_IOS=1 SPDLOG_FMT_EXTERNAL=1 FMT_HEADER_ONLY=1 BOOST_FILESYSTEM_NO_LIB=1
+    PRIVATE BOOST_FILESYSTEM_SOURCE=1
+)
 target_link_libraries(vita3k_ios_core PRIVATE vita3k_ios_miniz)
 target_include_directories(vita3k_ios_core
     PUBLIC
@@ -42,9 +57,13 @@ target_include_directories(vita3k_ios_core
         ../../vita3k/nids/include
         ../../vita3k/packages/include
         ../../vita3k/util/include
+        ../../external/boost
+        ../../external/boost/libs/filesystem/src
+        ../../external/fmt/include
+        ../../external/spdlog/include
 )
 if(MSVC)
-    target_compile_options(vita3k_ios_core PRIVATE /W4)
+    target_compile_options(vita3k_ios_core PRIVATE /W4 /utf-8)
 else()
     target_compile_options(vita3k_ios_core PRIVATE -Wall -Wextra)
 endif()
