@@ -13,6 +13,7 @@
 #define Ptr MacTypesPtr
 #import <AVFoundation/AVFoundation.h>
 #import <GameController/GameController.h>
+#import <PhotosUI/PhotosUI.h>
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -40,6 +41,7 @@ void present_save_picker(NSString *titleId);
 void reload_library_cells();
 
 UIWindow *active_window() {
+    UIWindow *fallback = nil;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]
             || scene.activationState == UISceneActivationStateUnattached)
@@ -47,9 +49,13 @@ UIWindow *active_window() {
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
             if (window.isKeyWindow)
                 return window;
+            if (!fallback)
+                fallback = window;
         }
     }
-    return nil;
+    // Session teardown can briefly leave no key window; the library must still
+    // find a home instead of silently not appearing (black screen after quit).
+    return fallback;
 }
 
 void perform_on_main(dispatch_block_t block) {
@@ -86,33 +92,85 @@ BOOL show_title_ids() {
     return [defaults objectForKey:@"tsubomi.showTitleIds"] ? [defaults boolForKey:@"tsubomi.showTitleIds"] : YES;
 }
 
+// Library metadata visibility toggles; both default ON.
+BOOL show_game_version() {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    return [defaults objectForKey:@"tsubomi.showVersion"] ? [defaults boolForKey:@"tsubomi.showVersion"] : YES;
+}
+
+BOOL show_game_size() {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    return [defaults objectForKey:@"tsubomi.showGameSize"] ? [defaults boolForKey:@"tsubomi.showGameSize"] : YES;
+}
+
+// Extra metadata lines under the played-time line (version and size get their
+// own lines; the trophy badge rides on the played line).
+NSInteger metadata_line_count() {
+    return 1 + (show_game_version() ? 1 : 0) + (show_game_size() ? 1 : 0);
+}
+
 NSString *tsubomi_app_version() {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     return version.length ? version : @"0.5.0";
 }
 
-NSString *game_metadata(const Vita3KIOSGameEntry &game) {
-    NSByteCountFormatter *bytes = [[NSByteCountFormatter alloc] init];
-    bytes.countStyle = NSByteCountFormatterCountStyleFile;
-    NSString *size = [bytes stringFromByteCount:(long long)game.size_bytes];
+NSString *played_time_text(const Vita3KIOSGameEntry &game) {
     const long long minutes = MAX(0, game.time_played_seconds) / 60;
-    NSString *played = game.time_played_seconds > 0 && minutes == 0
+    return game.time_played_seconds > 0 && minutes == 0
         ? @"<1m"
         : minutes >= 60
         ? [NSString stringWithFormat:@"%lldh %lldm", minutes / 60, minutes % 60]
         : [NSString stringWithFormat:@"%lldm", minutes];
-    NSString *last = @"Never played";
-    if (game.last_played_timestamp > 0) {
-        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-        formatter.dateStyle = NSDateFormatterShortStyle;
-        formatter.timeStyle = NSDateFormatterShortStyle;
-        last = [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:game.last_played_timestamp]];
+}
+
+NSString *last_played_text(const Vita3KIOSGameEntry &game) {
+    if (game.last_played_timestamp <= 0)
+        return @"Never played";
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.dateStyle = NSDateFormatterShortStyle;
+    formatter.timeStyle = NSDateFormatterShortStyle;
+    return [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:game.last_played_timestamp]];
+}
+
+NSString *game_size_text(const Vita3KIOSGameEntry &game) {
+    NSByteCountFormatter *bytes = [[NSByteCountFormatter alloc] init];
+    bytes.countStyle = NSByteCountFormatterCountStyleFile;
+    return [bytes stringFromByteCount:(long long)game.size_bytes];
+}
+
+// Multi-line metadata: optional "v1.01" line, then "played · last [🏆 n/m]",
+// then an optional size line — matching the library settings toggles.
+NSAttributedString *game_metadata(const Vita3KIOSGameEntry &game) {
+    NSMutableAttributedString *text = [[NSMutableAttributedString alloc] init];
+    NSDictionary *plain = @{
+        NSFontAttributeName: [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1],
+        NSForegroundColorAttributeName: UIColor.secondaryLabelColor,
+    };
+    auto append = [&](NSString *line) {
+        if (text.length)
+            [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:plain]];
+        [text appendAttributedString:[[NSAttributedString alloc] initWithString:line attributes:plain]];
+    };
+    if (show_game_version()) {
+        NSString *versionText = [NSString stringWithUTF8String:game.version.c_str()];
+        append(game.version.empty() || !versionText ? @"Unknown version" : [@"v" stringByAppendingString:versionText]);
     }
-    NSString *versionText = [NSString stringWithUTF8String:game.version.c_str()];
-    NSString *version = game.version.empty() || !versionText
-        ? @"Unknown version"
-        : [@"v" stringByAppendingString:versionText];
-    return [NSString stringWithFormat:@"%@  ·  %@  ·  %@  ·  %@", version, played, last, size];
+    append([NSString stringWithFormat:@"%@  ·  %@", played_time_text(game), last_played_text(game)]);
+    if (game.trophies_total > 0) {
+        [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"  " attributes:plain]];
+        NSTextAttachment *trophy = [[NSTextAttachment alloc] init];
+        UIFont *font = plain[NSFontAttributeName];
+        trophy.image = [[UIImage systemImageNamed:@"trophy.fill"]
+            imageWithTintColor:UIColor.systemYellowColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+        trophy.bounds = CGRectMake(0, font.descender, font.capHeight * 1.15, font.capHeight * 1.15);
+        [text appendAttributedString:[NSAttributedString attributedStringWithAttachment:trophy]];
+        [text appendAttributedString:[[NSAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@" %d/%d", game.trophies_unlocked, game.trophies_total]
+                attributes:plain]];
+    }
+    if (show_game_size())
+        append(game_size_text(game));
+    return text;
 }
 
 UIVisualEffect *glass_effect(const BOOL interactive = YES) {
@@ -151,6 +209,78 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
     return button;
 }
 
+// ---- Custom cover art -------------------------------------------------------
+// Users can replace a game's library art with a photo. The picked original is
+// kept so the crop can be re-adjusted later; the rendered square cover is what
+// cells actually display.
+
+NSString *covers_directory() {
+    NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *directory = [documents stringByAppendingPathComponent:@"Tsubomi/covers"];
+    [NSFileManager.defaultManager createDirectoryAtPath:directory
+                            withIntermediateDirectories:YES attributes:nil error:nil];
+    return directory;
+}
+
+NSString *cover_original_path(NSString *titleId) {
+    return [covers_directory() stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"%@-original.png", titleId]];
+}
+
+NSString *cover_render_path(NSString *titleId) {
+    return [covers_directory() stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"%@-cover.png", titleId]];
+}
+
+BOOL has_custom_cover(NSString *titleId) {
+    return [NSFileManager.defaultManager fileExistsAtPath:cover_render_path(titleId)];
+}
+
+// ---- Per-game settings ------------------------------------------------------
+// Overrides are a defaults dictionary per title; absent = use global settings.
+
+NSString *game_settings_key(NSString *titleId) {
+    return [@"tsubomi.gameSettings." stringByAppendingString:titleId ?: @""];
+}
+
+BOOL has_game_settings(NSString *titleId) {
+    return [NSUserDefaults.standardUserDefaults dictionaryForKey:game_settings_key(titleId)] != nil;
+}
+
+Vita3KIOSSettings game_settings_or(NSString *titleId, const Vita3KIOSSettings &fallback) {
+    NSDictionary *stored = [NSUserDefaults.standardUserDefaults dictionaryForKey:game_settings_key(titleId)];
+    if (!stored)
+        return fallback;
+    Vita3KIOSSettings settings = fallback;
+    if (stored[@"resolution"])
+        settings.resolution_multiplier = [stored[@"resolution"] floatValue];
+    if (stored[@"vsync"])
+        settings.v_sync = [stored[@"vsync"] boolValue];
+    if (stored[@"fpsLimit"])
+        settings.fps_limit = [stored[@"fpsLimit"] intValue];
+    if (stored[@"cpuOpt"])
+        settings.cpu_opt = [stored[@"cpuOpt"] boolValue];
+    if (stored[@"ngs"])
+        settings.ngs_enable = [stored[@"ngs"] boolValue];
+    if (stored[@"asyncPipelines"])
+        settings.async_pipeline_compilation = [stored[@"asyncPipelines"] boolValue];
+    if (stored[@"anisotropic"])
+        settings.anisotropic_filtering = [stored[@"anisotropic"] intValue];
+    return settings;
+}
+
+void store_game_settings(NSString *titleId, const Vita3KIOSSettings &settings) {
+    [NSUserDefaults.standardUserDefaults setObject:@{
+        @"resolution": @(settings.resolution_multiplier),
+        @"vsync": @(settings.v_sync),
+        @"fpsLimit": @(settings.fps_limit),
+        @"cpuOpt": @(settings.cpu_opt),
+        @"ngs": @(settings.ngs_enable),
+        @"asyncPipelines": @(settings.async_pipeline_compilation),
+        @"anisotropic": @(settings.anisotropic_filtering),
+    } forKey:game_settings_key(titleId)];
+}
+
 std::string hex_bytes(const std::string &value) {
     constexpr char digits[] = "0123456789ABCDEF";
     std::string result;
@@ -166,6 +296,181 @@ std::string hex_bytes(const std::string &value) {
 
 } // namespace
 
+// Pan/zoom square crop for custom cover art. The scroll view's visible square
+// maps directly to the rendered 1024x1024 cover.
+@interface Vita3KCoverCropController : UIViewController <UIScrollViewDelegate>
+@property(nonatomic, strong) UIImage *image;
+@property(nonatomic, copy) NSString *titleId;
+@property(nonatomic, copy) dispatch_block_t onDone;
+@property(nonatomic, strong) UIScrollView *cropScroll;
+@property(nonatomic, strong) UIImageView *imageView;
+@end
+
+@implementation Vita3KCoverCropController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.blackColor;
+
+    self.cropScroll = [[UIScrollView alloc] init];
+    self.cropScroll.delegate = self;
+    self.cropScroll.showsHorizontalScrollIndicator = NO;
+    self.cropScroll.showsVerticalScrollIndicator = NO;
+    self.cropScroll.alwaysBounceHorizontal = YES;
+    self.cropScroll.alwaysBounceVertical = YES;
+    self.cropScroll.layer.borderColor = UIColor.whiteColor.CGColor;
+    self.cropScroll.layer.borderWidth = 1.5;
+    self.cropScroll.clipsToBounds = YES;
+    [self.view addSubview:self.cropScroll];
+
+    self.imageView = [[UIImageView alloc] initWithImage:self.image];
+    self.imageView.contentMode = UIViewContentModeScaleToFill;
+    [self.cropScroll addSubview:self.imageView];
+
+    UILabel *hint = [[UILabel alloc] init];
+    hint.text = @"Pinch and drag to frame the cover";
+    hint.textColor = UIColor.whiteColor;
+    hint.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    hint.textAlignment = NSTextAlignmentCenter;
+    hint.tag = 401;
+    [self.view addSubview:hint];
+
+    UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
+    [cancel setTitle:@"Cancel" forState:UIControlStateNormal];
+    cancel.tintColor = UIColor.whiteColor;
+    cancel.tag = 402;
+    [cancel addTarget:self action:@selector(cancelTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:cancel];
+
+    UIButton *save = [UIButton buttonWithType:UIButtonTypeSystem];
+    [save setTitle:@"Save" forState:UIControlStateNormal];
+    save.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    save.tag = 403;
+    [save addTarget:self action:@selector(saveTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:save];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    const UIEdgeInsets safe = self.view.safeAreaInsets;
+    const CGRect bounds = self.view.bounds;
+    const CGFloat side = MIN(CGRectGetWidth(bounds) - 40,
+        CGRectGetHeight(bounds) - safe.top - safe.bottom - 140);
+    const BOOL firstLayout = CGRectIsEmpty(self.cropScroll.frame);
+    self.cropScroll.frame = CGRectMake((CGRectGetWidth(bounds) - side) / 2,
+        safe.top + 64, side, side);
+    [self.view viewWithTag:401].frame = CGRectMake(20, safe.top + 18, CGRectGetWidth(bounds) - 40, 24);
+    [self.view viewWithTag:402].frame = CGRectMake(24, CGRectGetMaxY(self.cropScroll.frame) + 18, 90, 44);
+    [self.view viewWithTag:403].frame = CGRectMake(CGRectGetWidth(bounds) - 114,
+        CGRectGetMaxY(self.cropScroll.frame) + 18, 90, 44);
+    if (firstLayout && self.image) {
+        const CGSize imageSize = self.image.size;
+        // Minimum zoom always fills the square.
+        const CGFloat fill = MAX(side / imageSize.width, side / imageSize.height);
+        self.imageView.frame = CGRectMake(0, 0, imageSize.width, imageSize.height);
+        self.cropScroll.contentSize = imageSize;
+        self.cropScroll.minimumZoomScale = fill;
+        self.cropScroll.maximumZoomScale = MAX(fill * 8, 2.0);
+        self.cropScroll.zoomScale = fill;
+        // Center the initial crop.
+        self.cropScroll.contentOffset = CGPointMake(
+            MAX(0, (imageSize.width * fill - side) / 2),
+            MAX(0, (imageSize.height * fill - side) / 2));
+    }
+}
+
+- (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView {
+    (void)scrollView;
+    return self.imageView;
+}
+
+- (void)cancelTapped {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+- (void)saveTapped {
+    const CGFloat side = CGRectGetWidth(self.cropScroll.bounds);
+    const CGFloat zoom = self.cropScroll.zoomScale;
+    const CGRect cropInImage = CGRectMake(self.cropScroll.contentOffset.x / zoom,
+        self.cropScroll.contentOffset.y / zoom, side / zoom, side / zoom);
+    const CGFloat renderSide = 1024;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
+    format.opaque = YES;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc]
+        initWithSize:CGSizeMake(renderSide, renderSide) format:format];
+    UIImage *image = self.image;
+    UIImage *rendered = [renderer imageWithActions:^(__unused UIGraphicsImageRendererContext *context) {
+        const CGFloat scale = renderSide / cropInImage.size.width;
+        [image drawInRect:CGRectMake(-cropInImage.origin.x * scale, -cropInImage.origin.y * scale,
+            image.size.width * scale, image.size.height * scale)];
+    }];
+    [UIImagePNGRepresentation(rendered) writeToFile:cover_render_path(self.titleId) atomically:YES];
+    dispatch_block_t done = self.onDone;
+    [self dismissViewControllerAnimated:YES completion:^{
+        if (done)
+            done();
+    }];
+}
+
+@end
+
+// Keeps the PHPicker delegate alive while the sheet is up; on pick, stores the
+// original and opens the crop controller.
+@interface Vita3KCoverPicker : NSObject <PHPickerViewControllerDelegate>
+@property(nonatomic, copy) NSString *titleId;
+@end
+
+static Vita3KCoverPicker *g_cover_picker = nil;
+static void present_cover_crop(NSString *titleId, UIImage *image);
+
+@implementation Vita3KCoverPicker
+
+- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
+    NSString *titleId = self.titleId;
+    [picker dismissViewControllerAnimated:YES completion:nil];
+    NSItemProvider *provider = results.firstObject.itemProvider;
+    if (![provider canLoadObjectOfClass:UIImage.class])
+        return;
+    [provider loadObjectOfClass:UIImage.class completionHandler:^(id<NSItemProviderReading> object, NSError *error) {
+        UIImage *image = (UIImage *)object;
+        if (!image || error)
+            return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [UIImagePNGRepresentation(image) writeToFile:cover_original_path(titleId) atomically:YES];
+            present_cover_crop(titleId, image);
+        });
+    }];
+}
+
+@end
+
+static void present_cover_crop(NSString *titleId, UIImage *image) {
+    UIViewController *root = active_window().rootViewController;
+    if (!root || !image)
+        return;
+    Vita3KCoverCropController *crop = [[Vita3KCoverCropController alloc] init];
+    crop.image = image;
+    crop.titleId = titleId;
+    crop.onDone = ^{ reload_library_cells(); };
+    crop.modalPresentationStyle = UIModalPresentationFullScreen;
+    [root presentViewController:crop animated:YES completion:nil];
+}
+
+static void present_cover_picker(NSString *titleId) {
+    UIViewController *root = active_window().rootViewController;
+    if (!root)
+        return;
+    PHPickerConfiguration *configuration = [[PHPickerConfiguration alloc] init];
+    configuration.selectionLimit = 1;
+    configuration.filter = PHPickerFilter.imagesFilter;
+    PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:configuration];
+    if (!g_cover_picker)
+        g_cover_picker = [[Vita3KCoverPicker alloc] init];
+    g_cover_picker.titleId = titleId;
+    picker.delegate = g_cover_picker;
+    [root presentViewController:picker animated:YES completion:nil];
+}
+
 @interface Vita3KGameCell : UICollectionViewCell
 @property(nonatomic, strong) UIVisualEffectView *glass;
 @property(nonatomic, strong) UIImageView *icon;
@@ -174,7 +479,10 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UILabel *metadataLabel;
 @property(nonatomic, strong) UIView *separator;
 @property(nonatomic) BOOL listMode;
-- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSString *)metadata
+// Landscape card view: a centered cover-flow item — bare cover art with the
+// title and play info centered beneath it, no glass card.
+@property(nonatomic) BOOL carouselMode;
+- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSAttributedString *)metadata
               iconPath:(NSString *)iconPath listMode:(BOOL)listMode;
 @end
 
@@ -212,7 +520,7 @@ std::string hex_bytes(const std::string &value) {
     self.metadataLabel = [[UILabel alloc] init];
     self.metadataLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
     self.metadataLabel.textColor = UIColor.secondaryLabelColor;
-    self.metadataLabel.numberOfLines = 2;
+    self.metadataLabel.numberOfLines = 0;
     [self.glass.contentView addSubview:self.metadataLabel];
     self.separator = [[UIView alloc] init];
     self.separator.backgroundColor = UIColor.separatorColor;
@@ -220,23 +528,46 @@ std::string hex_bytes(const std::string &value) {
     return self;
 }
 
+// Shared with the layout size calculation in Vita3KLibraryView so cells and
+// their flow-layout heights always agree with the metadata toggles.
+CGFloat library_metadata_height() {
+    return metadata_line_count() * 16 + 2;
+}
+
+CGFloat library_list_row_height() {
+    return MAX(64, 6 + 24 + (show_title_ids() ? 17 : 0) + library_metadata_height() + 10);
+}
+
+CGFloat library_card_label_height() {
+    return 7 + 40 + (show_title_ids() ? 17 : 0) + library_metadata_height() + 10;
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     const CGFloat inset = 12;
+    if (self.carouselMode) {
+        const CGFloat side = CGRectGetWidth(self.bounds);
+        self.icon.frame = CGRectMake(0, 0, side, side);
+        self.titleLabel.frame = CGRectMake(0, side + 10, side, 24);
+        self.identifierLabel.frame = CGRectZero;
+        self.metadataLabel.frame = CGRectMake(0, CGRectGetMaxY(self.titleLabel.frame) + 2, side, 18);
+        self.separator.frame = CGRectZero;
+        return;
+    }
     if (self.listMode) {
-        const CGFloat iconSize = MAX(1, CGRectGetHeight(self.bounds) - 20);
-        self.icon.frame = CGRectMake(10, 10, iconSize, iconSize);
+        const CGFloat iconSize = MIN(72, MAX(1, CGRectGetHeight(self.bounds) - 20));
+        self.icon.frame = CGRectMake(10, (CGRectGetHeight(self.bounds) - iconSize) / 2, iconSize, iconSize);
         const CGFloat textX = CGRectGetMaxX(self.icon.frame) + 13;
         const CGFloat textWidth = MAX(1, CGRectGetWidth(self.bounds) - textX - inset);
-        self.titleLabel.frame = CGRectMake(textX, self.identifierLabel.hidden ? 12 : 6, textWidth, 24);
+        self.titleLabel.frame = CGRectMake(textX, 6, textWidth, 24);
         self.identifierLabel.frame = CGRectMake(textX, CGRectGetMaxY(self.titleLabel.frame), textWidth, 17);
         self.metadataLabel.frame = CGRectMake(textX,
-            self.identifierLabel.hidden ? CGRectGetMaxY(self.titleLabel.frame) + 7 : CGRectGetMaxY(self.identifierLabel.frame) + 3,
-            textWidth, 28);
+            (self.identifierLabel.hidden ? CGRectGetMaxY(self.titleLabel.frame) : CGRectGetMaxY(self.identifierLabel.frame)) + 2,
+            textWidth, library_metadata_height());
         self.separator.frame = CGRectMake(textX, CGRectGetHeight(self.bounds) - 1,
             MAX(1, CGRectGetWidth(self.bounds) - textX), 1);
     } else {
-        const CGFloat labelHeight = self.identifierLabel.hidden ? 91 : 108;
+        const CGFloat labelHeight = library_card_label_height();
         self.icon.frame = CGRectMake(inset, inset, CGRectGetWidth(self.bounds) - inset * 2,
             MAX(1, CGRectGetHeight(self.bounds) - labelHeight - inset * 2));
         self.titleLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.icon.frame) + 7,
@@ -244,35 +575,44 @@ std::string hex_bytes(const std::string &value) {
         self.identifierLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.titleLabel.frame),
             CGRectGetWidth(self.bounds) - inset * 2, 17);
         self.metadataLabel.frame = CGRectMake(inset,
-            self.identifierLabel.hidden ? CGRectGetMaxY(self.titleLabel.frame) + 3 : CGRectGetMaxY(self.identifierLabel.frame) + 2,
-            CGRectGetWidth(self.bounds) - inset * 2, 34);
+            (self.identifierLabel.hidden ? CGRectGetMaxY(self.titleLabel.frame) : CGRectGetMaxY(self.identifierLabel.frame)) + 2,
+            CGRectGetWidth(self.bounds) - inset * 2, library_metadata_height());
         self.separator.frame = CGRectZero;
     }
 }
 
 - (void)setHighlighted:(BOOL)highlighted {
     [super setHighlighted:highlighted];
+    if (self.carouselMode)
+        return; // the carousel owns transform and alpha
     [UIView animateWithDuration:0.16 animations:^{
         self.transform = highlighted ? CGAffineTransformMakeScale(0.96, 0.96) : CGAffineTransformIdentity;
         self.alpha = highlighted ? 0.78 : 1.0;
     }];
 }
 
-- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSString *)metadata
+- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSAttributedString *)metadata
               iconPath:(NSString *)iconPath listMode:(BOOL)listMode {
     self.listMode = listMode;
     self.titleLabel.text = title;
     self.identifierLabel.text = identifier;
-    self.metadataLabel.text = metadata;
-    self.identifierLabel.hidden = !show_title_ids();
+    self.metadataLabel.attributedText = metadata;
+    self.identifierLabel.hidden = !show_title_ids() || self.carouselMode;
     self.separator.hidden = !listMode;
     // List rows sit directly on the background like a system list: no
     // material, no forced palette — every color adapts to light/dark mode.
-    self.glass.effect = listMode ? nil : glass_effect(NO);
+    // Carousel items are bare covers with no material at all.
+    self.glass.effect = (listMode || self.carouselMode) ? nil : glass_effect(NO);
     self.glass.backgroundColor = UIColor.clearColor;
-    self.glass.layer.cornerRadius = listMode ? 0 : 26;
+    self.glass.layer.cornerRadius = (listMode || self.carouselMode) ? 0 : 26;
     self.icon.layer.cornerRadius = listMode ? 8 : 18;
-    self.titleLabel.numberOfLines = listMode ? 1 : 2;
+    self.titleLabel.numberOfLines = (listMode || self.carouselMode) ? 1 : 2;
+    self.titleLabel.textAlignment = self.carouselMode ? NSTextAlignmentCenter : NSTextAlignmentLeft;
+    self.metadataLabel.textAlignment = self.carouselMode ? NSTextAlignmentCenter : NSTextAlignmentLeft;
+    if (!self.carouselMode) {
+        self.transform = CGAffineTransformIdentity;
+        self.alpha = 1.0;
+    }
     self.titleLabel.textColor = UIColor.labelColor;
     self.identifierLabel.textColor = UIColor.secondaryLabelColor;
     self.metadataLabel.textColor = UIColor.secondaryLabelColor;
@@ -304,7 +644,10 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UILabel *headerTitle;
 @property(nonatomic, strong) NSDictionary<NSString *, NSArray<UIView *> *> *pages;
 @property(nonatomic) BOOL showingRoot;
+// Non-nil when editing one title's override instead of the global settings.
+@property(nonatomic, copy) NSString *perGameTitleId;
 - (instancetype)initWithFrame:(CGRect)frame values:(const Vita3KIOSSettings &)values;
+- (void)enterPerGameModeForTitle:(NSString *)titleId;
 - (void)navigateBack;
 - (void)padSwitchCategory:(NSInteger)delta;
 @end
@@ -378,15 +721,23 @@ std::string hex_bytes(const std::string &value) {
     [save setTitle:@"Save" forState:UIControlStateNormal];
     save.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     [save addTarget:self action:@selector(save) forControlEvents:UIControlEventTouchUpInside];
+    save.translatesAutoresizingMaskIntoConstraints = NO;
     [header addArrangedSubview:back];
     [header addArrangedSubview:self.headerTitle];
-    [header addArrangedSubview:save];
     [self addSubview:header];
+    // Save is pinned to the safe-area trailing edge on its own, outside the
+    // header stack: stack distribution let it wander as the title text and
+    // orientation changed.
+    [self addSubview:save];
+    [self.headerTitle setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [self.headerTitle setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     [NSLayoutConstraint activateConstraints:@[
         [header.leadingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.leadingAnchor constant:20],
-        [header.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-20],
+        [header.trailingAnchor constraintLessThanOrEqualToAnchor:save.leadingAnchor constant:-12],
         [header.topAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.topAnchor constant:8],
         [header.heightAnchor constraintEqualToConstant:50],
+        [save.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-20],
+        [save.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
         [self.scrollView.leadingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.leadingAnchor],
         [self.scrollView.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor],
         [self.scrollView.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:8],
@@ -394,7 +745,8 @@ std::string hex_bytes(const std::string &value) {
     ]];
 
     self.resolutionSlider = [[UISlider alloc] init];
-    self.resolutionSlider.minimumValue = 1.0f;
+    // 0.5x/0.75x render below native for heavy titles.
+    self.resolutionSlider.minimumValue = 0.5f;
     self.resolutionSlider.maximumValue = 4.0f;
     self.resolutionSlider.value = values.resolution_multiplier;
     [self.resolutionSlider addTarget:self action:@selector(resolutionChanged:) forControlEvents:UIControlEventValueChanged];
@@ -421,7 +773,6 @@ std::string hex_bytes(const std::string &value) {
     fpsAccessory.accessibilityIdentifier = @"wideAccessory";
     [self fpsChanged:self.fpsSlider];
     [self addSection:@"Video" rows:@[
-        [self row:@"Resolution multiplier" hint:@"Higher values are sharper but increase GPU load." accessory:resolutionAccessory],
         [self switchRow:@"V-Sync" hint:@"Synchronizes presentation to the display." value:values.v_sync output:&_vsyncSwitch],
         [self row:@"FPS limiter" hint:@"Caps presentation without changing the Vita's 60 Hz timing." accessory:fpsAccessory],
     ]];
@@ -434,6 +785,7 @@ std::string hex_bytes(const std::string &value) {
             self.anisotropicControl.selectedSegmentIndex = index;
     }
     [self addSection:@"Graphics" rows:@[
+        [self row:@"Resolution multiplier" hint:@"Higher values are sharper but increase GPU load; below 1x renders faster." accessory:resolutionAccessory],
         [self switchRow:@"Async pipeline compilation" hint:@"Reduces shader stutter while new scenes compile." value:values.async_pipeline_compilation output:&_asyncSwitch],
         [self row:@"Anisotropic filtering" hint:@"Sharpens textures viewed at an angle." accessory:self.anisotropicControl],
     ]];
@@ -471,8 +823,12 @@ std::string hex_bytes(const std::string &value) {
     UISwitch *titleIds = [[UISwitch alloc] init];
     titleIds.on = show_title_ids();
     [titleIds addTarget:self action:@selector(showTitleIdsChanged:) forControlEvents:UIControlEventValueChanged];
+    UISwitch *versionToggle = [self defaultsReloadSwitch:@"tsubomi.showVersion" on:show_game_version()];
+    UISwitch *sizeToggle = [self defaultsReloadSwitch:@"tsubomi.showGameSize" on:show_game_size()];
     [self addSection:@"Library" rows:@[
         [self row:@"Show title IDs" hint:@"Show the PCSG… identifier under each game." accessory:titleIds],
+        [self row:@"Show version number" hint:@"Show the installed game version under the title ID." accessory:versionToggle],
+        [self row:@"Show game size" hint:@"Show each game's installed size on its own line." accessory:sizeToggle],
     ]];
 
     UIButton *changelog = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -515,6 +871,30 @@ std::string hex_bytes(const std::string &value) {
     }
 }
 
+// One flat page with the emulator sections (no frontend-only toggles); Save
+// writes the override for this title only.
+- (void)enterPerGameModeForTitle:(NSString *)titleId {
+    self.perGameTitleId = titleId;
+    [self clearSettingsStack];
+    self.showingRoot = NO;
+    self.headerTitle.text = [NSString stringWithFormat:@"%@ settings", titleId];
+    for (NSString *category in @[@"Video", @"Graphics", @"Audio", @"System & Input"])
+        for (UIView *view in self.pages[category])
+            [self.stack addArrangedSubview:view];
+    UIButton *useGlobal = [UIButton buttonWithType:UIButtonTypeSystem];
+    [useGlobal setTitle:@"Use global settings" forState:UIControlStateNormal];
+    useGlobal.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    [useGlobal setTitleColor:UIColor.systemRedColor forState:UIControlStateNormal];
+    [useGlobal.heightAnchor constraintEqualToConstant:48].active = YES;
+    [useGlobal addTarget:self action:@selector(clearPerGameSettings) forControlEvents:UIControlEventTouchUpInside];
+    [self.stack addArrangedSubview:useGlobal];
+}
+
+- (void)clearPerGameSettings {
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:game_settings_key(self.perGameTitleId)];
+    [self close];
+}
+
 - (UIButton *)categoryButton:(NSString *)title symbol:(NSString *)symbol color:(UIColor *)color {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.accessibilityIdentifier = title;
@@ -551,7 +931,8 @@ std::string hex_bytes(const std::string &value) {
     about.accessibilityIdentifier = @"About";
     [about setTitle:[NSString stringWithFormat:@"About  ·  Tsubomi %@", tsubomi_app_version()]
             forState:UIControlStateNormal];
-    [about setTitleColor:UIColor.secondaryLabelColor forState:UIControlStateNormal];
+    // Blue reads as tappable — this row opens the About page.
+    [about setTitleColor:UIColor.systemBlueColor forState:UIControlStateNormal];
     about.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
     about.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
     [about addTarget:self action:@selector(openCategory:) forControlEvents:UIControlEventTouchUpInside];
@@ -600,7 +981,7 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)navigateBack {
-    if (self.showingRoot)
+    if (self.showingRoot || self.perGameTitleId)
         [self close];
     else
         [self showSettingsRoot];
@@ -617,6 +998,20 @@ std::string hex_bytes(const std::string &value) {
     reload_library_cells();
 }
 
+// A defaults-backed switch that reloads the library cells when toggled.
+- (UISwitch *)defaultsReloadSwitch:(NSString *)key on:(BOOL)on {
+    UISwitch *control = [[UISwitch alloc] init];
+    control.on = on;
+    control.accessibilityIdentifier = key;
+    [control addTarget:self action:@selector(libraryToggleChanged:) forControlEvents:UIControlEventValueChanged];
+    return control;
+}
+
+- (void)libraryToggleChanged:(UISwitch *)sender {
+    [NSUserDefaults.standardUserDefaults setBool:sender.on forKey:sender.accessibilityIdentifier];
+    reload_library_cells();
+}
+
 - (void)openVita3K {
     [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://github.com/Vita3K/Vita3K"]
                                     options:@{}
@@ -624,14 +1019,17 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.10.0",
-        @"• Gravity Rush now boots: fixed a hang on a guarded-memory read during thread start.\n"
-        @"• Persona 4 Golden's in-game save/load menu background now renders like desktop.\n"
-        @"• Faster rendering: textures are content-checked once per scene instead of on every bind.\n"
-        @"• The whole app UI is controller-navigable: DPAD moves, Cross confirms, Circle goes back, Triangle opens game actions, L1/R1 switch settings pages.\n"
-        @"• Layout editor snapping is much gentler — elements no longer stick to guides.\n"
-        @"• The last game frame can no longer appear behind the library or settings.\n"
-        @"• JIT is prepared right at app launch, so StikDebug may detach afterwards without breaking game boots.");
+    present_alert(@"What's new in 0.11.0",
+        @"• Gravity Rush no longer crashes after long play: exited threads return their JIT memory to the pool (now 32 regions).\n"
+        @"• Quitting a game reliably returns to the library instead of a black screen.\n"
+        @"• Physical controller face buttons are positionally correct (Cross/Circle and Square/Triangle were swapped).\n"
+        @"• Per-game settings: long-press a game > Game settings; Use global settings restores.\n"
+        @"• Custom cover art from your Photos, with crop adjust and reset.\n"
+        @"• Landscape card view is a centered cover carousel with looping scroll.\n"
+        @"• Trophy counts on every game, and save export/import now carries trophy progress.\n"
+        @"• Resolution multiplier moved to Graphics and can go below 1x.\n"
+        @"• List view is the default; totals at the bottom; version and size lines can be hidden.\n"
+        @"• Brighter in-game menu button; toasts sit on glass; layout editor keeps buttons exactly where you drop them.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -727,7 +1125,8 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)updateResolutionLabel {
-    self.resolutionValue.text = [NSString stringWithFormat:@"%.2gx", self.resolutionSlider.value];
+    // %.3g keeps quarter steps exact ("0.75x", "1.25x") where %.2g rounded.
+    self.resolutionValue.text = [NSString stringWithFormat:@"%.3gx", self.resolutionSlider.value];
 }
 
 - (void)controllerOptions {
@@ -747,11 +1146,16 @@ std::string hex_bytes(const std::string &value) {
     action.settings.resolution_multiplier = self.resolutionSlider.value;
     action.settings.v_sync = self.vsyncSwitch.on;
     action.settings.fps_limit = (int)self.fpsSlider.value;
-    [NSUserDefaults.standardUserDefaults setInteger:action.settings.fps_limit forKey:@"tsubomi.fpsLimit"];
     action.settings.cpu_opt = self.cpuSwitch.on;
     action.settings.ngs_enable = self.ngsSwitch.on;
     action.settings.async_pipeline_compilation = self.asyncSwitch.on;
     action.settings.anisotropic_filtering = anisotropicValues[self.anisotropicControl.selectedSegmentIndex];
+    if (self.perGameTitleId) {
+        store_game_settings(self.perGameTitleId, action.settings);
+        [self close];
+        return;
+    }
+    [NSUserDefaults.standardUserDefaults setInteger:action.settings.fps_limit forKey:@"tsubomi.fpsLimit"];
     queue_action(std::move(action));
     [self close];
 }
@@ -868,11 +1272,15 @@ std::string hex_bytes(const std::string &value) {
     Vita3KIOSSettings _settings;
     BOOL _jitAvailable;
     BOOL _listMode;
+    // Landscape card view is a centered, infinitely-looping cover carousel.
+    BOOL _carouselActive;
+    BOOL _carouselNeedsCentering;
     CGFloat _lastCollectionWidth;
 }
 @property(nonatomic, strong) UICollectionView *collectionView;
 @property(nonatomic, strong) UILabel *emptyLabel;
 @property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UIVisualEffectView *statusGlass;
 @property(nonatomic, strong) UIView *busyOverlay;
 @property(nonatomic, strong) UIVisualEffectView *headerGlass;
 @property(nonatomic, strong) CAGradientLayer *backgroundGradient;
@@ -894,7 +1302,11 @@ std::string hex_bytes(const std::string &value) {
     if (!self)
         return nil;
     _jitAvailable = YES;
-    _listMode = [NSUserDefaults.standardUserDefaults boolForKey:@"tsubomi.libraryListMode"];
+    // List view is the default presentation (key absent = list).
+    NSUserDefaults *viewDefaults = NSUserDefaults.standardUserDefaults;
+    _listMode = [viewDefaults objectForKey:@"tsubomi.libraryListMode"]
+        ? [viewDefaults boolForKey:@"tsubomi.libraryListMode"]
+        : YES;
     // Enable battery monitoring once (not per perf-overlay tick).
     UIDevice.currentDevice.batteryMonitoringEnabled = YES;
     self.backgroundColor = UIColor.systemBackgroundColor;
@@ -961,8 +1373,8 @@ std::string hex_bytes(const std::string &value) {
     [viewMode addTarget:self action:@selector(toggleViewMode:) forControlEvents:UIControlEventTouchUpInside];
     [self addSubview:viewMode];
 
-    // Firmware version indicator, wrapped in a small glass capsule.
-    self.firmwareGlass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
+    // Firmware version indicator: a plain label (no glass material).
+    self.firmwareGlass = [[UIVisualEffectView alloc] initWithEffect:nil];
     self.firmwareGlass.layer.cornerRadius = 11;
     self.firmwareGlass.clipsToBounds = YES;
     self.firmwareGlass.hidden = YES;
@@ -1003,6 +1415,8 @@ std::string hex_bytes(const std::string &value) {
     // position below the header while scrolled content slides underneath.
     self.collectionView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     [self.collectionView registerClass:Vita3KGameCell.class forCellWithReuseIdentifier:@"game"];
+    [self.collectionView registerClass:UICollectionReusableView.class
+        forSupplementaryViewOfKind:UICollectionElementKindSectionFooter withReuseIdentifier:@"totals"];
     [self insertSubview:self.collectionView belowSubview:self.headerGlass];
 
     self.emptyLabel = [[UILabel alloc] init];
@@ -1013,13 +1427,19 @@ std::string hex_bytes(const std::string &value) {
     self.emptyLabel.numberOfLines = 0;
     [self addSubview:self.emptyLabel];
 
+    // Transient toast ("Settings saved", "Game imported", …) in a glass
+    // capsule so the orange text stays readable over library content.
+    self.statusGlass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
+    self.statusGlass.layer.cornerRadius = 14;
+    self.statusGlass.clipsToBounds = YES;
+    self.statusGlass.alpha = 0;
     self.statusLabel = [[UILabel alloc] init];
     self.statusLabel.textColor = UIColor.systemOrangeColor;
     self.statusLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
     self.statusLabel.textAlignment = NSTextAlignmentCenter;
     self.statusLabel.numberOfLines = 2;
-    self.statusLabel.alpha = 0;
-    [self addSubview:self.statusLabel];
+    [self.statusGlass.contentView addSubview:self.statusLabel];
+    [self addSubview:self.statusGlass];
     return self;
 }
 
@@ -1057,10 +1477,15 @@ std::string hex_bytes(const std::string &value) {
     CGFloat headerBottom = MAX(CGRectGetMaxY(title.frame), CGRectGetMaxY(settings.frame));
     if (!self.firmwareGlass.hidden)
         headerBottom = MAX(headerBottom, CGRectGetMaxY(self.firmwareGlass.frame));
-    // The status label is a transient toast floating over the content edge;
-    // it must not reserve permanent header height.
-    self.statusLabel.frame = CGRectMake(safe.left + 20, headerBottom + 5,
-        MAX(1, usableWidth - 40), 38);
+    // The status toast floats over the content edge; it must not reserve
+    // permanent header height. Size the capsule to its text.
+    const CGFloat statusMaxWidth = MAX(1, usableWidth - 40);
+    const CGSize statusText = [self.statusLabel sizeThatFits:CGSizeMake(statusMaxWidth - 28, CGFLOAT_MAX)];
+    const CGFloat statusWidth = MIN(statusMaxWidth, statusText.width + 28);
+    const CGFloat statusHeight = MAX(28, statusText.height + 12);
+    self.statusGlass.frame = CGRectMake(safe.left + (usableWidth - statusWidth) / 2,
+        headerBottom + 5, statusWidth, statusHeight);
+    self.statusLabel.frame = self.statusGlass.bounds;
     CGFloat contentTop = headerBottom + 14;
     if (!self.jitBanner.hidden) {
         const CGFloat bannerX = safe.left + 18;
@@ -1094,7 +1519,95 @@ std::string hex_bytes(const std::string &value) {
         _lastCollectionWidth = width;
         [self.collectionView.collectionViewLayout invalidateLayout];
     }
+    [self syncCarouselMode:contentTop];
     [self updateHeaderGlassVisibility];
+}
+
+// ---- Landscape cover carousel ----------------------------------------------
+
+// Loop the games list many times so scrolling feels endless in both
+// directions; indexes map back with modulo.
+static const NSInteger kCarouselRepeat = 400;
+
+- (BOOL)carouselShouldBeActive {
+    return !_listMode && !_games.empty()
+        && CGRectGetWidth(self.bounds) > CGRectGetHeight(self.bounds);
+}
+
+- (CGFloat)carouselCoverSide {
+    const UIEdgeInsets safe = self.safeAreaInsets;
+    const CGFloat availableHeight = CGRectGetHeight(self.bounds) - safe.top - safe.bottom - 170;
+    return MAX(120, MIN(availableHeight, CGRectGetWidth(self.bounds) * 0.34));
+}
+
+- (void)syncCarouselMode:(CGFloat)contentTop {
+    const BOOL shouldBeActive = [self carouselShouldBeActive];
+    UICollectionViewFlowLayout *layout = (UICollectionViewFlowLayout *)self.collectionView.collectionViewLayout;
+    if (shouldBeActive != _carouselActive) {
+        _carouselActive = shouldBeActive;
+        layout.scrollDirection = _carouselActive
+            ? UICollectionViewScrollDirectionHorizontal
+            : UICollectionViewScrollDirectionVertical;
+        _carouselNeedsCentering = _carouselActive;
+        [layout invalidateLayout];
+        [self.collectionView reloadData];
+    }
+    if (_carouselActive) {
+        const CGFloat side = [self carouselCoverSide];
+        const UIEdgeInsets safe = self.safeAreaInsets;
+        // Center vertically in the space under the header; side insets center
+        // the focused cover horizontally.
+        const CGFloat itemHeight = side + 60;
+        const CGFloat verticalSpace = CGRectGetHeight(self.bounds) - contentTop - safe.bottom;
+        const CGFloat topInset = contentTop + MAX(0, (verticalSpace - itemHeight) / 2);
+        const CGFloat horizontalInset = MAX(0, (CGRectGetWidth(self.bounds) - side) / 2);
+        self.collectionView.contentInset = UIEdgeInsetsMake(topInset, horizontalInset, safe.bottom, horizontalInset);
+        if (_carouselNeedsCentering) {
+            _carouselNeedsCentering = NO;
+            [self.collectionView layoutIfNeeded];
+            const NSInteger middle = (kCarouselRepeat / 2) * static_cast<NSInteger>(_games.size());
+            [self.collectionView scrollToItemAtIndexPath:[NSIndexPath indexPathForItem:middle inSection:0]
+                                        atScrollPosition:UICollectionViewScrollPositionCenteredHorizontally
+                                                animated:NO];
+            [self applyCarouselTransforms];
+        }
+    }
+}
+
+- (CGFloat)carouselStride {
+    UICollectionViewFlowLayout *layout = (UICollectionViewFlowLayout *)self.collectionView.collectionViewLayout;
+    return [self carouselCoverSide] + layout.minimumLineSpacing;
+}
+
+// Scale and dim covers by their distance from the horizontal center, the way
+// a music-library shuffle presents the focused album.
+- (void)applyCarouselTransforms {
+    if (!_carouselActive)
+        return;
+    const CGFloat centerX = self.collectionView.contentOffset.x + CGRectGetWidth(self.collectionView.bounds) / 2;
+    for (UICollectionViewCell *cell in self.collectionView.visibleCells) {
+        const CGFloat distance = fabs(cell.center.x - centerX) / MAX(1, [self carouselStride]);
+        const CGFloat closeness = MAX(0.0, 1.0 - MIN(distance, 1.0));
+        const CGFloat scale = 0.78 + 0.22 * closeness;
+        cell.transform = CGAffineTransformMakeScale(scale, scale);
+        cell.alpha = 0.5 + 0.5 * closeness;
+    }
+}
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView
+                     withVelocity:(CGPoint)velocity
+              targetContentOffset:(inout CGPoint *)targetContentOffset {
+    if (!_carouselActive || scrollView != self.collectionView)
+        return;
+    // Snap so a cover always rests centered.
+    const CGFloat stride = [self carouselStride];
+    const CGFloat base = -scrollView.contentInset.left;
+    CGFloat target = targetContentOffset->x;
+    // Nudge in the fling direction so gentle flicks advance one cover.
+    if (fabs(velocity.x) > 0.2)
+        target += stride * 0.5 * (velocity.x > 0 ? 1 : -1);
+    const CGFloat snapped = base + round((target - base) / stride) * stride;
+    targetContentOffset->x = snapped;
 }
 
 // On rotation the safe areas settle after the first layout pass, so insets
@@ -1116,8 +1629,19 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
-    if (scrollView == self.collectionView)
+    if (scrollView != self.collectionView)
+        return;
+    if (_carouselActive)
+        [self applyCarouselTransforms];
+    else
         [self updateHeaderGlassVisibility];
+}
+
+// Map a (possibly looped) collection item back to its game index.
+- (NSInteger)gameIndexForItem:(NSInteger)item {
+    if (_games.empty())
+        return 0;
+    return item % static_cast<NSInteger>(_games.size());
 }
 
 - (void)toggleViewMode:(UIButton *)sender {
@@ -1127,6 +1651,7 @@ std::string hex_bytes(const std::string &value) {
             forState:UIControlStateNormal];
     [self.collectionView.collectionViewLayout invalidateLayout];
     [self.collectionView reloadData];
+    [self setNeedsLayout]; // re-evaluate the landscape carousel mode
 }
 
 // The gradient uses CGColors, which do not auto-resolve to the current trait
@@ -1197,12 +1722,14 @@ std::string hex_bytes(const std::string &value) {
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
     (void)collectionView;
     (void)section;
-    return static_cast<NSInteger>(_games.size());
+    const auto count = static_cast<NSInteger>(_games.size());
+    return _carouselActive ? count * kCarouselRepeat : count;
 }
 
 - (__kindof UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     Vita3KGameCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"game" forIndexPath:indexPath];
-    const auto &game = _games.at(static_cast<std::size_t>(indexPath.item));
+    cell.carouselMode = _carouselActive;
+    const auto &game = _games.at(static_cast<std::size_t>([self gameIndexForItem:indexPath.item]));
     NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"Unknown title ID";
     NSString *title = [NSString stringWithUTF8String:game.title.c_str()];
     if (!title) {
@@ -1210,9 +1737,24 @@ std::string hex_bytes(const std::string &value) {
         title = [NSString stringWithFormat:@"Unknown title (%@)", identifier];
     }
     NSString *iconPath = [NSString stringWithUTF8String:game.icon_path.c_str()];
-    [cell configureTitle:display_title(identifier, title) identifier:identifier metadata:game_metadata(game)
+    if (has_custom_cover(identifier))
+        iconPath = cover_render_path(identifier);
+    NSAttributedString *metadata;
+    if (_carouselActive) {
+        // Compact one-liner under the focused cover.
+        metadata = [[NSAttributedString alloc]
+            initWithString:[NSString stringWithFormat:@"%@  ·  %@", played_time_text(game), last_played_text(game)]
+                attributes:@{
+                    NSFontAttributeName: [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1],
+                    NSForegroundColorAttributeName: UIColor.secondaryLabelColor,
+                }];
+    } else {
+        metadata = game_metadata(game);
+    }
+    [cell configureTitle:display_title(identifier, title) identifier:identifier metadata:metadata
                   iconPath:iconPath listMode:_listMode];
-    cell.alpha = _settings.firmware_ready ? 1.0 : 0.55;
+    if (!_carouselActive)
+        cell.alpha = _settings.firmware_ready ? 1.0 : 0.55;
     return cell;
 }
 
@@ -1250,9 +1792,9 @@ std::string hex_bytes(const std::string &value) {
                                          point:(CGPoint)point {
     (void)collectionView;
     (void)point;
-    if (indexPath.item >= static_cast<NSInteger>(_games.size()))
+    if ([self gameIndexForItem:indexPath.item] >= static_cast<NSInteger>(_games.size()))
         return nil;
-    const auto &game = _games.at(static_cast<std::size_t>(indexPath.item));
+    const auto &game = _games.at(static_cast<std::size_t>([self gameIndexForItem:indexPath.item]));
     NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
     NSString *original = [NSString stringWithUTF8String:game.title.c_str()] ?: identifier;
     NSString *trophyId = [NSString stringWithUTF8String:game.trophy_id.c_str()] ?: @"";
@@ -1287,8 +1829,45 @@ std::string hex_bytes(const std::string &value) {
                     request.trophy_id = trophyId.UTF8String;
                     queue_action(std::move(request));
                 }];
+            UIAction *gameSettings = [UIAction actionWithTitle:@"Game settings"
+                image:[UIImage systemImageNamed:@"slider.horizontal.3"]
+                identifier:nil handler:^(__unused UIAction *action) { [weakSelf presentGameSettings:identifier]; }];
+            UIAction *coverArt = [UIAction actionWithTitle:@"Custom cover art"
+                image:[UIImage systemImageNamed:@"photo"]
+                identifier:nil handler:^(__unused UIAction *action) { present_cover_picker(identifier); }];
             NSMutableArray<UIMenuElement *> *children = [NSMutableArray arrayWithObjects:
-                importSave, exportSave, rename, trophies, nil];
+                importSave, exportSave, rename, trophies, gameSettings, coverArt, nil];
+            if (has_game_settings(identifier)) {
+                UIAction *globalSettings = [UIAction actionWithTitle:@"Use global settings"
+                    image:[UIImage systemImageNamed:@"arrow.uturn.backward.circle"]
+                    identifier:nil
+                    handler:^(__unused UIAction *action) {
+                        [NSUserDefaults.standardUserDefaults removeObjectForKey:game_settings_key(identifier)];
+                    }];
+                [children addObject:globalSettings];
+            }
+            if ([NSFileManager.defaultManager fileExistsAtPath:cover_original_path(identifier)]) {
+                UIAction *adjustCrop = [UIAction actionWithTitle:@"Adjust cover crop"
+                    image:[UIImage systemImageNamed:@"crop"]
+                    identifier:nil
+                    handler:^(__unused UIAction *action) {
+                        UIImage *original = [UIImage imageWithContentsOfFile:cover_original_path(identifier)];
+                        present_cover_crop(identifier, original);
+                    }];
+                [children addObject:adjustCrop];
+            }
+            if (has_custom_cover(identifier)) {
+                UIAction *resetCover = [UIAction actionWithTitle:@"Reset cover art"
+                    image:[UIImage systemImageNamed:@"photo.badge.arrow.down"]
+                    identifier:nil
+                    handler:^(__unused UIAction *action) {
+                        [NSFileManager.defaultManager removeItemAtPath:cover_render_path(identifier) error:nil];
+                        [NSFileManager.defaultManager removeItemAtPath:cover_original_path(identifier) error:nil];
+                        [weakSelf.collectionView reloadData];
+                    }];
+                resetCover.attributes = UIMenuElementAttributesDestructive;
+                [children addObject:resetCover];
+            }
             if (overrideName.length) {
                 UIAction *reset = [UIAction actionWithTitle:@"Reset name"
                     image:[UIImage systemImageNamed:@"arrow.uturn.backward"]
@@ -1315,8 +1894,12 @@ std::string hex_bytes(const std::string &value) {
     const CGFloat usable = CGRectGetWidth(self.bounds) - safe.left - safe.right;
     const CGFloat collectionInset = usable < 600 ? 10 : 18;
     const CGFloat width = usable - collectionInset * 2;
+    if (_carouselActive) {
+        const CGFloat side = [self carouselCoverSide];
+        return CGSizeMake(side, side + 60);
+    }
     if (_listMode)
-        return CGSizeMake(floor(width), 82);
+        return CGSizeMake(floor(width), library_list_row_height());
     const CGFloat spacing = 14;
     // Choose the column count from a larger target cell width (~220pt) rather than a
     // couple of fixed width thresholds. Phone landscape (~750-800pt of grid)
@@ -1325,7 +1908,42 @@ std::string hex_bytes(const std::string &value) {
     const CGFloat targetItemWidth = 220;
     const NSInteger columns = MAX(2, static_cast<NSInteger>(floor((width + spacing) / (targetItemWidth + spacing))));
     const CGFloat itemWidth = floor((width - (columns - 1) * spacing) / columns);
-    return CGSizeMake(itemWidth, itemWidth + (show_title_ids() ? 112 : 95));
+    return CGSizeMake(itemWidth, itemWidth + library_card_label_height() + 4);
+}
+
+// List view ends with the library's total footprint.
+- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)layout
+    referenceSizeForFooterInSection:(NSInteger)section {
+    (void)collectionView;
+    (void)layout;
+    (void)section;
+    return _listMode && !_games.empty() ? CGSizeMake(1, 44) : CGSizeZero;
+}
+
+- (UICollectionReusableView *)collectionView:(UICollectionView *)collectionView
+    viewForSupplementaryElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)indexPath {
+    UICollectionReusableView *footer = [collectionView dequeueReusableSupplementaryViewOfKind:kind
+        withReuseIdentifier:@"totals" forIndexPath:indexPath];
+    UILabel *label = [footer viewWithTag:301];
+    if (!label) {
+        label = [[UILabel alloc] init];
+        label.tag = 301;
+        label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        label.textColor = UIColor.secondaryLabelColor;
+        label.textAlignment = NSTextAlignmentCenter;
+        label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        label.frame = footer.bounds;
+        [footer addSubview:label];
+    }
+    std::uint64_t total_bytes = 0;
+    for (const auto &game : _games)
+        total_bytes += game.size_bytes;
+    NSByteCountFormatter *bytes = [[NSByteCountFormatter alloc] init];
+    bytes.countStyle = NSByteCountFormatterCountStyleFile;
+    label.text = [NSString stringWithFormat:@"%zu game%s · %@ total",
+        _games.size(), _games.size() == 1 ? "" : "s",
+        [bytes stringFromByteCount:(long long)total_bytes]];
+    return footer;
 }
 
 - (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
@@ -1344,11 +1962,16 @@ std::string hex_bytes(const std::string &value) {
     }
     UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
     [feedback impactOccurred];
-    const auto &game = _games.at(static_cast<std::size_t>(indexPath.item));
+    const auto &game = _games.at(static_cast<std::size_t>([self gameIndexForItem:indexPath.item]));
     [self showBootingOverlay:[NSString stringWithUTF8String:game.title.c_str()] ?: @"game"];
     Vita3KIOSFrontendAction action;
     action.kind = Vita3KIOSFrontendActionKind::Launch;
     action.app_path = game.app_path;
+    NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
+    if (has_game_settings(identifier)) {
+        action.settings = game_settings_or(identifier, _settings);
+        action.has_settings_override = true;
+    }
     queue_action(std::move(action));
 }
 
@@ -1421,10 +2044,24 @@ std::string hex_bytes(const std::string &value) {
     [UIView animateWithDuration:0.22 animations:^{ settings.alpha = 1; }];
 }
 
+// Per-game settings: the same emulator controls, saved as an override for one
+// title and applied only when that title boots.
+- (void)presentGameSettings:(NSString *)identifier {
+    Vita3KSettingsView *settings = [[Vita3KSettingsView alloc]
+        initWithFrame:self.bounds values:game_settings_or(identifier, _settings)];
+    [settings enterPerGameModeForTitle:identifier];
+    settings.alpha = 0;
+    [self addSubview:settings];
+    [UIView animateWithDuration:0.22 animations:^{ settings.alpha = 1; }];
+}
+
 // Triangle on a focused cell: the same actions as the long-press context menu,
 // in a pad-navigable overlay.
 - (void)presentPadActionsForItem:(NSInteger)item {
-    if (item < 0 || item >= static_cast<NSInteger>(_games.size()))
+    if (item < 0)
+        return;
+    item = [self gameIndexForItem:item];
+    if (item >= static_cast<NSInteger>(_games.size()))
         return;
     const auto &game = _games.at(static_cast<std::size_t>(item));
     NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
@@ -1444,6 +2081,10 @@ std::string hex_bytes(const std::string &value) {
         } copy] }];
     [items addObject:@{ @"title": @"Rename title", @"symbol": @"pencil",
         @"handler": [^{ [weakSelf promptRename:identifier original:original]; } copy] }];
+    [items addObject:@{ @"title": @"Game settings", @"symbol": @"slider.horizontal.3",
+        @"handler": [^{ [weakSelf presentGameSettings:identifier]; } copy] }];
+    [items addObject:@{ @"title": @"Custom cover art", @"symbol": @"photo",
+        @"handler": [^{ present_cover_picker(identifier); } copy] }];
     [items addObject:@{ @"title": @"View trophies", @"symbol": @"trophy.fill",
         @"handler": [^{
             Vita3KIOSFrontendAction request;
@@ -1467,8 +2108,10 @@ std::string hex_bytes(const std::string &value) {
     self.statusLabel.text = settings.count
         ? [NSString stringWithFormat:@"Saved · restart required: %@", [settings componentsJoinedByString:@", "]]
         : @"Settings saved and applied";
-    self.statusLabel.alpha = 1;
-    [UIView animateWithDuration:0.3 delay:4 options:0 animations:^{ self.statusLabel.alpha = 0; } completion:nil];
+    [self setNeedsLayout];
+    [self layoutIfNeeded];
+    self.statusGlass.alpha = 1;
+    [UIView animateWithDuration:0.3 delay:4 options:0 animations:^{ self.statusGlass.alpha = 0; } completion:nil];
 }
 
 @end
@@ -1929,6 +2572,12 @@ static void set_metal_drawables_hidden(UIWindow *window, BOOL hidden) {
         UIView *view = pending.lastObject;
         [pending removeLastObject];
         if ([view.layer isKindOfClass:CAMetalLayer.class]) {
+            // Never hide a view the library lives inside: hiding an ancestor
+            // hides the library with it and the whole screen goes black.
+            if (hidden && g_library && [g_library isDescendantOfView:view]) {
+                [pending addObjectsFromArray:view.subviews];
+                continue;
+            }
             view.hidden = hidden;
             continue;
         }
@@ -1955,11 +2604,23 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         } else if (g_library.superview != host) {
             [host addSubview:g_library];
         }
+        g_library.frame = host.bounds;
+        g_library.hidden = NO;
         [g_library updateGames:gamesCopy settings:settingsCopy];
         [g_library setJitAvailable:g_jit_available];
         [g_library.superview bringSubviewToFront:g_library];
         set_metal_drawables_hidden(window, YES);
         [Vita3KPadNavigator.shared start];
+        // Session teardown may still mutate the view hierarchy after this
+        // block (SDL drawable churn); reassert visibility one tick later so a
+        // late-added game drawable can't cover or hide the library.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!g_library)
+                return;
+            g_library.hidden = NO;
+            [g_library.superview bringSubviewToFront:g_library];
+            set_metal_drawables_hidden(g_library.window ?: active_window(), YES);
+        });
     });
 }
 
@@ -2250,8 +2911,10 @@ void vita3k_ios_report_import_result(const std::string &message, const bool succ
         [g_library hideBusyOverlay];
         if (success) {
             g_library.statusLabel.text = text;
-            g_library.statusLabel.alpha = 1;
-            [UIView animateWithDuration:0.3 delay:6 options:0 animations:^{ g_library.statusLabel.alpha = 0; } completion:nil];
+            [g_library setNeedsLayout];
+            [g_library layoutIfNeeded];
+            g_library.statusGlass.alpha = 1;
+            [UIView animateWithDuration:0.3 delay:6 options:0 animations:^{ g_library.statusGlass.alpha = 0; } completion:nil];
             if ([text localizedCaseInsensitiveContainsString:@"license"])
                 present_alert(@"License installed", text);
         } else {

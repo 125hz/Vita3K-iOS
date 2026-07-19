@@ -64,12 +64,6 @@ sideload a new build.
 
 ![Amagami Ebikore+](_readme/screenshots/Amagami%20Ebikore+.png)
 
-## Building
-
-Tsubomi builds for `arm64` iOS through the `Build upstream-core iOS IPA` GitHub Actions
-workflow (`.github/workflows/ios-upstream.yml`), producing an unsigned `.ipa` you sign
-and sideload yourself. iOS is the only supported target.
-
 ## Credits
 
 - **[Vita3K](https://github.com/Vita3K/Vita3K)** and its contributors — the emulator

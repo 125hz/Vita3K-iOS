@@ -214,6 +214,37 @@ static void dump_threads(EmuEnvState &emuenv) {
                 fmt::format_to(std::back_inserter(line), " 0x{:08X}x{}", sorted[i].first, sorted[i].second);
             LOG_INFO("Thread {:>4} '{}' PC samples ({} distinct):{}{}",
                 thread->id, thread->name, sorted.size(), line, sorted.size() > shown ? " ..." : "");
+
+            // When one PC dominates the samples, the thread is in a tight
+            // loop; disassemble around it so the log shows what it polls.
+            // (VA-11's first-boot 1 fps crawl spins at a single game-code PC.)
+            if (!sorted.empty() && sorted[0].second * 2 >= NUM_SAMPLES) {
+                const uint32_t hot_pc = sorted[0].first & ~1u;
+                const bool thumb = is_thumb_mode(*thread->cpu);
+                const uint32_t insn_align = thumb ? 2 : 4;
+                uint32_t addr = (hot_pc & ~3u) - 16;
+                const uint32_t end = hot_pc + 24;
+                if (addr >= emuenv.mem.host_page_size
+                    && is_valid_addr_range(emuenv.mem, addr, end)) {
+                    std::string regs;
+                    for (int r = 0; r < 8; r++)
+                        fmt::format_to(std::back_inserter(regs), " r{}=0x{:08X}", r, read_reg(*thread->cpu, r));
+                    LOG_INFO("Thread {:>4} hot-loop registers:{}", thread->id, regs);
+                    while (addr < end) {
+                        uint16_t insn_size = insn_align;
+                        std::string disasm_text;
+                        try {
+                            disasm_text = disassemble(*thread->cpu, addr, thumb, &insn_size);
+                        } catch (...) {
+                            break;
+                        }
+                        if (insn_size == 0)
+                            break;
+                        LOG_INFO("  {} 0x{:08X}: {}", addr == hot_pc ? ">" : " ", addr, disasm_text);
+                        addr += insn_size;
+                    }
+                }
+            }
         }
     }
 }

@@ -68,6 +68,17 @@ struct CPUInterface {
 
     virtual void clear_exclusive() = 0;
 
+    // Drop the backend's translation cache (and any pooled code region backing
+    // it) while preserving architectural state. Safe to call on a thread that
+    // is not executing; the cache is rebuilt on the next run()/step().
+    virtual void release_code_cache() {}
+
+    // Recreate a released translation cache now. Returns false if the backend
+    // cannot allocate one (e.g. the iOS JIT region pool is exhausted).
+    virtual bool ensure_code_cache() {
+        return true;
+    }
+
     virtual std::size_t processor_id() const {
         return 0;
     }

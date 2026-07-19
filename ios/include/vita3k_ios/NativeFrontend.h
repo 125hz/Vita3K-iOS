@@ -21,6 +21,9 @@ struct Vita3KIOSGameEntry {
     std::uint64_t size_bytes = 0;
     std::int64_t time_played_seconds = 0;
     std::int64_t last_played_timestamp = 0;
+    // Trophy progress for the library badge; total == 0 means "no trophy data".
+    int trophies_unlocked = 0;
+    int trophies_total = 0;
 };
 
 struct Vita3KIOSTrophyEntry {
@@ -79,6 +82,9 @@ struct Vita3KIOSFrontendAction {
     std::string title_id;
     std::string trophy_id;
     Vita3KIOSSettings settings;
+    // Launch only: `settings` carries this title's per-game overrides and must
+    // be applied for the session (without persisting to the global config).
+    bool has_settings_override = false;
 };
 
 void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,

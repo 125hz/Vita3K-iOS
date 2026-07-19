@@ -517,11 +517,19 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
     const vk::ImageView color_handle_view = reinterpret_cast<VKContext *>(state.context)->current_color_view;
     const bool is_same_image = (color_handle_view == info.texture.view) || (color_handle_view == info.alternate_view);
 
-    // Desktop-parity: partial surfaces also use the texture viewport (P4G's
-    // in-game save/load menu background). The clear-and-copy detour that was
-    // tried here for iOS partial surfaces produced gradient garbage on device,
-    // while this path is verified correct against desktop with the same data.
-    if (state.features.use_texture_viewport && base_format == info.format) {
+    // The texture viewport is upstream's fast path but "not entirely
+    // accurate" (see renderer.cpp); the accurate fallback is the casted-copy
+    // path below, which is what desktop runs in high-accuracy mode. P4G's
+    // in-game save/load menu samples a partially-rendered surface and still
+    // renders garbage through the viewport shortcut on device, so route
+    // partial reads through the accurate upstream copy path on iOS. (The
+    // earlier custom clear-and-copy detour is gone; this uses stock code.)
+    bool allow_texture_viewport = state.features.use_texture_viewport;
+#ifdef VITA3K_PLATFORM_IOS
+    if (partial_surface)
+        allow_texture_viewport = false;
+#endif
+    if (allow_texture_viewport && base_format == info.format) {
         // use a texture viewport
         *texture_viewport = {
             .ratio = {

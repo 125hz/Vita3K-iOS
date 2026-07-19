@@ -45,7 +45,13 @@ class DynarmicCPU : public CPUInterface {
     bool log_code = false;
     bool cpu_opt;
 
+    // Architectural state kept while `jit` is released (dormant thread or
+    // not-yet-started thread). Accessors read/write this instead of the jit
+    // so parked threads never force a code-cache allocation.
+    std::unique_ptr<CPUContext> parked_ctx;
+
     std::unique_ptr<Dynarmic::A32::Jit> make_jit();
+    void ensure_jit();
 
 public:
     DynarmicCPU(CPUState *state, std::size_t processor_id, bool cpu_opt);
@@ -91,6 +97,8 @@ public:
     bool get_log_mem() override;
 
     void clear_exclusive() override;
+    void release_code_cache() override;
+    bool ensure_code_cache() override;
     std::size_t processor_id() const override;
     void invalidate_jit_cache(Address start, size_t length) override;
 

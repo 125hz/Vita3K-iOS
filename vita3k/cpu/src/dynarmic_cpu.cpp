@@ -427,12 +427,53 @@ DynarmicCPU::DynarmicCPU(CPUState *state, std::size_t processor_id, bool cpu_opt
     , cp15(std::make_shared<ArmDynarmicCP15>())
     , core_id(processor_id)
     , cpu_opt(cpu_opt) {
+#if defined(VITA3K_PLATFORM_IOS)
+    // JIT code regions come from a fixed pool prepared while the debugger is
+    // attached. Defer the allocation until this core first executes so
+    // created-but-not-yet-started threads don't hold a region.
+    parked_ctx = std::make_unique<CPUContext>();
+#else
     jit = make_jit();
+#endif
 }
 
 DynarmicCPU::~DynarmicCPU() = default;
 
+void DynarmicCPU::ensure_jit() {
+    if (jit)
+        return;
+    jit = make_jit();
+    if (parked_ctx) {
+        const CPUContext ctx = *parked_ctx;
+        parked_ctx.reset();
+        load_context(ctx);
+    }
+}
+
+void DynarmicCPU::release_code_cache() {
+    if (!jit)
+        return;
+    parked_ctx = std::make_unique<CPUContext>(save_context());
+    jit.reset();
+}
+
+bool DynarmicCPU::ensure_code_cache() {
+    try {
+        ensure_jit();
+    } catch (const std::exception &e) {
+        LOG_CRITICAL("Cannot (re)create JIT code cache for thread {}: {}", parent->thread_id, e.what());
+        return false;
+    }
+    return true;
+}
+
 int DynarmicCPU::run() {
+    try {
+        ensure_jit();
+    } catch (const std::exception &e) {
+        LOG_CRITICAL("Cannot (re)create JIT code cache for thread {}: {}", parent->thread_id, e.what());
+        return -1;
+    }
     halted = false;
     break_ = false;
     parent->svc_called = false;
@@ -445,6 +486,12 @@ int DynarmicCPU::run() {
 }
 
 int DynarmicCPU::step() {
+    try {
+        ensure_jit();
+    } catch (const std::exception &e) {
+        LOG_CRITICAL("Cannot (re)create JIT code cache for thread {}: {}", parent->thread_id, e.what());
+        return -1;
+    }
     parent->svc_called = false;
     jit->Step();
     return 0;
@@ -464,7 +511,8 @@ void DynarmicCPU::set_log_code(bool log) {
         return;
 
     log_code = log;
-    jit = make_jit();
+    if (jit)
+        jit = make_jit();
 }
 
 void DynarmicCPU::set_log_mem(bool log) {
@@ -472,7 +520,8 @@ void DynarmicCPU::set_log_mem(bool log) {
         return;
 
     log_mem = log;
-    jit = make_jit();
+    if (jit)
+        jit = make_jit();
 }
 
 bool DynarmicCPU::get_log_code() {
@@ -484,26 +533,40 @@ bool DynarmicCPU::get_log_mem() {
 }
 
 void DynarmicCPU::stop() {
+    if (!jit)
+        return;
     jit->HaltExecution();
 }
 
 uint32_t DynarmicCPU::get_reg(uint8_t idx) {
+    if (!jit)
+        return parked_ctx ? parked_ctx->cpu_registers[idx] : 0;
     return jit->Regs()[idx];
 }
 
 uint32_t DynarmicCPU::get_sp() {
-    return jit->Regs()[13];
+    return get_reg(13);
 }
 
 uint32_t DynarmicCPU::get_pc() {
-    return jit->Regs()[15];
+    return get_reg(15);
 }
 
 void DynarmicCPU::set_reg(uint8_t idx, uint32_t val) {
+    if (!jit) {
+        if (parked_ctx)
+            parked_ctx->cpu_registers[idx] = val;
+        return;
+    }
     jit->Regs()[idx] = val;
 }
 
 void DynarmicCPU::set_cpsr(uint32_t val) {
+    if (!jit) {
+        if (parked_ctx)
+            parked_ctx->cpsr = val;
+        return;
+    }
     jit->SetCpsr(val);
 }
 
@@ -523,30 +586,42 @@ void DynarmicCPU::set_pc(uint32_t val) {
         set_cpsr(get_cpsr() & 0xFFFFFFDF);
         val = val & 0xFFFFFFFC;
     }
-    jit->Regs()[15] = val;
+    set_reg(15, val);
 }
 
 void DynarmicCPU::set_lr(uint32_t val) {
-    jit->Regs()[14] = val;
+    set_reg(14, val);
 }
 
 void DynarmicCPU::set_sp(uint32_t val) {
-    jit->Regs()[13] = val;
+    set_reg(13, val);
 }
 
 uint32_t DynarmicCPU::get_cpsr() {
+    if (!jit)
+        return parked_ctx ? parked_ctx->cpsr : 0;
     return jit->Cpsr();
 }
 
 uint32_t DynarmicCPU::get_fpscr() {
+    if (!jit)
+        return parked_ctx ? parked_ctx->fpscr : 0;
     return jit->Fpscr();
 }
 
 void DynarmicCPU::set_fpscr(uint32_t val) {
+    if (!jit) {
+        if (parked_ctx)
+            parked_ctx->fpscr = val;
+        return;
+    }
     jit->SetFpscr(val);
 }
 
 CPUContext DynarmicCPU::save_context() {
+    if (!jit)
+        return parked_ctx ? *parked_ctx : CPUContext{};
+
     CPUContext ctx;
     ctx.cpu_registers = jit->Regs();
     static_assert(sizeof(ctx.fpu_registers) == sizeof(jit->ExtRegs()));
@@ -558,6 +633,10 @@ CPUContext DynarmicCPU::save_context() {
 }
 
 void DynarmicCPU::load_context(const CPUContext &ctx) {
+    if (!jit) {
+        parked_ctx = std::make_unique<CPUContext>(ctx);
+        return;
+    }
     jit->Regs() = ctx.cpu_registers;
     static_assert(sizeof(ctx.fpu_registers) == sizeof(jit->ExtRegs()));
     memcpy(jit->ExtRegs().data(), ctx.fpu_registers.data(), sizeof(ctx.fpu_registers));
@@ -566,19 +645,26 @@ void DynarmicCPU::load_context(const CPUContext &ctx) {
 }
 
 uint32_t DynarmicCPU::get_lr() {
-    return jit->Regs()[14];
+    return get_reg(14);
 }
 
 float DynarmicCPU::get_float_reg(uint8_t idx) {
+    if (!jit)
+        return parked_ctx ? parked_ctx->fpu_registers[idx] : 0.0f;
     return std::bit_cast<float>(jit->ExtRegs()[idx]);
 }
 
 void DynarmicCPU::set_float_reg(uint8_t idx, float val) {
+    if (!jit) {
+        if (parked_ctx)
+            parked_ctx->fpu_registers[idx] = val;
+        return;
+    }
     jit->ExtRegs()[idx] = std::bit_cast<uint32_t>(val);
 }
 
 bool DynarmicCPU::is_thumb_mode() {
-    return jit->Cpsr() & 0x20;
+    return get_cpsr() & 0x20;
 }
 
 std::size_t DynarmicCPU::processor_id() const {
@@ -586,6 +672,9 @@ std::size_t DynarmicCPU::processor_id() const {
 }
 
 void DynarmicCPU::invalidate_jit_cache(Address start, size_t length) {
+    // A released cache has nothing stale in it.
+    if (!jit)
+        return;
     jit->InvalidateCacheRange(start, length);
 }
 

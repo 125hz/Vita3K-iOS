@@ -78,6 +78,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -88,6 +89,9 @@ namespace {
 std::string g_current_trophy_id;
 std::string g_current_title;
 std::string g_current_title_id;
+// Per-game settings override for the next launched session; the global
+// config on disk is never touched by it.
+std::optional<Vita3KIOSSettings> g_pending_game_settings;
 std::atomic_bool g_jit_pool_ready{ false };
 std::atomic_bool g_unhandled_universal_jit_breakpoint{ false };
 
@@ -443,10 +447,11 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
             return false;
         }
 
-        if (emuenv->cfg.controller_binds.empty() || emuenv->cfg.controller_binds.size() != 15
-            || emuenv->cfg.controller_axis_binds.empty() || emuenv->cfg.controller_axis_binds.size() != 6) {
-            app::reset_controller_binding(*emuenv);
-        }
+        // Always use the positional default binds on iOS. There is no
+        // rebinding UI here, so any custom controller-binds can only be stale
+        // carry-over from a desktop config copy — one such copy shipped
+        // swapped Cross/Circle and Square/Triangle to every physical pad.
+        app::reset_controller_binding(*emuenv);
 
         init_libraries(*emuenv);
 
@@ -599,6 +604,12 @@ fs::path save_path_for_title(const EmuEnvState &emuenv, const std::string &title
     return emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id / "savedata" / title_id;
 }
 
+// Trophy unlock progress (TROPUSR.DAT and friends) for one np-com id; bundled
+// with save exports so transferring a save also transfers trophies.
+fs::path trophy_data_path_for_id(const EmuEnvState &emuenv, const std::string &np_com_id) {
+    return emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id / "trophy/data" / np_com_id;
+}
+
 void start_save_export(EmuEnvState &emuenv, const std::string &title_id) {
     if (!safe_identifier(title_id, 16)) {
         vita3k_ios_report_import_result("Save export rejected an invalid title ID", false);
@@ -628,23 +639,37 @@ void start_save_export(EmuEnvState &emuenv, const std::string &title_id) {
                     bool ok = true;
                     std::size_t files = 0;
                     boost::system::error_code error;
-                    for (fs::recursive_directory_iterator it(source, error), end; it != end && !error; it.increment(error)) {
-                        if (!fs::is_regular_file(it->path(), error) || error)
-                            continue;
-                        const std::string relative = fs_utils::path_to_utf8(fs::relative(it->path(), source));
-                        const std::string disk_path = fs_utils::path_to_utf8(it->path());
-                        if (!safe_save_archive_path(relative)
-                            || !mz_zip_writer_add_file(&zip, relative.c_str(), disk_path.c_str(), nullptr, 0, MZ_DEFAULT_COMPRESSION)) {
-                            ok = false;
-                            break;
+                    // Archive layout: savedata under "savedata/", trophy unlock
+                    // progress under "trophy/<np-com-id>/". Legacy archives
+                    // with files at the root are still accepted by import.
+                    const auto add_tree = [&](const fs::path &root, const std::string &prefix) {
+                        for (fs::recursive_directory_iterator it(root, error), end; it != end && !error; it.increment(error)) {
+                            if (!fs::is_regular_file(it->path(), error) || error)
+                                continue;
+                            const std::string relative = fs_utils::path_to_utf8(fs::relative(it->path(), root));
+                            const std::string archived = prefix + relative;
+                            const std::string disk_path = fs_utils::path_to_utf8(it->path());
+                            if (!safe_save_archive_path(archived)
+                                || !mz_zip_writer_add_file(&zip, archived.c_str(), disk_path.c_str(), nullptr, 0, MZ_DEFAULT_COMPRESSION)) {
+                                ok = false;
+                                break;
+                            }
+                            ++files;
                         }
-                        ++files;
+                    };
+                    add_tree(source, "savedata/");
+                    const std::string np_com_id = trophy_id_for_title(emuenv, title_id);
+                    if (ok && !error && !np_com_id.empty()) {
+                        const fs::path trophy_data = trophy_data_path_for_id(emuenv, np_com_id);
+                        boost::system::error_code trophy_error;
+                        if (fs::exists(trophy_data, trophy_error) && !trophy_error)
+                            add_tree(trophy_data, "trophy/" + np_com_id + "/");
                     }
                     ok = ok && !error && files > 0 && mz_zip_writer_finalize_archive(&zip);
                     mz_zip_writer_end(&zip);
                     if (ok) {
                         job->success = true;
-                        job->message = "Save exported";
+                        job->message = "Save exported (with trophy progress)";
                         job->share_path = output_text;
                     } else {
                         boost::system::error_code cleanup_error;
@@ -690,6 +715,21 @@ void start_save_import(EmuEnvState &emuenv, const std::string &title_id, const s
                 const mz_uint entries = mz_zip_reader_get_num_files(&zip);
                 if (entries == 0 || entries > 100000)
                     ok = false;
+                // New archives carry "savedata/" and "trophy/<np-com-id>/"
+                // top-level folders; legacy archives have savedata files at the
+                // root. Route both into a split staging tree.
+                bool has_prefixes = false;
+                for (mz_uint index = 0; ok && index < entries; ++index) {
+                    mz_zip_archive_file_stat stat{};
+                    if (!mz_zip_reader_file_stat(&zip, index, &stat)) {
+                        ok = false;
+                        break;
+                    }
+                    const std::string_view name(stat.m_filename);
+                    if (name.starts_with("savedata/") || name.starts_with("trophy/"))
+                        has_prefixes = true;
+                }
+                const fs::path staged_savedata = has_prefixes ? staging / "savedata" : staging;
                 for (mz_uint index = 0; ok && index < entries; ++index) {
                     mz_zip_archive_file_stat stat{};
                     if (!mz_zip_reader_file_stat(&zip, index, &stat)
@@ -704,7 +744,17 @@ void start_save_import(EmuEnvState &emuenv, const std::string &title_id, const s
                         break;
                     }
                     total_size += stat.m_uncomp_size;
-                    const fs::path output = staging / fs::path(stat.m_filename);
+                    const std::string_view name(stat.m_filename);
+                    fs::path output;
+                    if (has_prefixes) {
+                        // Mixed legacy files inside a prefixed archive are
+                        // treated as savedata for safety.
+                        output = (name.starts_with("savedata/") || name.starts_with("trophy/"))
+                            ? staging / fs::path(stat.m_filename)
+                            : staged_savedata / fs::path(stat.m_filename);
+                    } else {
+                        output = staged_savedata / fs::path(stat.m_filename);
+                    }
                     if (mz_zip_reader_is_file_a_directory(&zip, index)) {
                         fs::create_directories(output, error);
                     } else {
@@ -718,25 +768,50 @@ void start_save_import(EmuEnvState &emuenv, const std::string &title_id, const s
                 }
                 mz_zip_reader_end(&zip);
                 if (ok) {
+                    const fs::path savedata_source = has_prefixes ? staging / "savedata" : staging;
                     fs::remove_all(backup, error);
                     if (fs::exists(destination))
                         fs::rename(destination, backup, error);
                     if (!error)
-                        fs::rename(staging, destination, error);
+                        fs::rename(savedata_source, destination, error);
                     if (error && fs::exists(backup) && !fs::exists(destination)) {
                         boost::system::error_code rollback_error;
                         fs::rename(backup, destination, rollback_error);
                     }
                     if (!error) {
                         fs::remove_all(backup, error);
+                        // Install any bundled trophy progress after the save
+                        // committed; per np-com-id directories replace the
+                        // existing progress wholesale.
+                        bool trophies_installed = false;
+                        const fs::path staged_trophy = staging / "trophy";
+                        boost::system::error_code trophy_error;
+                        if (has_prefixes && fs::exists(staged_trophy, trophy_error) && !trophy_error) {
+                            for (fs::directory_iterator it(staged_trophy, trophy_error), end;
+                                 it != end && !trophy_error; it.increment(trophy_error)) {
+                                if (!fs::is_directory(it->path(), trophy_error) || trophy_error)
+                                    continue;
+                                const std::string np_com_id = fs_utils::path_to_utf8(it->path().filename());
+                                if (!safe_identifier(np_com_id, 16))
+                                    continue;
+                                const fs::path trophy_destination = trophy_data_path_for_id(emuenv, np_com_id);
+                                boost::system::error_code swap_error;
+                                fs::create_directories(trophy_destination.parent_path(), swap_error);
+                                fs::remove_all(trophy_destination, swap_error);
+                                fs::rename(it->path(), trophy_destination, swap_error);
+                                trophies_installed = trophies_installed || !swap_error;
+                            }
+                        }
                         job->success = true;
-                        job->message = "Save imported for " + title_id;
+                        job->message = trophies_installed
+                            ? "Save and trophy progress imported for " + title_id
+                            : "Save imported for " + title_id;
                     }
                 }
-                if (!job->success) {
-                    fs::remove_all(staging, error);
+                boost::system::error_code cleanup_staging_error;
+                fs::remove_all(staging, cleanup_staging_error);
+                if (!job->success)
                     job->message = "Save import was rejected; the existing save was left unchanged";
-                }
             }
         } catch (const std::exception &error) {
             job->message = std::string("Save import failed: ") + error.what();
@@ -843,6 +918,17 @@ std::string installed_version_for_title(const EmuEnvState &emuenv,
     return base_version;
 }
 
+// "01.01" (raw APP_VER) reads oddly in the library; show "1.01" like the
+// Vita's own UI by trimming leading zeros from the major component only.
+std::string normalize_app_version(const std::string &version) {
+    const auto dot = version.find('.');
+    std::string major = dot == std::string::npos ? version : version.substr(0, dot);
+    const std::string rest = dot == std::string::npos ? std::string{} : version.substr(dot);
+    const auto first_significant = major.find_first_not_of('0');
+    major = first_significant == std::string::npos ? "0" : major.substr(first_significant);
+    return major + rest;
+}
+
 std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
     const auto apps = app::get_apps(emuenv);
     const auto user_times = app::get_user_app_times(emuenv);
@@ -868,17 +954,29 @@ std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
         const std::uint64_t installed_size = directory_size(emuenv.vita_fs_path / "ux0/app" / entry.title_id)
             + directory_size(emuenv.vita_fs_path / "ux0/patch" / entry.title_id)
             + directory_size(emuenv.vita_fs_path / "ux0/addcont" / entry.title_id);
+        const std::string trophy_id = trophy_id_for_title(emuenv, entry.title_id);
+        int trophies_unlocked = 0;
+        int trophies_total = 0;
+        if (!trophy_id.empty()) {
+            np::trophy::CollectionSnapshot snapshot;
+            if (np::trophy::load_collection(trophy_source(emuenv), trophy_id, snapshot)) {
+                trophies_unlocked = snapshot.unlocked;
+                trophies_total = snapshot.total;
+            }
+        }
         games.push_back({
             .title = entry.title,
             .title_id = entry.title_id,
             .category = entry.category,
             .app_path = entry.path.empty() ? entry.title_id : entry.path,
             .icon_path = fs_utils::path_to_utf8(selected_art),
-            .version = installed_version_for_title(emuenv, entry.title_id, entry.app_ver),
-            .trophy_id = trophy_id_for_title(emuenv, entry.title_id),
+            .version = normalize_app_version(installed_version_for_title(emuenv, entry.title_id, entry.app_ver)),
+            .trophy_id = trophy_id,
             .size_bytes = installed_size,
             .time_played_seconds = app_time ? app_time->time_used : 0,
             .last_played_timestamp = app_time ? app_time->last_time_used : 0,
+            .trophies_unlocked = trophies_unlocked,
+            .trophies_total = trophies_total,
         });
     }
     return games;
@@ -945,6 +1043,23 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
         result.runtime_settings_applied, restart_required.size());
 }
 
+// Apply a per-game override to the runtime config only — commit_settings (and
+// with it config.yml persistence) is deliberately not involved.
+void apply_game_session_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &settings) {
+    auto &current = emuenv.cfg.current_config;
+    current.resolution_multiplier = settings.resolution_multiplier;
+    current.v_sync = settings.v_sync;
+    current.fps_hack = false;
+    current.cpu_opt = settings.cpu_opt;
+    current.ngs_enable = settings.ngs_enable;
+    current.async_pipeline_compilation = settings.async_pipeline_compilation;
+    current.anisotropic_filtering = settings.anisotropic_filtering;
+    emuenv.display.fps_limit.store(std::clamp(settings.fps_limit, 15, 60), std::memory_order_relaxed);
+    LOG_INFO("Per-game settings override active: res x{} vsync={} fps={} cpu_opt={} ngs={} async={} aniso={}",
+        settings.resolution_multiplier, settings.v_sync, settings.fps_limit, settings.cpu_opt,
+        settings.ngs_enable, settings.async_pipeline_compilation, settings.anisotropic_filtering);
+}
+
 std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
     auto games = native_games(emuenv);
     if (games.empty()) {
@@ -956,11 +1071,18 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
     for (;;) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED
-                || event.type == SDL_EVENT_TERMINATING) {
+            // Only a real OS termination leaves the library. SDL_EVENT_QUIT is
+            // how the in-game menu ends a session; a stray/duplicate one that
+            // survives session teardown must not silently tear down the whole
+            // frontend (the "black screen after quitting a game" failure: the
+            // outer loop broke, the window was destroyed, and the app idled
+            // with nothing on screen).
+            if (event.type == SDL_EVENT_TERMINATING) {
                 vita3k_ios_hide_library();
                 return std::nullopt;
             }
+            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
+                LOG_INFO("Ignoring quit-type SDL event {} while the library is on screen", event.type);
         }
 
         if (g_import_job && g_import_job->done.load()) {
@@ -1014,6 +1136,9 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                     }
                 }
                 LOG_INFO("Booting selected iOS library title: {}", action->app_path);
+                g_pending_game_settings = action->has_settings_override
+                    ? std::optional(action->settings)
+                    : std::nullopt;
                 vita3k_ios_hide_library();
                 return AppLaunchRequest{.app_path = action->app_path};
             case Vita3KIOSFrontendActionKind::Refresh:
@@ -1194,7 +1319,10 @@ bool has_physical_controller(CtrlState &state) {
 }
 
 constexpr std::size_t IOS_JIT_CACHE_SIZE = 16 * 1024 * 1024;
-constexpr std::size_t IOS_JIT_POOL_TARGET = 24;
+// Gravity Rush runs ~24 concurrently-live guest threads; exited-but-undeleted
+// threads now release their region when they park dormant, but keep headroom
+// for thread churn (audio/savedata workers) on top of the live set.
+constexpr std::size_t IOS_JIT_POOL_TARGET = 32;
 
 bool prepare_ios_jit_pool() {
     if (g_jit_pool_ready.load(std::memory_order_relaxed))
@@ -1307,10 +1435,25 @@ int main(int argc, char *argv[]) {
     if (!launch_request)
         break;
 
+    // Per-game override: snapshot the runtime config, apply the override for
+    // this session only, and restore the snapshot when the session ends.
+    const auto session_settings = std::exchange(g_pending_game_settings, std::nullopt);
+    const auto saved_current_config = emuenv->cfg.current_config;
+    if (session_settings)
+        apply_game_session_settings(*emuenv, *session_settings);
+    const auto restore_global_config = [&] {
+        if (session_settings) {
+            emuenv->cfg.current_config = saved_current_config;
+            emuenv->display.fps_limit.store(std::clamp(vita3k_ios_load_fps_limit(), 15, 60),
+                std::memory_order_relaxed);
+        }
+    };
+
     app::AppSessionController session_controller(*emuenv);
     SDL_Log("Vita3K iOS: begin_launch '%s'", launch_request->app_path.c_str());
     if (!session_controller.begin_launch(*launch_request)) {
         LOG_ERROR("Could not find app '{}' in apps list.", launch_request->app_path);
+        restore_global_config();
         continue;
     }
 
@@ -1368,6 +1511,7 @@ int main(int argc, char *argv[]) {
         session_controller.stop(app::AppSessionStopReason::UserRequest);
         emuenv->audio.adapter.reset();
         emuenv->audio.audio_backend.clear();
+        restore_global_config();
         vita3k_ios_show_boot_error(boot_error);
         continue;
     }
@@ -1375,7 +1519,10 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Game started: {} ({})", emuenv->current_app_title, launch_request->app_path);
     // Never inherit the removed iOS FPS-hack setting from an older config.
     emuenv->display.fps_hack = false;
-    emuenv->display.fps_limit.store(vita3k_ios_load_fps_limit(), std::memory_order_relaxed);
+    emuenv->display.fps_limit.store(session_settings
+            ? std::clamp(session_settings->fps_limit, 15, 60)
+            : vita3k_ios_load_fps_limit(),
+        std::memory_order_relaxed);
 
     const bool has_virtual_controller = vita3k_ios_attach_virtual_controller();
     if (has_virtual_controller) {
@@ -1570,6 +1717,7 @@ int main(int argc, char *argv[]) {
     // session opens a fresh device instead of reusing torn-down state.
     emuenv->audio.adapter.reset();
     emuenv->audio.audio_backend.clear();
+    restore_global_config();
 
     LOG_INFO("Returning to game library");
     } // while (!app_terminating)

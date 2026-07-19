@@ -21,6 +21,7 @@
 #include <cpu/impl/interface.h>
 #include <cpu/state.h>
 #include <mem/ptr.h>
+#include <util/log.h>
 #include <util/types.h>
 
 #include <memory>
@@ -47,7 +48,15 @@ CPUStatePtr init_cpu(bool cpu_opt, SceUID thread_id, std::size_t processor_id, M
         return CPUStatePtr();
     }
 
-    state->cpu = std::make_unique<DynarmicCPU>(state.get(), processor_id, cpu_opt);
+    try {
+        state->cpu = std::make_unique<DynarmicCPU>(state.get(), processor_id, cpu_opt);
+    } catch (const std::exception &e) {
+        // On iOS the JIT code region can legitimately be unavailable (pool
+        // exhausted after the debugger detached). Fail the thread creation
+        // instead of crashing the whole process.
+        LOG_CRITICAL("Failed to create CPU core for thread {}: {}", thread_id, e.what());
+        return CPUStatePtr();
+    }
 
     return state;
 }
@@ -166,6 +175,14 @@ std::size_t get_processor_id(CPUState &state) {
 
 void invalidate_jit_cache(CPUState &state, Address start, size_t length) {
     state.cpu->invalidate_jit_cache(start, length);
+}
+
+void release_code_cache(CPUState &state) {
+    state.cpu->release_code_cache();
+}
+
+bool ensure_code_cache(CPUState &state) {
+    return state.cpu->ensure_code_cache();
 }
 
 std::string disassemble(CPUState &state, uint64_t at, bool thumb, uint16_t *insn_size) {

@@ -462,7 +462,8 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
 }
 
 - (void)fadeMenuButton {
-    [UIView animateWithDuration:0.55 animations:^{ self.menuButton.alpha = 0.12; }];
+    // Keep the resting state clearly visible; 0.12 was hard to find.
+    [UIView animateWithDuration:0.55 animations:^{ self.menuButton.alpha = 0.35; }];
 }
 
 - (UIButton *)makeElementButton:(NSString *)title key:(NSString *)key accessibility:(NSString *)accessibility {
@@ -642,8 +643,10 @@ static constexpr NSInteger triggerTagOffset = 1000;
         || recognizer.state == UIGestureRecognizerStateCancelled;
     BOOL snappedX = NO;
     BOOL snappedY = NO;
-    if (!finished && [g_controls_config[@"snapGuides"] boolValue]) {
-        constexpr CGFloat snapDistance = 6.0;
+    // Snap on the final tick too: committing the raw center while the display
+    // showed the snapped one made elements jump slightly on release.
+    if ([g_controls_config[@"snapGuides"] boolValue]) {
+        constexpr CGFloat snapDistance = 9.0;
         CGFloat bestX = snapDistance + 1;
         CGFloat bestY = snapDistance + 1;
         for (UIView *candidate in self.controllerElements) {
