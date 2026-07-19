@@ -62,6 +62,29 @@ static std::string get_error_msg() {
 }
 #endif
 
+// A guest arena reserved before other large mappings (e.g. the iOS JIT region
+// pool) could fragment the address space; the next init() adopts it.
+static void *g_prereserved_memory = nullptr;
+
+bool prereserve_guest_memory() {
+#ifdef _WIN32
+    // Not needed on desktop: the address space is large and nothing else
+    // competes for it before init() runs.
+    return true;
+#else
+    if (g_prereserved_memory)
+        return true;
+    void *preferred_address = reinterpret_cast<void *>(1ULL << 34);
+    void *memory = mmap(preferred_address, TOTAL_MEM_SIZE, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+    if (memory == MAP_FAILED) {
+        LOG_CRITICAL("Guest memory prereservation failed: {}", get_error_msg());
+        return false;
+    }
+    g_prereserved_memory = memory;
+    return true;
+#endif
+}
+
 bool init(MemState &state, const bool use_page_table) {
 #ifdef _WIN32
     SYSTEM_INFO system_info = {};
@@ -87,16 +110,21 @@ bool init(MemState &state, const bool use_page_table) {
         }
     }
 #else
-    // http://man7.org/linux/man-pages/man2/mmap.2.html
-    const int prot = PROT_NONE;
-    const int flags = MAP_PRIVATE | MAP_ANONYMOUS;
-    const int fd = 0;
-    const off_t offset = 0;
-    // preferred_address is only a hint for mmap, if it can't use it, the kernel will choose itself the address
-    state.memory = Memory(static_cast<uint8_t *>(mmap(preferred_address, TOTAL_MEM_SIZE, prot, flags, fd, offset)), delete_memory);
-    if (state.memory.get() == MAP_FAILED) {
-        LOG_CRITICAL("mmap failed {}", get_error_msg());
-        return false;
+    if (g_prereserved_memory) {
+        state.memory = Memory(static_cast<uint8_t *>(g_prereserved_memory), delete_memory);
+        g_prereserved_memory = nullptr;
+    } else {
+        // http://man7.org/linux/man-pages/man2/mmap.2.html
+        const int prot = PROT_NONE;
+        const int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+        const int fd = 0;
+        const off_t offset = 0;
+        // preferred_address is only a hint for mmap, if it can't use it, the kernel will choose itself the address
+        state.memory = Memory(static_cast<uint8_t *>(mmap(preferred_address, TOTAL_MEM_SIZE, prot, flags, fd, offset)), delete_memory);
+        if (state.memory.get() == MAP_FAILED) {
+            LOG_CRITICAL("mmap failed {}", get_error_msg());
+            return false;
+        }
     }
 #endif
 

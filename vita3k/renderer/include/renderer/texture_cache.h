@@ -48,6 +48,8 @@ static constexpr size_t TextureCacheSize = 1024;
 typedef std::array<uint32_t, 4> TextureGxmDataRepr;
 struct TextureCacheInfo {
     uint64_t hash = 0;
+    // scene timestamp when the hash was last computed (0 = never)
+    uint64_t last_hashed_scene = 0;
     SceGxmTexture texture;
     int index = 0;
     uint32_t texture_size = 0;
@@ -105,6 +107,9 @@ protected:
 public:
     Backend backend;
     bool use_protect = false;
+    // bumped by the backend on each new scene; when nonzero, a texture whose
+    // hash was already computed this scene is not re-hashed on later binds
+    uint64_t current_scene_timestamp = 0;
     YUVConversionCache yuv_conversion_cache;
     // use a separate sampler cache
     bool use_sampler_cache = false;

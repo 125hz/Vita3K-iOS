@@ -43,6 +43,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <chrono>
 #include <iterator>
 #include <map>
@@ -162,7 +163,10 @@ static void dump_threads(EmuEnvState &emuenv) {
         // HLE call, so the NID names the exact API the thread is stuck in.
         const auto import_at_pc = [&emuenv](uint32_t addr) -> std::string {
             addr &= ~1u;
-            if ((addr & 3) || !is_valid_addr_range(emuenv.mem, addr, addr + 12))
+            // The null guard page passes is_valid_addr_range but is PROT_NONE;
+            // reading it faults forever under a debugger.
+            if ((addr & 3) || addr < emuenv.mem.host_page_size
+                || !is_valid_addr_range(emuenv.mem, addr, addr + 12))
                 return "";
             const uint32_t *words = Ptr<uint32_t>(addr).get(emuenv.mem);
             if (!words)
@@ -181,6 +185,36 @@ static void dump_threads(EmuEnvState &emuenv) {
             pc, pc_module ? fmt::format(" ({})", pc_module->module_name) : "", import_at_pc(pc),
             lr, lr_module ? fmt::format(" ({})", lr_module->module_name) : "",
             sp, thread->entry_point);
+    }
+
+    // Sampling mini-profiler: for threads in run status, take PC samples over
+    // ~50ms and log the distinct values. A thread stuck in a tight poll loop
+    // shows one or two PCs; a thread doing broad work shows many. The reads
+    // race with execution like the snapshot above; values are just samples.
+    std::vector<ThreadStatePtr> running;
+    for (const auto &thread : threads)
+        if (thread && thread->cpu && thread->status == ThreadStatus::run)
+            running.push_back(thread);
+    if (!running.empty()) {
+        constexpr int NUM_SAMPLES = 48;
+        std::map<SceUID, std::map<uint32_t, int>> histogram;
+        for (int i = 0; i < NUM_SAMPLES; i++) {
+            for (const auto &thread : running)
+                if (thread->status == ThreadStatus::run)
+                    histogram[thread->id][read_pc(*thread->cpu)]++;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        for (const auto &thread : running) {
+            const auto &pcs = histogram[thread->id];
+            std::vector<std::pair<uint32_t, int>> sorted(pcs.begin(), pcs.end());
+            std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
+            std::string line;
+            const size_t shown = std::min<size_t>(sorted.size(), 8);
+            for (size_t i = 0; i < shown; i++)
+                fmt::format_to(std::back_inserter(line), " 0x{:08X}x{}", sorted[i].first, sorted[i].second);
+            LOG_INFO("Thread {:>4} '{}' PC samples ({} distinct):{}{}",
+                thread->id, thread->name, sorted.size(), line, sorted.size() > shown ? " ..." : "");
+        }
     }
 }
 

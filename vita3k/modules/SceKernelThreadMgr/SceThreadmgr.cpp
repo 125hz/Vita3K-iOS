@@ -749,7 +749,11 @@ EXPORT(int, _sceKernelStartThread, SceUID thid, SceSize arglen, Ptr<void> argp) 
         // arg0 is not necessarily a pointer (thread IDs and small flags are
         // common). Reject scalar/unaligned values before touching guest memory;
         // the range helper alone intentionally accepts the mapped zero page.
+        // The null guard page passes is_valid_addr but is PROT_NONE: reading
+        // it faults forever under a debugger (Gravity Rush arg0=0x58 hung
+        // boot here), so anything inside the first host page is excluded.
         if ((indirect_context & (alignof(uint32_t) - 1)) == 0
+            && indirect_context >= emuenv.mem.host_page_size
             && is_valid_addr(emuenv.mem, indirect_context)
             && indirect_context <= 0xFFFFFFFFU - context_bytes
             && is_valid_addr_range(emuenv.mem, indirect_context, indirect_context + context_bytes)) {

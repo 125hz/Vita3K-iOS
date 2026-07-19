@@ -43,6 +43,7 @@
 #include <display/state.h>
 #include <emuenv/state.h>
 #include <io/state.h>
+#include <mem/functions.h>
 #include <modules/module_parent.h>
 #include <np/trophy/collection.h>
 #include <np/trophy/trp_parser.h>
@@ -1277,15 +1278,25 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // Probe JIT for the library, but do not allocate the permanent region pool
-    // yet. Vita3K must reserve its large guest address space first: preparing
-    // the 24 JIT mappings here fragmented that space and made mem::init fail
-    // with ENOMEM before any game could boot.
     const bool initial_jit_available = ios_jit_available();
     vita3k_ios_set_jit_available(initial_jit_available);
     LOG_INFO("iOS JIT availability probe: {}",
         initial_jit_available ? "available (process is traced)"
                               : "unavailable (no debugger attached)");
+
+    // Reserve the guest address space FIRST (the 24 JIT mappings fragment it
+    // otherwise and mem::init later fails with ENOMEM), then allocate the JIT
+    // region pool immediately while StikDebug is still attached. StikDebug
+    // commonly detaches within a minute of app launch; new RWX regions cannot
+    // be created after that, which used to make any delayed first boot fail.
+    if (!prereserve_guest_memory()) {
+        LOG_CRITICAL("Could not prereserve guest memory at startup; JIT pool prewarm deferred to first boot");
+    } else if (initial_jit_available) {
+        if (prepare_ios_jit_pool())
+            LOG_INFO("iOS JIT region pool prepared at startup; later StikDebug detach no longer blocks boots");
+        else
+            LOG_WARN("iOS JIT region pool startup preparation failed; will retry at first boot");
+    }
 
     // Library -> game -> library loop: quitting a game returns to the
     // library instead of leaving a dead process behind (the old "freeze").

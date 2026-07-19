@@ -53,7 +53,6 @@ struct VKTextureCache : public TextureCache {
     TextureStagingBuffer staging_buffers[NB_TEXTURE_STAGING_BUFFERS];
     uint32_t staging_idx = 0;
     uint64_t last_waited_scene = 0;
-    uint64_t current_scene_timestamp;
 
     std::array<TextureCacheEntry, TextureCacheSize> textures;
     std::vector<vk::Sampler> samplers;

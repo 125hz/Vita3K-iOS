@@ -517,15 +517,11 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
     const vk::ImageView color_handle_view = reinterpret_cast<VKContext *>(state.context)->current_color_view;
     const bool is_same_image = (color_handle_view == info.texture.view) || (color_handle_view == info.alternate_view);
 
-    // Keep the normal texture-viewport fast path. On MoltenVK, however, a
-    // viewport that extends beyond a partial cached surface can stretch/clamp
-    // its edge texels across the missing area. Route only those iOS partial
-    // surfaces through the bounded clear-and-copy path below.
-    if (state.features.use_texture_viewport && base_format == info.format
-#if defined(VITA3K_PLATFORM_IOS)
-        && !partial_surface
-#endif
-    ) {
+    // Desktop-parity: partial surfaces also use the texture viewport (P4G's
+    // in-game save/load menu background). The clear-and-copy detour that was
+    // tried here for iOS partial surfaces produced gradient garbage on device,
+    // while this path is verified correct against desktop with the same data.
+    if (state.features.use_texture_viewport && base_format == info.format) {
         // use a texture viewport
         *texture_viewport = {
             .ratio = {

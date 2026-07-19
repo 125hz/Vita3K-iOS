@@ -12,6 +12,7 @@
 // region, so later transitive includes are no-ops.
 #define Ptr MacTypesPtr
 #import <AVFoundation/AVFoundation.h>
+#import <GameController/GameController.h>
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -304,6 +305,8 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) NSDictionary<NSString *, NSArray<UIView *> *> *pages;
 @property(nonatomic) BOOL showingRoot;
 - (instancetype)initWithFrame:(CGRect)frame values:(const Vita3KIOSSettings &)values;
+- (void)navigateBack;
+- (void)padSwitchCategory:(NSInteger)delta;
 @end
 
 @implementation Vita3KSettingsView
@@ -557,7 +560,10 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)openCategory:(UIButton *)sender {
-    NSString *category = sender.accessibilityIdentifier;
+    [self openCategoryNamed:sender.accessibilityIdentifier];
+}
+
+- (void)openCategoryNamed:(NSString *)category {
     NSArray<UIView *> *views = self.pages[category];
     if (!views)
         return;
@@ -567,6 +573,30 @@ std::string hex_bytes(const std::string &value) {
     for (UIView *view in views)
         [self.stack addArrangedSubview:view];
     [self.scrollView setContentOffset:CGPointZero animated:NO];
+}
+
+// L1/R1 pad navigation: cycle through the settings categories in the order
+// they are listed on the root page.
+- (void)padSwitchCategory:(NSInteger)delta {
+    NSArray<NSString *> *order = @[
+        @"Video", @"Graphics", @"Audio", @"System & Input",
+        @"Performance Overlay", @"Library", @"About"
+    ];
+    if (self.showingRoot) {
+        if (delta > 0)
+            [self openCategoryNamed:order.firstObject];
+        return;
+    }
+    const NSUInteger current = [order indexOfObject:self.headerTitle.text];
+    if (current == NSNotFound)
+        return;
+    const NSInteger next = (NSInteger)current + delta;
+    if (next < 0) {
+        [self showSettingsRoot];
+        return;
+    }
+    if (next < (NSInteger)order.count)
+        [self openCategoryNamed:order[(NSUInteger)next]];
 }
 
 - (void)navigateBack {
@@ -594,13 +624,14 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.9.0",
-        @"• Fixes a thread-start diagnostic stall seen at Gravity Rush's boot screen.\n"
-        @"• Corrects Persona 4 Golden's partial cached-surface composition on iOS.\n"
-        @"• Removes the game-dependent motion-blur/FPS-hack setting and clears old saved values.\n"
-        @"• Uses neutral Settings category cards with color reserved for their glyphs.\n"
-        @"• Removes repeated category titles and makes the Settings background fully opaque.\n"
-        @"• Hardens VA-11 Hall-A diagnostics against scalar thread arguments.");
+    present_alert(@"What's new in 0.10.0",
+        @"• Gravity Rush now boots: fixed a hang on a guarded-memory read during thread start.\n"
+        @"• Persona 4 Golden's in-game save/load menu background now renders like desktop.\n"
+        @"• Faster rendering: textures are content-checked once per scene instead of on every bind.\n"
+        @"• The whole app UI is controller-navigable: DPAD moves, Cross confirms, Circle goes back, Triangle opens game actions, L1/R1 switch settings pages.\n"
+        @"• Layout editor snapping is much gentler — elements no longer stick to guides.\n"
+        @"• The last game frame can no longer appear behind the library or settings.\n"
+        @"• JIT is prepared right at app launch, so StikDebug may detach afterwards without breaking game boots.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -728,6 +759,109 @@ std::string hex_bytes(const std::string &value) {
 @end
 
 
+// A pad-navigable stand-in for the cell context menu: real UIButtons in an
+// overlay card, so the controller focus system can drive it (UIAlertController
+// actions cannot be triggered programmatically).
+@interface Vita3KPadMenuView : UIView
+@property(nonatomic, strong) NSArray<NSDictionary *> *items;
++ (void)presentInView:(UIView *)host title:(NSString *)title items:(NSArray<NSDictionary *> *)items;
+- (void)dismissMenu;
+@end
+
+@implementation Vita3KPadMenuView
+
++ (void)presentInView:(UIView *)host title:(NSString *)title items:(NSArray<NSDictionary *> *)items {
+    Vita3KPadMenuView *menu = [[Vita3KPadMenuView alloc] initWithFrame:host.bounds];
+    menu.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    menu.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
+    menu.items = items;
+    [menu addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:menu action:@selector(backgroundTapped:)]];
+
+    UIView *card = [[UIView alloc] init];
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    card.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    card.layer.cornerRadius = 24;
+    card.clipsToBounds = YES;
+    [menu addSubview:card];
+
+    UIStackView *stack = [[UIStackView alloc] init];
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.spacing = 2;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [card addSubview:stack];
+
+    UILabel *header = [[UILabel alloc] init];
+    header.text = title;
+    header.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
+    header.textColor = UIColor.labelColor;
+    header.textAlignment = NSTextAlignmentCenter;
+    header.numberOfLines = 2;
+    [stack addArrangedSubview:header];
+    [stack setCustomSpacing:12 afterView:header];
+
+    NSUInteger index = 0;
+    for (NSDictionary *item in items) {
+        UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+        button.tag = (NSInteger)index++;
+        button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
+        button.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+        [button setTitle:[NSString stringWithFormat:@"  %@", item[@"title"]] forState:UIControlStateNormal];
+        NSString *symbol = item[@"symbol"];
+        if (symbol.length)
+            [button setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
+        const BOOL destructive = [item[@"destructive"] boolValue];
+        button.tintColor = destructive ? UIColor.systemRedColor : UIColor.labelColor;
+        [button setTitleColor:destructive ? UIColor.systemRedColor : UIColor.labelColor forState:UIControlStateNormal];
+        [button.heightAnchor constraintEqualToConstant:50].active = YES;
+        [button addTarget:menu action:@selector(itemTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [stack addArrangedSubview:button];
+    }
+    UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
+    cancel.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
+    cancel.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    [cancel setTitle:@"Cancel" forState:UIControlStateNormal];
+    [cancel.heightAnchor constraintEqualToConstant:50].active = YES;
+    [cancel addTarget:menu action:@selector(dismissMenu) forControlEvents:UIControlEventTouchUpInside];
+    [stack addArrangedSubview:cancel];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [card.centerXAnchor constraintEqualToAnchor:menu.centerXAnchor],
+        [card.centerYAnchor constraintEqualToAnchor:menu.centerYAnchor],
+        [card.widthAnchor constraintEqualToConstant:MIN(360, CGRectGetWidth(host.bounds) - 48)],
+        [stack.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
+        [stack.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
+        [stack.topAnchor constraintEqualToAnchor:card.topAnchor constant:18],
+        [stack.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-12],
+    ]];
+
+    menu.alpha = 0;
+    [host addSubview:menu];
+    [UIView animateWithDuration:0.18 animations:^{ menu.alpha = 1; }];
+}
+
+- (void)backgroundTapped:(UITapGestureRecognizer *)recognizer {
+    if (recognizer.state == UIGestureRecognizerStateEnded)
+        [self dismissMenu];
+}
+
+- (void)itemTapped:(UIButton *)sender {
+    if (sender.tag >= 0 && sender.tag < (NSInteger)self.items.count) {
+        dispatch_block_t handler = self.items[(NSUInteger)sender.tag][@"handler"];
+        if (handler)
+            handler();
+    }
+    [self dismissMenu];
+}
+
+- (void)dismissMenu {
+    [UIView animateWithDuration:0.18 animations:^{ self.alpha = 0; } completion:^(__unused BOOL finished) {
+        [self removeFromSuperview];
+    }];
+}
+
+@end
+
+
 @interface Vita3KLibraryView : UIView <UICollectionViewDataSource, UICollectionViewDelegateFlowLayout> {
 @public
     std::vector<Vita3KIOSGameEntry> _games;
@@ -748,6 +882,7 @@ std::string hex_bytes(const std::string &value) {
 @property(nonatomic, strong) UILabel *jitBannerLabel;
 - (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings;
 - (void)setJitAvailable:(BOOL)available;
+- (void)presentPadActionsForItem:(NSInteger)item;
 - (BOOL)jitAvailable;
 - (BOOL)firmwareReadyOrPresentAlert;
 @end
@@ -1286,6 +1421,48 @@ std::string hex_bytes(const std::string &value) {
     [UIView animateWithDuration:0.22 animations:^{ settings.alpha = 1; }];
 }
 
+// Triangle on a focused cell: the same actions as the long-press context menu,
+// in a pad-navigable overlay.
+- (void)presentPadActionsForItem:(NSInteger)item {
+    if (item < 0 || item >= static_cast<NSInteger>(_games.size()))
+        return;
+    const auto &game = _games.at(static_cast<std::size_t>(item));
+    NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
+    NSString *original = [NSString stringWithUTF8String:game.title.c_str()] ?: identifier;
+    NSString *trophyId = [NSString stringWithUTF8String:game.trophy_id.c_str()] ?: @"";
+    __weak Vita3KLibraryView *weakSelf = self;
+    NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
+    [items addObject:@{ @"title": @"Import save", @"symbol": @"square.and.arrow.down",
+        @"handler": [^{ present_save_picker(identifier); } copy] }];
+    [items addObject:@{ @"title": @"Export save", @"symbol": @"square.and.arrow.up",
+        @"handler": [^{
+            [weakSelf showBusyOverlay:@"Exporting save…" blockInteraction:YES];
+            Vita3KIOSFrontendAction request;
+            request.kind = Vita3KIOSFrontendActionKind::ExportSave;
+            request.title_id = identifier.UTF8String;
+            queue_action(std::move(request));
+        } copy] }];
+    [items addObject:@{ @"title": @"Rename title", @"symbol": @"pencil",
+        @"handler": [^{ [weakSelf promptRename:identifier original:original]; } copy] }];
+    [items addObject:@{ @"title": @"View trophies", @"symbol": @"trophy.fill",
+        @"handler": [^{
+            Vita3KIOSFrontendAction request;
+            request.kind = Vita3KIOSFrontendActionKind::ShowTrophies;
+            request.title_id = original.UTF8String;
+            request.app_path = identifier.UTF8String;
+            request.trophy_id = trophyId.UTF8String;
+            queue_action(std::move(request));
+        } copy] }];
+    if ([NSUserDefaults.standardUserDefaults stringForKey:title_override_key(identifier)].length) {
+        [items addObject:@{ @"title": @"Reset name", @"symbol": @"arrow.uturn.backward", @"destructive": @YES,
+            @"handler": [^{
+                [NSUserDefaults.standardUserDefaults removeObjectForKey:title_override_key(identifier)];
+                [weakSelf.collectionView reloadData];
+            } copy] }];
+    }
+    [Vita3KPadMenuView presentInView:self title:display_title(identifier, original) items:items];
+}
+
 - (void)reportRestartRequired:(NSArray<NSString *> *)settings {
     self.statusLabel.text = settings.count
         ? [NSString stringWithFormat:@"Saved · restart required: %@", [settings componentsJoinedByString:@", "]]
@@ -1308,6 +1485,311 @@ void reload_library_cells() {
     [g_library.collectionView reloadData];
 }
 } // namespace
+
+
+// Spatial controller navigation for the native UI (library, settings, pad
+// menus): DPAD moves a focus ring, Cross activates, Circle goes back, Triangle
+// opens the focused game's actions, L1/R1 switch settings categories. Handlers
+// no-op whenever the library UI is not on screen, so in-game input is never
+// intercepted.
+@interface Vita3KPadNavigator : NSObject
+@property(nonatomic, weak) UIView *focused;
+@property(nonatomic) CGFloat savedBorderWidth;
+@property(nonatomic, strong) UIColor *savedBorderColor;
+@property(nonatomic) BOOL active;
++ (instancetype)shared;
+- (void)start;
+- (void)stop;
+@end
+
+@implementation Vita3KPadNavigator
+
++ (instancetype)shared {
+    static Vita3KPadNavigator *navigator;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        navigator = [[Vita3KPadNavigator alloc] init];
+        [NSNotificationCenter.defaultCenter addObserverForName:GCControllerDidConnectNotification
+                                                        object:nil
+                                                         queue:NSOperationQueue.mainQueue
+                                                    usingBlock:^(NSNotification *note) {
+            [navigator wireController:note.object];
+        }];
+    });
+    return navigator;
+}
+
+- (void)start {
+    self.active = YES;
+    for (GCController *controller in GCController.controllers)
+        [self wireController:controller];
+}
+
+- (void)stop {
+    self.active = NO;
+    [self clearFocusRing];
+    self.focused = nil;
+}
+
+- (void)wireController:(GCController *)controller {
+    GCExtendedGamepad *pad = controller.extendedGamepad;
+    if (!pad)
+        return;
+    __weak Vita3KPadNavigator *weakSelf = self;
+    pad.dpad.up.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
+        if (pressed) [weakSelf move:0 dy:-1];
+    };
+    pad.dpad.down.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
+        if (pressed) [weakSelf move:0 dy:1];
+    };
+    pad.dpad.left.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
+        if (pressed) [weakSelf horizontal:-1];
+    };
+    pad.dpad.right.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
+        if (pressed) [weakSelf horizontal:1];
+    };
+    pad.buttonA.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
+        if (pressed) [weakSelf activate];
+    };
+    pad.buttonB.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
+        if (pressed) [weakSelf back];
+    };
+    pad.buttonY.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
+        if (pressed) [weakSelf gameActions];
+    };
+    pad.leftShoulder.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
+        if (pressed) [weakSelf switchTab:-1];
+    };
+    pad.rightShoulder.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
+        if (pressed) [weakSelf switchTab:1];
+    };
+}
+
+- (BOOL)navigationAllowed {
+    return self.active && g_library.window != nil
+        && g_library.window.rootViewController.presentedViewController == nil;
+}
+
+// Topmost interactive surface: pad menu > settings > library.
+- (UIView *)navigationRoot {
+    for (UIView *subview in g_library.subviews.reverseObjectEnumerator) {
+        if (subview.hidden)
+            continue;
+        if ([subview isKindOfClass:Vita3KPadMenuView.class] || [subview isKindOfClass:Vita3KSettingsView.class])
+            return subview;
+    }
+    return g_library;
+}
+
+static void collect_candidates(UIView *view, NSMutableArray<UIView *> *out) {
+    if (view.hidden || view.alpha < 0.02)
+        return;
+    BOOL focusable = NO;
+    if ([view isKindOfClass:UIControl.class])
+        focusable = ((UIControl *)view).enabled && view.userInteractionEnabled;
+    else if ([view isKindOfClass:UICollectionViewCell.class])
+        focusable = YES;
+    if (focusable) {
+        if (view.bounds.size.width >= 20 && view.bounds.size.height >= 20)
+            [out addObject:view];
+        return; // don't descend into a control's internals
+    }
+    for (UIView *subview in view.subviews)
+        collect_candidates(subview, out);
+}
+
+- (NSArray<UIView *> *)candidatesIn:(UIView *)root {
+    NSMutableArray<UIView *> *out = [NSMutableArray array];
+    collect_candidates(root, out);
+    return out;
+}
+
+static CGPoint center_in(UIView *view, UIView *root) {
+    return [view convertPoint:CGPointMake(CGRectGetMidX(view.bounds), CGRectGetMidY(view.bounds)) toView:root];
+}
+
+- (void)clearFocusRing {
+    UIView *old = self.focused;
+    if (old) {
+        old.layer.borderWidth = self.savedBorderWidth;
+        old.layer.borderColor = self.savedBorderColor.CGColor;
+    }
+}
+
+- (void)setFocus:(UIView *)view {
+    if (!view || view == self.focused)
+        return;
+    [self clearFocusRing];
+    self.savedBorderWidth = view.layer.borderWidth;
+    self.savedBorderColor = view.layer.borderColor ? [UIColor colorWithCGColor:view.layer.borderColor] : UIColor.clearColor;
+    view.layer.borderWidth = 3;
+    view.layer.borderColor = UIColor.systemCyanColor.CGColor;
+    if (view.layer.cornerRadius == 0)
+        view.layer.cornerRadius = 10;
+    self.focused = view;
+
+    UIView *scroller = view.superview;
+    while (scroller && ![scroller isKindOfClass:UIScrollView.class])
+        scroller = scroller.superview;
+    if (scroller) {
+        const CGRect rect = [view convertRect:view.bounds toView:scroller];
+        [(UIScrollView *)scroller scrollRectToVisible:CGRectInset(rect, -24, -24) animated:YES];
+    }
+}
+
+- (UIView *)validFocusIn:(UIView *)root {
+    UIView *view = self.focused;
+    if (view && view.window && !view.hidden && [view isDescendantOfView:root])
+        return view;
+    return nil;
+}
+
+- (void)focusDefaultIn:(UIView *)root {
+    NSArray<UIView *> *candidates = [self candidatesIn:root];
+    UIView *best = nil;
+    CGFloat bestScore = CGFLOAT_MAX;
+    for (UIView *candidate in candidates) {
+        const CGPoint center = center_in(candidate, root);
+        // Prefer visible candidates, ordered top-left first.
+        const BOOL visible = CGRectIntersectsRect([candidate convertRect:candidate.bounds toView:root], root.bounds);
+        const CGFloat score = (visible ? 0 : 1000000) + center.y * 1000 + center.x;
+        if (score < bestScore) {
+            bestScore = score;
+            best = candidate;
+        }
+    }
+    [self setFocus:best];
+}
+
+- (void)move:(NSInteger)dx dy:(NSInteger)dy {
+    if (![self navigationAllowed])
+        return;
+    UIView *root = [self navigationRoot];
+    UIView *current = [self validFocusIn:root];
+    if (!current) {
+        [self focusDefaultIn:root];
+        return;
+    }
+    const CGPoint from = center_in(current, root);
+    NSArray<UIView *> *candidates = [self candidatesIn:root];
+    UIView *best = nil;
+    CGFloat bestScore = CGFLOAT_MAX;
+    for (UIView *candidate in candidates) {
+        if (candidate == current)
+            continue;
+        const CGPoint center = center_in(candidate, root);
+        const CGFloat forward = (center.x - from.x) * dx + (center.y - from.y) * dy;
+        if (forward < 8)
+            continue;
+        const CGFloat sideways = dx != 0 ? fabs(center.y - from.y) : fabs(center.x - from.x);
+        const CGFloat score = forward + sideways * 2.5;
+        if (score < bestScore) {
+            bestScore = score;
+            best = candidate;
+        }
+    }
+    if (best)
+        [self setFocus:best];
+}
+
+- (void)horizontal:(NSInteger)delta {
+    if (![self navigationAllowed])
+        return;
+    UIView *root = [self navigationRoot];
+    UIView *current = [self validFocusIn:root];
+    if ([current isKindOfClass:UISlider.class]) {
+        UISlider *slider = (UISlider *)current;
+        const float step = (slider.maximumValue - slider.minimumValue) / 20.0f;
+        slider.value = std::clamp(slider.value + step * (float)delta, slider.minimumValue, slider.maximumValue);
+        [slider sendActionsForControlEvents:UIControlEventValueChanged];
+        return;
+    }
+    if ([current isKindOfClass:UISegmentedControl.class]) {
+        UISegmentedControl *segmented = (UISegmentedControl *)current;
+        const NSInteger next = segmented.selectedSegmentIndex + delta;
+        if (next >= 0 && next < segmented.numberOfSegments) {
+            segmented.selectedSegmentIndex = next;
+            [segmented sendActionsForControlEvents:UIControlEventValueChanged];
+        }
+        return;
+    }
+    [self move:delta dy:0];
+}
+
+- (void)activate {
+    if (![self navigationAllowed])
+        return;
+    UIView *root = [self navigationRoot];
+    UIView *current = [self validFocusIn:root];
+    if (!current) {
+        [self focusDefaultIn:root];
+        return;
+    }
+    if ([current isKindOfClass:UICollectionViewCell.class]) {
+        UIView *scroller = current.superview;
+        while (scroller && ![scroller isKindOfClass:UICollectionView.class])
+            scroller = scroller.superview;
+        UICollectionView *collection = (UICollectionView *)scroller;
+        NSIndexPath *indexPath = [collection indexPathForCell:(UICollectionViewCell *)current];
+        if (indexPath && [collection.delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)])
+            [collection.delegate collectionView:collection didSelectItemAtIndexPath:indexPath];
+        return;
+    }
+    if ([current isKindOfClass:UISwitch.class]) {
+        UISwitch *toggle = (UISwitch *)current;
+        [toggle setOn:!toggle.on animated:YES];
+        [toggle sendActionsForControlEvents:UIControlEventValueChanged];
+        return;
+    }
+    if ([current isKindOfClass:UIControl.class])
+        [(UIControl *)current sendActionsForControlEvents:UIControlEventTouchUpInside];
+}
+
+- (void)back {
+    if (!self.active || g_library.window == nil)
+        return;
+    UIViewController *presented = g_library.window.rootViewController.presentedViewController;
+    if (presented) {
+        [presented dismissViewControllerAnimated:YES completion:nil];
+        return;
+    }
+    UIView *root = [self navigationRoot];
+    if ([root isKindOfClass:Vita3KPadMenuView.class]) {
+        [(Vita3KPadMenuView *)root dismissMenu];
+        self.focused = nil;
+        return;
+    }
+    if ([root isKindOfClass:Vita3KSettingsView.class]) {
+        [(Vita3KSettingsView *)root navigateBack];
+        self.focused = nil;
+    }
+}
+
+- (void)gameActions {
+    if (![self navigationAllowed])
+        return;
+    UIView *root = [self navigationRoot];
+    if (root != g_library)
+        return;
+    UIView *current = [self validFocusIn:root];
+    if (![current isKindOfClass:UICollectionViewCell.class])
+        return;
+    NSIndexPath *indexPath = [g_library.collectionView indexPathForCell:(UICollectionViewCell *)current];
+    if (indexPath)
+        [g_library presentPadActionsForItem:indexPath.item];
+}
+
+- (void)switchTab:(NSInteger)delta {
+    if (![self navigationAllowed])
+        return;
+    UIView *root = [self navigationRoot];
+    if ([root isKindOfClass:Vita3KSettingsView.class]) {
+        [(Vita3KSettingsView *)root padSwitchCategory:delta];
+        self.focused = nil;
+    }
+}
+
+@end
 
 // Presents the Files picker and hands the copied file to the emulator loop.
 @interface Vita3KImportPicker : NSObject <UIDocumentPickerDelegate>
@@ -1434,6 +1916,26 @@ void present_save_picker(NSString *titleId) {
 
 } // namespace
 
+// Hide or reveal every CAMetalLayer-backed view under the window. The SDL
+// drawable keeps the last presented game frame after a session ends, and it
+// can bleed into library/settings backgrounds through composition paths that
+// don't show up in screenshots. While the library UI is on screen nothing
+// renders into it, so hiding it outright is safe.
+static void set_metal_drawables_hidden(UIWindow *window, BOOL hidden) {
+    if (!window)
+        return;
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:window.rootViewController.view ?: window];
+    while (pending.count) {
+        UIView *view = pending.lastObject;
+        [pending removeLastObject];
+        if ([view.layer isKindOfClass:CAMetalLayer.class]) {
+            view.hidden = hidden;
+            continue;
+        }
+        [pending addObjectsFromArray:view.subviews];
+    }
+}
+
 void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
     const Vita3KIOSSettings &settings) {
     const std::vector<Vita3KIOSGameEntry> gamesCopy = games;
@@ -1456,6 +1958,8 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         [g_library updateGames:gamesCopy settings:settingsCopy];
         [g_library setJitAvailable:g_jit_available];
         [g_library.superview bringSubviewToFront:g_library];
+        set_metal_drawables_hidden(window, YES);
+        [Vita3KPadNavigator.shared start];
     });
 }
 
@@ -1470,6 +1974,8 @@ void vita3k_ios_update_library(const std::vector<Vita3KIOSGameEntry> &games,
 
 void vita3k_ios_hide_library() {
     perform_on_main(^{
+        [Vita3KPadNavigator.shared stop];
+        set_metal_drawables_hidden(g_library.window ?: active_window(), NO);
         [g_library removeFromSuperview];
         g_library = nil;
     });

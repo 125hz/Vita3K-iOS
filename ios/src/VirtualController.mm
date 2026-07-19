@@ -359,6 +359,8 @@ static void hapticTick() {
 @property(nonatomic, strong) UIView *verticalGuide;
 @property(nonatomic, strong) UIView *horizontalGuide;
 @property(nonatomic) BOOL layoutEditing;
+// unsnapped center of the element being dragged in the layout editor
+@property(nonatomic) CGPoint dragRawCenter;
 // YES when the overlay was created solely to edit the layout from the homepage
 // (no game running); it is torn down again when editing finishes.
 @property(nonatomic) BOOL previewEditingOnly;
@@ -626,14 +628,22 @@ static constexpr NSInteger triggerTagOffset = 1000;
 - (void)elementPanned:(UIPanGestureRecognizer *)recognizer {
     UIView *elementView = recognizer.view;
     const CGPoint translation = [recognizer translationInView:self];
-    CGPoint center = CGPointMake(elementView.center.x + translation.x, elementView.center.y + translation.y);
+    // Accumulate the drag on the raw (unsnapped) center. Snapping is applied
+    // to a copy for display only; if it also fed the next tick's base, the
+    // element would re-snap every tick and could only escape a guide with a
+    // hard flick.
+    if (recognizer.state == UIGestureRecognizerStateBegan)
+        self.dragRawCenter = elementView.center;
+    CGPoint raw = CGPointMake(self.dragRawCenter.x + translation.x, self.dragRawCenter.y + translation.y);
+    self.dragRawCenter = raw;
+    CGPoint center = raw;
     [recognizer setTranslation:CGPointZero inView:self];
     const BOOL finished = recognizer.state == UIGestureRecognizerStateEnded
         || recognizer.state == UIGestureRecognizerStateCancelled;
     BOOL snappedX = NO;
     BOOL snappedY = NO;
     if (!finished && [g_controls_config[@"snapGuides"] boolValue]) {
-        constexpr CGFloat snapDistance = 9.0;
+        constexpr CGFloat snapDistance = 6.0;
         CGFloat bestX = snapDistance + 1;
         CGFloat bestY = snapDistance + 1;
         for (UIView *candidate in self.controllerElements) {
