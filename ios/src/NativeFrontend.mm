@@ -527,6 +527,8 @@ static void present_cover_picker(NSString *titleId) {
     self.metadataLabel = [[UILabel alloc] init];
     self.metadataLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
     self.metadataLabel.textColor = UIColor.secondaryLabelColor;
+    self.metadataLabel.tintColor = UIColor.systemYellowColor;
+    self.metadataLabel.tintAdjustmentMode = UIViewTintAdjustmentModeNormal;
     self.metadataLabel.numberOfLines = 0;
     [self.glass.contentView addSubview:self.metadataLabel];
     self.separator = [[UIView alloc] init];
@@ -916,6 +918,7 @@ CGFloat library_card_label_height() {
         @[@"System & Input", @"gamecontroller.fill", UIColor.systemGreenColor],
         @[@"Performance Overlay", @"gauge.with.dots.needle.67percent", UIColor.systemPinkColor],
         @[@"Library", @"square.grid.2x2.fill", UIColor.systemTealColor],
+        @[@"Submit bugs", @"ladybug.fill", UIColor.systemRedColor],
     ];
     for (NSArray *category in categories)
         [self.stack addArrangedSubview:[self categoryButton:category[0] symbol:category[1] color:category[2]]];
@@ -938,15 +941,34 @@ CGFloat library_card_label_height() {
 }
 
 - (void)openCategoryNamed:(NSString *)category {
+    if ([category isEqualToString:@"Submit bugs"]) {
+        [UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://forms.gle/PRE5MoNocokpyNNJA"]
+                                         options:@{}
+                               completionHandler:nil];
+        return;
+    }
     NSArray<UIView *> *views = self.pages[category];
     if (!views)
         return;
-    [self clearSettingsStack];
-    self.showingRoot = NO;
-    self.headerTitle.text = category;
-    for (UIView *view in views)
-        [self.stack addArrangedSubview:view];
-    [self.scrollView setContentOffset:CGPointZero animated:NO];
+    self.userInteractionEnabled = NO;
+    [UIView animateWithDuration:0.15 animations:^{
+        self.stack.alpha = 0;
+        self.stack.transform = CGAffineTransformMakeTranslation(-22, 0);
+    } completion:^(__unused BOOL finished) {
+        [self clearSettingsStack];
+        self.showingRoot = NO;
+        self.headerTitle.text = category;
+        for (UIView *view in views)
+            [self.stack addArrangedSubview:view];
+        [self.scrollView setContentOffset:CGPointZero animated:NO];
+        self.stack.transform = CGAffineTransformMakeTranslation(22, 0);
+        [UIView animateWithDuration:0.4 delay:0
+            usingSpringWithDamping:0.86 initialSpringVelocity:0.3 options:UIViewAnimationOptionCurveEaseOut
+            animations:^{
+                self.stack.alpha = 1;
+                self.stack.transform = CGAffineTransformIdentity;
+            } completion:^(__unused BOOL complete) { self.userInteractionEnabled = YES; }];
+    }];
 }
 
 // L1/R1 pad navigation: cycle through the settings categories in the order
@@ -954,7 +976,7 @@ CGFloat library_card_label_height() {
 - (void)padSwitchCategory:(NSInteger)delta {
     NSArray<NSString *> *order = @[
         @"Video", @"Graphics", @"Audio", @"System & Input",
-        @"Performance Overlay", @"Library", @"About"
+        @"Performance Overlay", @"Library", @"Submit bugs", @"About"
     ];
     if (self.showingRoot) {
         if (delta > 0)
@@ -1012,12 +1034,12 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.13.0",
-        @"• Per-game settings now survive title-profile setup, so High accuracy and every other override actually reach the renderer.\n"
-        @"• New installs get a required, firmware-aware setup walkthrough for PREINSTALL.PUP, FONTPKG.PUP, and PSVUPDAT.PUP. Existing complete installs skip it automatically.\n"
-        @"• The FPS limiter was removed; Vita presentation stays at the native 60 Hz timing.\n"
-        @"• The portrait performance HUD now starts directly below the top-anchored game image and stays beneath open menus.\n"
-        @"• Completed watchdog diagnostics poll less often and memory-headroom logging is quieter.");
+    present_alert(@"What's new in 0.14.0",
+        @"• Gravity Rush render-target sampling now keeps each required color format and component swizzle in its own Vulkan image view.\n"
+        @"• Onboarding is smaller, wraps correctly, follows light and dark mode, and uses smooth page transitions.\n"
+        @"• A new homepage help button explains when to use High accuracy.\n"
+        @"• Settings adds a Submit bugs shortcut and animated category transitions.\n"
+        @"• Trophy progress badges stay gold in list and card views.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -1260,6 +1282,9 @@ CGFloat library_card_label_height() {
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UIButton *primaryButton;
 @property(nonatomic, strong) UIButton *nextButton;
+@property(nonatomic, strong) UIVisualEffectView *card;
+@property(nonatomic, strong) UIStackView *contentStack;
+@property(nonatomic) BOOL hasAnimatedEntrance;
 - (instancetype)initWithFrame:(CGRect)frame settings:(const Vita3KIOSSettings &)settings;
 - (void)updateFirmwareSettings:(const Vita3KIOSSettings &)settings;
 - (void)handleImportResult:(NSString *)message success:(BOOL)success;
@@ -1276,33 +1301,29 @@ CGFloat library_card_label_height() {
     _firmwareSettings = settings;
     self.pageIndex = 0;
 
-    CAGradientLayer *gradient = [CAGradientLayer layer];
-    gradient.colors = @[(id)[UIColor colorWithRed:0.15 green:0.12 blue:0.35 alpha:1].CGColor,
-        (id)[UIColor colorWithRed:0.04 green:0.18 blue:0.35 alpha:1].CGColor];
-    gradient.frame = self.bounds;
-    gradient.name = @"onboardingGradient";
-    [self.layer addSublayer:gradient];
-
-    UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithEffect:glass_effect(YES)];
-    card.translatesAutoresizingMaskIntoConstraints = NO;
-    card.layer.cornerRadius = 28;
-    card.clipsToBounds = YES;
-    [self addSubview:card];
+    self.card = [[UIVisualEffectView alloc] initWithEffect:glass_effect(YES)];
+    self.card.translatesAutoresizingMaskIntoConstraints = NO;
+    self.card.layer.cornerRadius = 22;
+    self.card.clipsToBounds = YES;
+    [self addSubview:self.card];
 
     self.symbolView = [[UIImageView alloc] init];
     self.symbolView.contentMode = UIViewContentModeScaleAspectFit;
     self.symbolView.tintColor = UIColor.systemCyanColor;
-    [self.symbolView.heightAnchor constraintEqualToConstant:82].active = YES;
+    [self.symbolView.heightAnchor constraintEqualToConstant:52].active = YES;
     self.titleLabel = [[UILabel alloc] init];
-    self.titleLabel.font = [UIFont systemFontOfSize:34 weight:UIFontWeightBold];
+    self.titleLabel.font = [UIFont systemFontOfSize:28 weight:UIFontWeightBold];
     self.titleLabel.textColor = UIColor.labelColor;
     self.titleLabel.textAlignment = NSTextAlignmentCenter;
     self.titleLabel.numberOfLines = 0;
     self.bodyLabel = [[UILabel alloc] init];
-    self.bodyLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightRegular];
+    self.bodyLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightRegular];
     self.bodyLabel.textColor = UIColor.secondaryLabelColor;
     self.bodyLabel.textAlignment = NSTextAlignmentCenter;
     self.bodyLabel.numberOfLines = 0;
+    self.bodyLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    [self.bodyLabel setContentCompressionResistancePriority:UILayoutPriorityRequired
+                                                   forAxis:UILayoutConstraintAxisHorizontal];
     self.statusLabel = [[UILabel alloc] init];
     self.statusLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
     self.statusLabel.textColor = UIColor.systemOrangeColor;
@@ -1313,33 +1334,33 @@ CGFloat library_card_label_height() {
     self.primaryButton.layer.cornerRadius = 13;
     self.primaryButton.backgroundColor = UIColor.systemCyanColor;
     [self.primaryButton setTitleColor:UIColor.blackColor forState:UIControlStateNormal];
-    [self.primaryButton.heightAnchor constraintEqualToConstant:50].active = YES;
+    [self.primaryButton.heightAnchor constraintEqualToConstant:44].active = YES;
     [self.primaryButton addTarget:self action:@selector(primaryPressed) forControlEvents:UIControlEventTouchUpInside];
     self.nextButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.nextButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     [self.nextButton setTitle:@"Next" forState:UIControlStateNormal];
-    [self.nextButton.heightAnchor constraintEqualToConstant:46].active = YES;
+    [self.nextButton.heightAnchor constraintEqualToConstant:42].active = YES;
     [self.nextButton addTarget:self action:@selector(nextPressed) forControlEvents:UIControlEventTouchUpInside];
 
-    UIStackView *content = [[UIStackView alloc] initWithArrangedSubviews:@[
+    self.contentStack = [[UIStackView alloc] initWithArrangedSubviews:@[
         self.symbolView, self.titleLabel, self.bodyLabel, self.statusLabel,
         self.primaryButton, self.nextButton]];
-    content.translatesAutoresizingMaskIntoConstraints = NO;
-    content.axis = UILayoutConstraintAxisVertical;
-    content.alignment = UIStackViewAlignmentFill;
-    content.spacing = 18;
-    [card.contentView addSubview:content];
-    NSLayoutConstraint *cardWidth = [card.widthAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.widthAnchor multiplier:0.88];
+    self.contentStack.translatesAutoresizingMaskIntoConstraints = NO;
+    self.contentStack.axis = UILayoutConstraintAxisVertical;
+    self.contentStack.alignment = UIStackViewAlignmentFill;
+    self.contentStack.spacing = 10;
+    [self.card.contentView addSubview:self.contentStack];
+    NSLayoutConstraint *cardWidth = [self.card.widthAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.widthAnchor multiplier:0.78];
     cardWidth.priority = UILayoutPriorityDefaultHigh;
     [NSLayoutConstraint activateConstraints:@[
-        [card.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor],
-        [card.centerYAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerYAnchor],
-        [card.widthAnchor constraintLessThanOrEqualToConstant:560],
+        [self.card.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor],
+        [self.card.centerYAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerYAnchor],
+        [self.card.widthAnchor constraintLessThanOrEqualToConstant:440],
         cardWidth,
-        [content.leadingAnchor constraintEqualToAnchor:card.contentView.leadingAnchor constant:28],
-        [content.trailingAnchor constraintEqualToAnchor:card.contentView.trailingAnchor constant:-28],
-        [content.topAnchor constraintEqualToAnchor:card.contentView.topAnchor constant:30],
-        [content.bottomAnchor constraintEqualToAnchor:card.contentView.bottomAnchor constant:-26],
+        [self.contentStack.leadingAnchor constraintEqualToAnchor:self.card.contentView.leadingAnchor constant:20],
+        [self.contentStack.trailingAnchor constraintEqualToAnchor:self.card.contentView.trailingAnchor constant:-20],
+        [self.contentStack.topAnchor constraintEqualToAnchor:self.card.contentView.topAnchor constant:18],
+        [self.contentStack.bottomAnchor constraintEqualToAnchor:self.card.contentView.bottomAnchor constant:-18],
     ]];
     [self renderPageAnimated:NO];
     return self;
@@ -1347,9 +1368,30 @@ CGFloat library_card_label_height() {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    CALayer *gradient = self.layer.sublayers.firstObject;
-    if ([gradient.name isEqualToString:@"onboardingGradient"])
-        gradient.frame = self.bounds;
+    self.backgroundColor = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
+        ? UIColor.blackColor : UIColor.whiteColor;
+    self.bodyLabel.preferredMaxLayoutWidth = MAX(1, CGRectGetWidth(self.card.bounds) - 40);
+}
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    if (!self.window || self.hasAnimatedEntrance)
+        return;
+    self.hasAnimatedEntrance = YES;
+    self.card.alpha = 0;
+    self.card.transform = CGAffineTransformMakeScale(0.94, 0.94);
+    [UIView animateWithDuration:0.48 delay:0.04
+        usingSpringWithDamping:0.84 initialSpringVelocity:0.25 options:UIViewAnimationOptionCurveEaseOut
+        animations:^{
+            self.card.alpha = 1;
+            self.card.transform = CGAffineTransformIdentity;
+        } completion:nil];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
+    [super traitCollectionDidChange:previousTraitCollection];
+    if (previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle)
+        [self setNeedsLayout];
 }
 
 - (BOOL)requiredPackageReady {
@@ -1369,17 +1411,19 @@ CGFloat library_card_label_height() {
         @"Install PREINSTALL.PUP", @"Install FONTPKG.PUP", @"Install PSVUPDAT.PUP",
         @"Experimental Software"];
     NSArray<NSString *> *bodies = @[
-        @"Tsubomi brings Vita3K to iPhone and iPad with a native library, touch controls, and the upstream emulator core.",
+        @"",
         @"Piracy is not supported. You must supply your own legally obtained game dumps and license files; Tsubomi does not include games, firmware, keys, or licenses.",
         @"Choose the official PREINSTALL.PUP from your own Vita firmware files. This installs the preinstalled system content required by games.",
         @"Choose the official FONTPKG.PUP. This installs the Vita system fonts used by games and the emulator.",
         @"Choose the official PSVUPDAT.PUP. This installs the main Vita system firmware.",
-        @"Not every game works yet. Expect graphics glitches, crashes, missing features, and performance issues—and please keep useful logs when something breaks."
+        @"Not every game works yet. Expect graphics glitches, crashes, missing features, and performance issues. Please keep useful logs when something breaks."
     ];
     void (^changes)(void) = ^{
         self.symbolView.image = [UIImage systemImageNamed:symbols[self.pageIndex]];
         self.titleLabel.text = titles[self.pageIndex];
         self.bodyLabel.text = bodies[self.pageIndex];
+        self.bodyLabel.hidden = self.pageIndex == 0;
+        self.symbolView.hidden = self.pageIndex == 0;
         self.statusLabel.text = @"";
         const BOOL firmwarePage = self.pageIndex >= 2 && self.pageIndex <= 4;
         self.primaryButton.hidden = !firmwarePage && self.pageIndex != 5;
@@ -1401,8 +1445,19 @@ CGFloat library_card_label_height() {
         }
     };
     if (animated) {
-        [UIView transitionWithView:self duration:0.36 options:UIViewAnimationOptionTransitionCrossDissolve
-            animations:changes completion:nil];
+        [UIView animateWithDuration:0.16 animations:^{
+            self.contentStack.alpha = 0;
+            self.contentStack.transform = CGAffineTransformMakeTranslation(-24, 0);
+        } completion:^(__unused BOOL finished) {
+            changes();
+            self.contentStack.transform = CGAffineTransformMakeTranslation(24, 0);
+            [UIView animateWithDuration:0.42 delay:0
+                usingSpringWithDamping:0.84 initialSpringVelocity:0.35 options:UIViewAnimationOptionCurveEaseOut
+                animations:^{
+                    self.contentStack.alpha = 1;
+                    self.contentStack.transform = CGAffineTransformIdentity;
+                } completion:nil];
+        }];
     } else {
         changes();
     }
@@ -1547,6 +1602,10 @@ CGFloat library_card_label_height() {
     settings.tag = 103;
     [settings addTarget:self action:@selector(settings) forControlEvents:UIControlEventTouchUpInside];
     [self addSubview:settings];
+    UIButton *help = symbol_button(@"questionmark.circle", @"Help", @"Graphics help");
+    help.tag = 106;
+    [help addTarget:self action:@selector(showHelp) forControlEvents:UIControlEventTouchUpInside];
+    [self addSubview:help];
     UIButton *importButton = symbol_button(@"plus", @"Add", @"Import game or firmware");
     importButton.tag = 104;
     // Attach the choices directly to the + button so iOS morphs the menu out
@@ -1655,6 +1714,7 @@ CGFloat library_card_label_height() {
     UIButton *settings = [self viewWithTag:103];
     UIButton *importButton = [self viewWithTag:104];
     UIButton *viewMode = [self viewWithTag:105];
+    UIButton *help = [self viewWithTag:106];
     const CGFloat usableWidth = CGRectGetWidth(self.bounds) - safe.left - safe.right;
     const BOOL compactHeader = usableWidth < 600;
     // Single navigation-bar-style row: large title on the left, plain glyph
@@ -1664,7 +1724,8 @@ CGFloat library_card_label_height() {
     const CGFloat buttonSize = 40;
     const CGFloat buttonY = rowY + (rowHeight - buttonSize) / 2;
     settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 14 - buttonSize, buttonY, buttonSize, buttonSize);
-    refresh.frame = CGRectMake(CGRectGetMinX(settings.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
+    help.frame = CGRectMake(CGRectGetMinX(settings.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
+    refresh.frame = CGRectMake(CGRectGetMinX(help.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
     importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
     viewMode.frame = CGRectMake(CGRectGetMinX(importButton.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
     title.frame = CGRectMake(safe.left + 20, rowY,
@@ -2302,6 +2363,11 @@ static const NSInteger kCarouselRepeat = 400;
     Vita3KIOSFrontendAction action;
     action.kind = Vita3KIOSFrontendActionKind::Refresh;
     queue_action(std::move(action));
+}
+
+- (void)showHelp {
+    present_alert(@"Graphics help",
+        @"If a game's shaders or textures do not look correct, open that game's settings and enable Graphics > High accuracy.");
 }
 
 - (void)settings {

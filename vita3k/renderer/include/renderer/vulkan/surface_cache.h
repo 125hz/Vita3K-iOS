@@ -74,6 +74,12 @@ struct CastedTexture {
     SceGxmColorBaseFormat format;
 };
 
+struct SampledSurfaceView {
+    vk::ImageView view = nullptr;
+    vk::Format format = vk::Format::eUndefined;
+    vk::ComponentMapping components{};
+};
+
 struct ColorSurfaceCacheInfo : public SurfaceCacheInfo {
     uint16_t width;
     uint16_t height;
@@ -91,6 +97,10 @@ struct ColorSurfaceCacheInfo : public SurfaceCacheInfo {
 
     // same image with a different view(swizzle) used for sampling
     vk::ImageView alternate_view = nullptr;
+    // Sampling may request multiple format/swizzle combinations over the
+    // lifetime of one render target. Keep those distinct from alternate_view,
+    // which is also used as a framebuffer's sRGB/linear reinterpretation.
+    std::vector<SampledSurfaceView> sampled_views;
 
     // only used when upscaling is enabled, to downscale the image first
     std::unique_ptr<vkutil::Image> blit_image;
@@ -188,6 +198,8 @@ private:
 
     void destroy_surface(ColorSurfaceCacheInfo &info);
     void destroy_surface(DepthStencilSurfaceCacheInfo &info);
+    vk::ImageView retrieve_sampled_view(ColorSurfaceCacheInfo &info, vk::Format format,
+        const vk::ComponentMapping &components);
 
 public:
     // when creating a mutable image, can we pass as an argument

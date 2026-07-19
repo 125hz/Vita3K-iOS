@@ -117,10 +117,38 @@ void VKSurfaceCache::destroy_surface(ColorSurfaceCacheInfo &info) {
     }
     info.casted_textures.clear();
 
+    for (const auto &sampled_view : info.sampled_views)
+        destroy_queue.add(sampled_view.view);
+    info.sampled_views.clear();
+
     destroy_queue.add(info.alternate_view);
 
     destroy_framebuffers(info.texture.view);
     destroy_queue.add_image(info.texture);
+}
+
+vk::ImageView VKSurfaceCache::retrieve_sampled_view(ColorSurfaceCacheInfo &info, const vk::Format format,
+    const vk::ComponentMapping &components) {
+    const auto existing = std::find_if(info.sampled_views.begin(), info.sampled_views.end(),
+        [&](const SampledSurfaceView &sampled_view) {
+            return sampled_view.format == format && sampled_view.components == components;
+        });
+    if (existing != info.sampled_views.end())
+        return existing->view;
+
+    vk::ImageViewCreateInfo view_info{
+        .image = info.texture.image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = format,
+        .components = components,
+        .subresourceRange = vkutil::color_subresource_range
+    };
+    const vk::ImageView view = state.device.createImageView(view_info);
+    info.sampled_views.push_back({ view, format, components });
+    LOG_DEBUG("Created distinct sampled surface view: format={} swizzle={}/{}/{}/{} count={}",
+        vk::to_string(format), static_cast<int>(components.r), static_cast<int>(components.g),
+        static_cast<int>(components.b), static_cast<int>(components.a), info.sampled_views.size());
+    return view;
 }
 
 void VKSurfaceCache::destroy_surface(DepthStencilSurfaceCacheInfo &info) {
@@ -159,6 +187,10 @@ void VKSurfaceCache::cleanup() {
             casted.texture.destroy();
         }
         info.casted_textures.clear();
+
+        for (const auto &sampled_view : info.sampled_views)
+            state.device.destroy(sampled_view.view);
+        info.sampled_views.clear();
 
         if (info.alternate_view) {
             state.device.destroy(info.alternate_view);
@@ -539,21 +571,11 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
             };
 
         // use the other view with the correct swizzle / gamma correction
-        if (!info.alternate_view) {
-            vk::ComponentMapping resulting_mapping = vkutil::color_to_texture_swizzle(info.swizzle, swizzle);
-
-            vk::ImageViewCreateInfo view_info{
-                .image = info.texture.image,
-                .viewType = vk::ImageViewType::e2D,
-                .format = vk_format,
-                .components = resulting_mapping,
-                .subresourceRange = vkutil::color_subresource_range
-            };
-            info.alternate_view = state.device.createImageView(view_info);
-        }
+        const vk::ComponentMapping resulting_mapping = vkutil::color_to_texture_swizzle(info.swizzle, swizzle);
+        const vk::ImageView sampled_view = retrieve_sampled_view(info, vk_format, resulting_mapping);
 
         return TextureLookupResult{
-            info.alternate_view,
+            sampled_view,
             info.texture.layout,
             info.texture.format
         };
@@ -698,21 +720,11 @@ std::optional<TextureLookupResult> VKSurfaceCache::retrieve_color_surface_as_tex
                 info.texture.format
             };
 
-        if (!info.alternate_view) {
-            vk::ComponentMapping resulting_mapping = vkutil::color_to_texture_swizzle(info.swizzle, swizzle);
-
-            vk::ImageViewCreateInfo view_info{
-                .image = info.texture.image,
-                .viewType = vk::ImageViewType::e2D,
-                .format = vk_format,
-                .components = resulting_mapping,
-                .subresourceRange = vkutil::color_subresource_range
-            };
-            info.alternate_view = state.device.createImageView(view_info);
-        }
+        const vk::ComponentMapping resulting_mapping = vkutil::color_to_texture_swizzle(info.swizzle, swizzle);
+        const vk::ImageView sampled_view = retrieve_sampled_view(info, vk_format, resulting_mapping);
 
         return TextureLookupResult{
-            info.alternate_view,
+            sampled_view,
             vkutil::ImageLayout::ColorAttachmentReadWrite,
             vk_format
         };
