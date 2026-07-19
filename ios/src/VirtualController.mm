@@ -94,6 +94,7 @@ static NSMutableDictionary *landscapeElements() {
         @"triangle": element(0.86, 0.66, YES), @"cross": element(0.86, 0.86, YES),
         @"square": element(0.80, 0.76, YES), @"circle": element(0.92, 0.76, YES),
         @"left_shoulder": element(0.09, 0.10, YES), @"right_shoulder": element(0.91, 0.10, YES),
+        @"left_trigger": element(0.09, 0.22, YES), @"right_trigger": element(0.91, 0.22, YES),
         @"select": element(0.43, 0.91, YES), @"start": element(0.57, 0.91, YES),
         @"left_stick": element(0.29, 0.73, YES), @"right_stick": element(0.71, 0.73, YES),
         @"menu": element(0.95, 0.17, YES),
@@ -107,6 +108,7 @@ static NSMutableDictionary *portraitElements() {
         @"triangle": element(0.78, 0.59, YES), @"cross": element(0.78, 0.71, YES),
         @"square": element(0.67, 0.65, YES), @"circle": element(0.89, 0.65, YES),
         @"left_shoulder": element(0.15, 0.53, YES), @"right_shoulder": element(0.85, 0.53, YES),
+        @"left_trigger": element(0.15, 0.47, YES), @"right_trigger": element(0.85, 0.47, YES),
         @"select": element(0.40, 0.94, YES), @"start": element(0.60, 0.94, YES),
         @"left_stick": element(0.20, 0.84, YES), @"right_stick": element(0.80, 0.84, YES),
         @"menu": element(0.94, 0.54, YES),
@@ -374,6 +376,8 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     [self addButton:@"→" key:@"dpad_right" button:SDL_GAMEPAD_BUTTON_DPAD_RIGHT accessibility:@"D-pad right"];
     [self addButton:@"L" key:@"left_shoulder" button:SDL_GAMEPAD_BUTTON_LEFT_SHOULDER accessibility:@"Left shoulder"];
     [self addButton:@"R" key:@"right_shoulder" button:SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER accessibility:@"Right shoulder"];
+    [self addTrigger:@"L2" key:@"left_trigger" axis:SDL_GAMEPAD_AXIS_LEFT_TRIGGER accessibility:@"Left trigger"];
+    [self addTrigger:@"R2" key:@"right_trigger" axis:SDL_GAMEPAD_AXIS_RIGHT_TRIGGER accessibility:@"Right trigger"];
     [self addButton:@"SELECT" key:@"select" button:SDL_GAMEPAD_BUTTON_BACK accessibility:@"Select"];
     [self addButton:@"START" key:@"start" button:SDL_GAMEPAD_BUTTON_START accessibility:@"Start"];
     [self addStick:@"left_stick" horizontal:SDL_GAMEPAD_AXIS_LEFTX vertical:SDL_GAMEPAD_AXIS_LEFTY accessibility:@"Left analog stick"];
@@ -440,9 +444,8 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     [UIView animateWithDuration:0.55 animations:^{ self.menuButton.alpha = 0.12; }];
 }
 
-- (void)addButton:(NSString *)title key:(NSString *)key button:(SDL_GamepadButton)gamepadButton accessibility:(NSString *)accessibility {
+- (UIButton *)makeElementButton:(NSString *)title key:(NSString *)key accessibility:(NSString *)accessibility {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    button.tag = static_cast<NSInteger>(gamepadButton);
     button.accessibilityIdentifier = key;
     button.accessibilityLabel = accessibility;
     button.multipleTouchEnabled = YES;
@@ -459,11 +462,48 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     [button setTitle:title forState:UIControlStateNormal];
     [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     [button setTitleColor:UIColor.systemCyanColor forState:UIControlStateHighlighted];
+    return button;
+}
+
+- (void)addButton:(NSString *)title key:(NSString *)key button:(SDL_GamepadButton)gamepadButton accessibility:(NSString *)accessibility {
+    UIButton *button = [self makeElementButton:title key:key accessibility:accessibility];
+    button.tag = static_cast<NSInteger>(gamepadButton);
     [button addTarget:self action:@selector(buttonPressed:) forControlEvents:UIControlEventTouchDown | UIControlEventTouchDragEnter];
     [button addTarget:self action:@selector(buttonReleased:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
     installGlassBackground(button);
     [self addSubview:button];
     [self.controllerElements addObject:button];
+}
+
+// Trigger buttons drive an SDL trigger AXIS rather than a digital button:
+// the core reads L2/R2 from the trigger axes exactly like a physical pad's
+// triggers (used by titles running in PSTV/DS3 extended-controller mode).
+// The tag encodes axis + offset so digital-button paths never confuse them.
+static constexpr NSInteger triggerTagOffset = 1000;
+
+- (void)addTrigger:(NSString *)label key:(NSString *)key axis:(SDL_GamepadAxis)axis accessibility:(NSString *)accessibility {
+    UIButton *button = [self makeElementButton:label key:key accessibility:accessibility];
+    button.tag = triggerTagOffset + axis;
+    [button addTarget:self action:@selector(triggerPressed:) forControlEvents:UIControlEventTouchDown | UIControlEventTouchDragEnter];
+    [button addTarget:self action:@selector(triggerReleased:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
+    installGlassBackground(button);
+    [self addSubview:button];
+    [self.controllerElements addObject:button];
+}
+
+- (void)triggerPressed:(UIButton *)sender {
+    if (self.layoutEditing)
+        return;
+    hapticTick();
+    sender.backgroundColor = [UIColor colorWithRed:0.2 green:0.65 blue:1 alpha:0.28];
+    if (g_virtual_joystick)
+        SDL_SetJoystickVirtualAxis(g_virtual_joystick, static_cast<int>(sender.tag - triggerTagOffset), SDL_JOYSTICK_AXIS_MAX);
+}
+
+- (void)triggerReleased:(UIButton *)sender {
+    sender.backgroundColor = UIColor.clearColor;
+    if (g_virtual_joystick)
+        SDL_SetJoystickVirtualAxis(g_virtual_joystick, static_cast<int>(sender.tag - triggerTagOffset), SDL_JOYSTICK_AXIS_MIN);
 }
 
 - (void)addStick:(NSString *)key horizontal:(SDL_GamepadAxis)horizontal vertical:(SDL_GamepadAxis)vertical accessibility:(NSString *)accessibility {
@@ -510,6 +550,8 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
         return CGSizeMake(96 * scale, 96 * scale);
     if ([key containsString:@"shoulder"])
         return CGSizeMake(94 * scale, 42 * scale);
+    if ([key containsString:@"trigger"])
+        return CGSizeMake(84 * scale, 38 * scale);
     if ([key isEqualToString:@"select"] || [key isEqualToString:@"start"])
         return CGSizeMake(76 * scale, 34 * scale);
     return CGSizeMake(58 * scale, 58 * scale);
@@ -650,10 +692,15 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     if (!g_virtual_joystick)
         return;
     for (UIView *elementView in self.controllerElements) {
-        if ([elementView isKindOfClass:UIButton.class])
-            SDL_SetJoystickVirtualButton(g_virtual_joystick, static_cast<int>(((UIButton *)elementView).tag), false);
-        else if ([elementView isKindOfClass:Vita3KAnalogStick.class])
+        if ([elementView isKindOfClass:UIButton.class]) {
+            const NSInteger tag = ((UIButton *)elementView).tag;
+            if (tag >= triggerTagOffset)
+                SDL_SetJoystickVirtualAxis(g_virtual_joystick, static_cast<int>(tag - triggerTagOffset), SDL_JOYSTICK_AXIS_MIN);
+            else
+                SDL_SetJoystickVirtualButton(g_virtual_joystick, static_cast<int>(tag), false);
+        } else if ([elementView isKindOfClass:Vita3KAnalogStick.class]) {
             [(Vita3KAnalogStick *)elementView resetAxes];
+        }
     }
 }
 
@@ -755,7 +802,9 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     NSArray<NSArray<NSString *> *> *elements = @[
         @[@"D-pad up", @"dpad_up"], @[@"D-pad down", @"dpad_down"], @[@"D-pad left", @"dpad_left"], @[@"D-pad right", @"dpad_right"],
         @[@"Triangle", @"triangle"], @[@"Circle", @"circle"], @[@"Cross", @"cross"], @[@"Square", @"square"],
-        @[@"L shoulder", @"left_shoulder"], @[@"R shoulder", @"right_shoulder"], @[@"Select", @"select"], @[@"Start", @"start"],
+        @[@"L shoulder", @"left_shoulder"], @[@"R shoulder", @"right_shoulder"],
+        @[@"L2 trigger", @"left_trigger"], @[@"R2 trigger", @"right_trigger"],
+        @[@"Select", @"select"], @[@"Start", @"start"],
         @[@"Left stick", @"left_stick"], @[@"Right stick", @"right_stick"], @[@"Menu button", @"menu"],
     ];
     for (NSArray<NSString *> *item in elements) {
@@ -1178,6 +1227,10 @@ bool vita3k_ios_attach_virtual_controller() {
         g_virtual_joystick_id = 0;
         return false;
     }
+    // Trigger axes rest at minimum on a real pad; virtual axes default to 0
+    // (half pressed), so park them explicitly.
+    SDL_SetJoystickVirtualAxis(g_virtual_joystick, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
+    SDL_SetJoystickVirtualAxis(g_virtual_joystick, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
     SDL_Log("Vita3K iOS: virtual touch controller attached (joystick=%u, dual analog enabled)",
         static_cast<unsigned>(g_virtual_joystick_id));
     return true;

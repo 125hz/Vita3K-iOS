@@ -486,19 +486,14 @@ std::string hex_bytes(const std::string &value) {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.6.0",
-        @"• Games now boot past their menus: fixed the freezes in "
-        @"Persona 4 Golden, VA-11 HALL-A, and Amagami's gallery.\n"
-        @"• Fixed the crash when quitting a second game.\n"
-        @"• Faster first boot: more shader-compile workers and no more "
-        @"debugger-stalling memory traps.\n"
-        @"• Library: games scroll under a glass header, compact one-row "
-        @"header with plain glyphs, list view adapts to light mode, "
-        @"rotation no longer breaks the layout.\n"
-        @"• In-game menu: Performance HUD panel with per-element switches, "
-        @"and Back buttons that return to the menu.\n"
-        @"• Battery shows an exact percentage; tap @halcyonpalace in About "
-        @"to open the developer's profile.");
+    present_alert(@"What's new in 0.7.0",
+        @"• New L2/R2 touch buttons. They act like a controller's triggers "
+        @"(used by games with PSTV-style extended controls) and can be "
+        @"moved, resized, or hidden in Controller Options.\n"
+        @"\n"
+        @"Recent: fixed the P4G/VA-11/gallery freezes and second-quit "
+        @"crash, faster first boot, glass header, rotation fixes, "
+        @"Performance HUD panel, exact battery %.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
