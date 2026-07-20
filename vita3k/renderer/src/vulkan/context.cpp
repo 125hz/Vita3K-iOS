@@ -449,7 +449,7 @@ void VKContext::stop_recording(const SceGxmNotification &notif1, const SceGxmNot
     }
 
     ColorSurfaceCacheInfo *surface_info = nullptr;
-    if (state.features.enable_memory_mapping && !state.disable_surface_sync && submit)
+    if (state.features.can_surface_sync() && !state.disable_surface_sync && submit)
         surface_info = state.surface_cache.perform_surface_sync();
 
     prerender_cmd.end();
@@ -508,6 +508,13 @@ void VKContext::stop_recording(const SceGxmNotification &notif1, const SceGxmNot
             };
             state.request_queue.push(request);
         }
+    } else if (state.features.support_unmapped_surface_sync
+        && surface_info && surface_info->need_post_surface_sync) {
+        // Unmapped sync: wait for this scene's GPU copy into the staging
+        // buffer, then CPU-copy it into guest RAM. Notifications keep their
+        // non-mapped handling elsewhere.
+        state.request_queue.push(FenceWaitRequest{ fence });
+        state.request_queue.push(PostSurfaceSyncRequest{ surface_info });
     }
 }
 

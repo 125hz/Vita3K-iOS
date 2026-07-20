@@ -974,6 +974,18 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
 
     features.enable_memory_mapping = mapping_method != MappingMethod::Disabled;
 
+#if defined(VITA3K_PLATFORM_IOS)
+    // Memory mapping is unavailable under MoltenVK, but games like Gravity
+    // Rush CPU-read rendered surfaces (adaptive exposure): without any sync
+    // the guest reads stale RAM and blows the scene out white. Read surfaces
+    // back through a host-visible staging buffer instead.
+    if (!features.enable_memory_mapping) {
+        features.support_unmapped_surface_sync = true;
+        LOG_INFO("iOS: surface sync uses staging-buffer readback (no memory mapping); disable-surface-sync={}",
+            cfg.current_config.disable_surface_sync);
+    }
+#endif
+
 #ifdef __ANDROID__
     if (mapping_method == MappingMethod::NativeBuffer) {
         // dynamically load the symbols

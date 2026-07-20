@@ -53,12 +53,14 @@ VKContext::VKContext(VKState &state, MemState &mem)
     vertex_info_uniform_buffer.alignment = uniform_alignment;
     fragment_info_uniform_buffer.alignment = uniform_alignment;
 
+    // The request/wait thread services surface-sync writebacks too, so it must
+    // also run for the unmapped (staging-buffer) sync path.
+    if (state.features.can_surface_sync())
+        gpu_request_wait_thread = std::thread(&VKContext::wait_thread_function, this, std::ref(mem));
+
     if (state.features.enable_memory_mapping) {
         // use the default buffer
         std::fill_n(vertex_stream_buffers, SCE_GXM_MAX_VERTEX_STREAMS, state.default_buffer.buffer);
-
-        // also initialize the gpu wait thread
-        gpu_request_wait_thread = std::thread(&VKContext::wait_thread_function, this, std::ref(mem));
     } else {
         // these are not needed when using memory mapping
         vertex_stream_ring_buffer.create();

@@ -1039,10 +1039,10 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.15.0",
-        @"• Graphics settings now include Surface sync globally and per game, which can correct missing or white lighting in Gravity Rush.\n"
-        @"• Onboarding titles wrap without clipping, and card dimensions now adapt cleanly when rotating between portrait and landscape.\n"
-        @"• The prior sampled-view, graphics-help, bug-submission, settings-animation, and gold-trophy improvements remain included.");
+    present_alert(@"What's new in 0.16.0",
+        @"• Surface sync now actually works on iOS: rendered frames are read back to the emulated Vita's memory through a staging buffer, since direct memory mapping is impossible under MoltenVK. This is the real fix for Gravity Rush's blown-out white lighting — make sure Graphics > Surface sync is ON for it.\n"
+        @"• The previous Surface sync toggle looked like it worked but did nothing: the engine path it enabled required memory mapping, which iOS never has.\n"
+        @"• Onboarding and earlier fixes remain included.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {

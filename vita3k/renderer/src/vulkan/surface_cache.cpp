@@ -1159,7 +1159,7 @@ Framebuffer &VKSurfaceCache::retrieve_framebuffer_handle(MemState &mem, SceGxmCo
 }
 
 bool VKSurfaceCache::check_for_surface(MemState &mem, Address source_address, CallbackRequestFunction &callback, Address target_address) {
-    if (!state.features.enable_memory_mapping || state.disable_surface_sync)
+    if (!state.features.can_surface_sync() || state.disable_surface_sync)
         return false;
 
     if (vector_utils::find_index(cpu_surfaces_changed, source_address) != -1) {
@@ -1242,8 +1242,8 @@ bool VKSurfaceCache::check_for_surface(MemState &mem, Address source_address, Ca
 }
 
 ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
-    // surface sync is supported only if memory mapping is enabled
-    if (!state.features.enable_memory_mapping)
+    // needs memory mapping or the staging-buffer readback path
+    if (!state.features.can_surface_sync())
         return nullptr;
 
     if (last_written_surface == nullptr || !*last_written_surface->need_surface_sync)
@@ -1298,7 +1298,12 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
 
     vk::Buffer buffer;
     uint32_t offset;
-    if (format_need_additional_memory(last_written_surface->format)) {
+    // Without memory mapping the GPU cannot write guest RAM directly, so
+    // every format goes through the host-visible staging buffer and a CPU
+    // copy in perform_post_surface_sync.
+    const bool use_staging_buffer = format_need_additional_memory(last_written_surface->format)
+        || !state.features.enable_memory_mapping;
+    if (use_staging_buffer) {
         if (!last_written_surface->copy_buffer)
             last_written_surface->copy_buffer = std::make_unique<vkutil::Buffer>();
 
@@ -1413,6 +1418,19 @@ void VKSurfaceCache::perform_post_surface_sync(const MemState &mem, ColorSurface
         int dst_stride = pixel_stride * 3;
         sws_scale(surface->sws_context, reinterpret_cast<const uint8_t *const *>(&surface->copy_buffer->mapped_data), &src_stride, 0, surface->original_height, &pixels, &dst_stride);
         return;
+    }
+
+    if (!state.features.enable_memory_mapping) {
+        // Unmapped sync: the GPU wrote the staging buffer, not guest RAM.
+        // Copy it over, then apply the swizzle fix in place if needed.
+        if (!surface->copy_buffer || !surface->copy_buffer->mapped_data)
+            return;
+        memcpy(pixels, surface->copy_buffer->mapped_data,
+            static_cast<size_t>(surface->stride_bytes) * surface->original_height);
+        const bool is_swizzle_identity = surface->swizzle.r == vk::ComponentSwizzle::eR
+            || !format_support_swizzle(surface->format);
+        if (is_swizzle_identity)
+            return;
     }
 
     switch (vk::componentBits(surface->texture.format, 0)) {

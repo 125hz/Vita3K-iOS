@@ -28,6 +28,11 @@ struct FeatureState {
     bool support_rgb_attributes = true; ///< Do the GPU supports RGB (3 components) vertex attribute? If not (AMD GPU), some modifications must be applied to the renderer and the shader recompiler
     bool use_mask_bit = false; ///< Is the mask bit (1 per sample) emulated ? It is only used in homebrews afaik
     bool enable_memory_mapping = false; ///< Is the host GPU memory directly mapped with gxm memory?
+    bool support_unmapped_surface_sync = false; ///< Surface sync without memory mapping: read rendered surfaces back through a host-visible staging buffer and CPU-copy them into guest RAM (iOS/MoltenVK, where mapping is unavailable)
+
+    bool can_surface_sync() const {
+        return enable_memory_mapping || support_unmapped_surface_sync;
+    }
     bool support_scaled_attribute_formats = true; // can we pass integer to the shader and read them as floats? This is not supported on some Android GPUs
     bool use_texture_viewport = false; ///< Are we using texture viewports in the shader
 
