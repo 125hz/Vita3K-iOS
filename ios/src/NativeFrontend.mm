@@ -1039,9 +1039,9 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.16.0",
-        @"• Surface sync now actually works on iOS: rendered frames are read back to the emulated Vita's memory through a staging buffer, since direct memory mapping is impossible under MoltenVK. This is the real fix for Gravity Rush's blown-out white lighting — make sure Graphics > Surface sync is ON for it.\n"
-        @"• The previous Surface sync toggle looked like it worked but did nothing: the engine path it enabled required memory mapping, which iOS never has.\n"
+    present_alert(@"What's new in 0.16.1",
+        @"• Diagnostic build: adds detailed logging of the surface read-back that drives Gravity Rush's exposure/lighting, to pinpoint the remaining dark-scene rendering. No gameplay change.\n"
+        @"• Surface sync (0.16.0) remains the fix for Gravity Rush's white lighting — keep Graphics > Surface sync ON and High accuracy OFF.\n"
         @"• Onboarding and earlier fixes remain included.");
 }
 

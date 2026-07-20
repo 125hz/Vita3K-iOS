@@ -29,6 +29,11 @@
 #include <util/log.h>
 #include <util/vector_utils.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <set>
+#include <tuple>
+
 extern "C" {
 #include <libswscale/swscale.h>
 }
@@ -1425,8 +1430,40 @@ void VKSurfaceCache::perform_post_surface_sync(const MemState &mem, ColorSurface
         // Copy it over, then apply the swizzle fix in place if needed.
         if (!surface->copy_buffer || !surface->copy_buffer->mapped_data)
             return;
-        memcpy(pixels, surface->copy_buffer->mapped_data,
-            static_cast<size_t>(surface->stride_bytes) * surface->original_height);
+        const size_t byte_count = static_cast<size_t>(surface->stride_bytes) * surface->original_height;
+        memcpy(pixels, surface->copy_buffer->mapped_data, byte_count);
+
+#ifdef VITA3K_PLATFORM_IOS
+        // One-shot-per-surface diagnostic: log each distinct synced surface's
+        // identity and the magnitude of what we read back. A too-bright small
+        // surface here is the auto-exposure luminance driving GR's crushed
+        // darks; a black lighting surface would name the missing environment.
+        {
+            static std::set<std::tuple<Address, int, uint16_t, uint16_t>> logged_surfaces;
+            const auto key = std::make_tuple(surface->data.address(),
+                static_cast<int>(surface->texture.format), surface->original_width, surface->original_height);
+            if (logged_surfaces.size() < 64 && logged_surfaces.insert(key).second) {
+                const auto *bytes = static_cast<const uint8_t *>(surface->copy_buffer->mapped_data);
+                uint64_t sum = 0;
+                uint8_t lo = 255;
+                uint8_t hi = 0;
+                const size_t sampled = std::min<size_t>(byte_count, 4096);
+                for (size_t i = 0; i < sampled; ++i) {
+                    sum += bytes[i];
+                    lo = std::min(lo, bytes[i]);
+                    hi = std::max(hi, bytes[i]);
+                }
+                LOG_INFO("iOS surface-sync readback: addr=0x{:08X} fmt={} {}x{} stride={} bytes={} "
+                         "avg={:.1f} min={} max={} first=[{} {} {} {}]",
+                    surface->data.address(), vk::to_string(surface->texture.format),
+                    surface->original_width, surface->original_height, surface->stride_bytes, byte_count,
+                    sampled ? static_cast<double>(sum) / sampled : 0.0, lo, hi,
+                    byte_count > 0 ? bytes[0] : 0, byte_count > 1 ? bytes[1] : 0,
+                    byte_count > 2 ? bytes[2] : 0, byte_count > 3 ? bytes[3] : 0);
+            }
+        }
+#endif
+
         const bool is_swizzle_identity = surface->swizzle.r == vk::ComponentSwizzle::eR
             || !format_support_swizzle(surface->format);
         if (is_swizzle_identity)
