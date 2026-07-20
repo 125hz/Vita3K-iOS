@@ -30,9 +30,9 @@
 #include <util/vector_utils.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
-#include <set>
-#include <tuple>
+#include <map>
 
 extern "C" {
 #include <libswscale/swscale.h>
@@ -1272,23 +1272,18 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
         // Unmapped (iOS/MoltenVK) sync records this readback right after the
         // render pass in the same command buffer. Metal is a tile-based
         // renderer: without an explicit barrier the transfer/blit encoder
-        // samples the color image before the render encoder's writes are
-        // resolved out of tile memory, so the readback comes back all-zero
-        // (desktop immediate-mode drivers tolerate the missing barrier).
-        // Make color-attachment writes available to the transfer read; the
-        // image stays in eGeneral, so no layout change is needed.
-        const vk::ImageMemoryBarrier readback_barrier{
-            .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
-            .dstAccessMask = vk::AccessFlagBits::eTransferRead,
-            .oldLayout = vk::ImageLayout::eGeneral,
-            .newLayout = vk::ImageLayout::eGeneral,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = last_written_surface->texture.image,
-            .subresourceRange = vkutil::color_subresource_range
+        // samples the surface before prior writes are resolved out of tile
+        // memory, so the readback comes back all-zero (desktop immediate-mode
+        // drivers tolerate the missing barrier). Make every prior write to
+        // this surface (color-attachment rendering AND transfer/clear/blit)
+        // available to the transfer read.
+        const vk::MemoryBarrier readback_barrier{
+            .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eTransferWrite,
+            .dstAccessMask = vk::AccessFlagBits::eTransferRead
         };
-        cmd_buffer.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
-            vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, readback_barrier);
+        cmd_buffer.pipelineBarrier(
+            vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eTransfer, {}, readback_barrier, {}, {});
     }
 
     if (state.res_multiplier != 1.0f) {
@@ -1457,32 +1452,43 @@ void VKSurfaceCache::perform_post_surface_sync(const MemState &mem, ColorSurface
         memcpy(pixels, surface->copy_buffer->mapped_data, byte_count);
 
 #ifdef VITA3K_PLATFORM_IOS
-        // One-shot-per-surface diagnostic: log each distinct synced surface's
-        // identity and the magnitude of what we read back. A too-bright small
-        // surface here is the auto-exposure luminance driving GR's crushed
-        // darks; a black lighting surface would name the missing environment.
+        // Per-surface diagnostic, rate-limited to ~1 line per surface per 3s so
+        // it shows STEADY-STATE content (the earlier one-shot version only saw
+        // each surface's first, often-empty sync). Samples the whole surface,
+        // not just the first 4 KB, so a mostly-dark buffer with a bright region
+        // is not misreported as all-black.
         {
-            static std::set<std::tuple<Address, int, uint16_t, uint16_t>> logged_surfaces;
-            const auto key = std::make_tuple(surface->data.address(),
-                static_cast<int>(surface->texture.format), surface->original_width, surface->original_height);
-            if (logged_surfaces.size() < 64 && logged_surfaces.insert(key).second) {
+            static std::map<Address, uint64_t> last_logged_ms;
+            const uint64_t now_ms = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                    .count());
+            auto &last_ms = last_logged_ms[surface->data.address()];
+            if (last_ms == 0 || now_ms - last_ms >= 3000) {
+                last_ms = now_ms;
                 const auto *bytes = static_cast<const uint8_t *>(surface->copy_buffer->mapped_data);
                 uint64_t sum = 0;
                 uint8_t lo = 255;
                 uint8_t hi = 0;
-                const size_t sampled = std::min<size_t>(byte_count, 4096);
-                for (size_t i = 0; i < sampled; ++i) {
+                size_t nonzero = 0;
+                // Stride the whole buffer (cap ~8k samples) so bright regions
+                // anywhere in the surface are represented.
+                const size_t step = std::max<size_t>(1, byte_count / 8192);
+                size_t sampled = 0;
+                for (size_t i = 0; i < byte_count; i += step, ++sampled) {
                     sum += bytes[i];
                     lo = std::min(lo, bytes[i]);
                     hi = std::max(hi, bytes[i]);
+                    if (bytes[i])
+                        ++nonzero;
                 }
-                LOG_INFO("iOS surface-sync readback: addr=0x{:08X} fmt={} {}x{} stride={} bytes={} "
-                         "avg={:.1f} min={} max={} first=[{} {} {} {}]",
+                LOG_INFO("iOS surface-sync readback: addr=0x{:08X} fmt={} {}x{} stride={} type={} "
+                         "avg={:.1f} min={} max={} nonzero={}%",
                     surface->data.address(), vk::to_string(surface->texture.format),
-                    surface->original_width, surface->original_height, surface->stride_bytes, byte_count,
+                    surface->original_width, surface->original_height, surface->stride_bytes,
+                    static_cast<int>(surface->tiling),
                     sampled ? static_cast<double>(sum) / sampled : 0.0, lo, hi,
-                    byte_count > 0 ? bytes[0] : 0, byte_count > 1 ? bytes[1] : 0,
-                    byte_count > 2 ? bytes[2] : 0, byte_count > 3 ? bytes[3] : 0);
+                    sampled ? static_cast<int>(nonzero * 100 / sampled) : 0);
             }
         }
 #endif

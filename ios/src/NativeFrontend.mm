@@ -1039,8 +1039,8 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.17.0",
-        @"• Fixed surface sync reading back all-black on iOS: the read-back copy ran without a GPU barrier, so on Apple's tile-based GPU it grabbed the frame before it finished drawing and got nothing. This was behind Gravity Rush's dark scenes and the pink/garbage square flashes.\n"
+    present_alert(@"What's new in 0.17.1",
+        @"• Broadens the surface-sync GPU barrier (0.17.0) to cover transfer/clear writes too, and improves the read-back diagnostics — narrowing down Gravity Rush's remaining dark-scene rendering.\n"
         @"• Gravity Rush: keep Graphics > Surface sync ON and High accuracy OFF.\n"
         @"• Onboarding and earlier fixes remain included.");
 }
