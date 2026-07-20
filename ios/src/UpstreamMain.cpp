@@ -565,6 +565,7 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
         .async_pipeline_compilation = current.async_pipeline_compilation,
         .anisotropic_filtering = current.anisotropic_filtering,
         .high_accuracy = current.high_accuracy,
+        .surface_sync = !current.disable_surface_sync,
         .firmware_version = firmware_version_display(emuenv),
         .firmware_ready = missing.empty(),
         .font_package_ready = firmware.font_package,
@@ -1024,6 +1025,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
         current.async_pipeline_compilation = settings.async_pipeline_compilation;
         current.anisotropic_filtering = settings.anisotropic_filtering;
         current.high_accuracy = settings.high_accuracy;
+        current.disable_surface_sync = !settings.surface_sync;
         current.audio_backend = "SDL";
     };
     apply(desired.current_config);
@@ -1035,6 +1037,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     desired.async_pipeline_compilation = settings.async_pipeline_compilation;
     desired.anisotropic_filtering = settings.anisotropic_filtering;
     desired.high_accuracy = settings.high_accuracy;
+    desired.disable_surface_sync = !settings.surface_sync;
     desired.audio_backend = "SDL";
 
     const auto result = app::commit_settings(emuenv, desired);
@@ -1061,11 +1064,12 @@ void apply_game_session_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &s
     current.async_pipeline_compilation = settings.async_pipeline_compilation;
     current.anisotropic_filtering = settings.anisotropic_filtering;
     current.high_accuracy = settings.high_accuracy;
+    current.disable_surface_sync = !settings.surface_sync;
     emuenv.display.fps_limit.store(60, std::memory_order_relaxed);
-    LOG_INFO("Per-game settings override active: res x{} vsync={} fps=60 cpu_opt={} ngs={} async={} aniso={} high_accuracy={}",
+    LOG_INFO("Per-game settings override active: res x{} vsync={} fps=60 cpu_opt={} ngs={} async={} aniso={} high_accuracy={} surface_sync={}",
         settings.resolution_multiplier, settings.v_sync, settings.cpu_opt,
         settings.ngs_enable, settings.async_pipeline_compilation, settings.anisotropic_filtering,
-        settings.high_accuracy);
+        settings.high_accuracy, settings.surface_sync);
 }
 
 std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {

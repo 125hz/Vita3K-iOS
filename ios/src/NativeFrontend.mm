@@ -273,6 +273,8 @@ Vita3KIOSSettings game_settings_or(NSString *titleId, const Vita3KIOSSettings &f
         settings.anisotropic_filtering = [stored[@"anisotropic"] intValue];
     if (stored[@"highAccuracy"])
         settings.high_accuracy = [stored[@"highAccuracy"] boolValue];
+    if (stored[@"surfaceSync"])
+        settings.surface_sync = [stored[@"surfaceSync"] boolValue];
     return settings;
 }
 
@@ -285,6 +287,7 @@ void store_game_settings(NSString *titleId, const Vita3KIOSSettings &settings) {
         @"asyncPipelines": @(settings.async_pipeline_compilation),
         @"anisotropic": @(settings.anisotropic_filtering),
         @"highAccuracy": @(settings.high_accuracy),
+        @"surfaceSync": @(settings.surface_sync),
     } forKey:game_settings_key(titleId)];
 }
 
@@ -648,6 +651,7 @@ CGFloat library_card_label_height() {
 @property(nonatomic, strong) UISwitch *ngsSwitch;
 @property(nonatomic, strong) UISwitch *asyncSwitch;
 @property(nonatomic, strong) UISwitch *highAccuracySwitch;
+@property(nonatomic, strong) UISwitch *surfaceSyncSwitch;
 @property(nonatomic, strong) UISegmentedControl *anisotropicControl;
 @property(nonatomic, strong) UILabel *headerTitle;
 @property(nonatomic, strong) NSDictionary<NSString *, NSArray<UIView *> *> *pages;
@@ -781,6 +785,7 @@ CGFloat library_card_label_height() {
     [self addSection:@"Graphics" rows:@[
         [self row:@"Resolution multiplier" hint:@"Higher values are sharper but increase GPU load; below 1x renders faster." accessory:resolutionAccessory],
         [self switchRow:@"High accuracy" hint:@"Uses slower but more accurate render paths. Try this if a game's graphics look broken." value:values.high_accuracy output:&_highAccuracySwitch],
+        [self switchRow:@"Surface sync" hint:@"Synchronizes render targets with guest-visible surface data. Enable this if a game's lighting appears white or missing." value:values.surface_sync output:&_surfaceSyncSwitch],
         [self switchRow:@"Async pipeline compilation" hint:@"Reduces shader stutter while new scenes compile." value:values.async_pipeline_compilation output:&_asyncSwitch],
         [self row:@"Anisotropic filtering" hint:@"Sharpens textures viewed at an angle." accessory:self.anisotropicControl],
     ]];
@@ -1034,12 +1039,10 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.14.1",
-        @"• Gravity Rush render-target sampling now keeps each required color format and component swizzle in its own Vulkan image view.\n"
-        @"• Onboarding is smaller, wraps correctly, follows light and dark mode, and uses smooth page transitions.\n"
-        @"• A new homepage help button explains when to use High accuracy.\n"
-        @"• Settings adds a Submit bugs shortcut and animated category transitions.\n"
-        @"• Trophy progress badges stay gold in list and card views.");
+    present_alert(@"What's new in 0.15.0",
+        @"• Graphics settings now include Surface sync globally and per game, which can correct missing or white lighting in Gravity Rush.\n"
+        @"• Onboarding titles wrap without clipping, and card dimensions now adapt cleanly when rotating between portrait and landscape.\n"
+        @"• The prior sampled-view, graphics-help, bug-submission, settings-animation, and gold-trophy improvements remain included.");
 }
 
 - (UISwitch *)defaultsSwitch:(NSString *)key defaults:(NSUserDefaults *)defaults {
@@ -1156,6 +1159,7 @@ CGFloat library_card_label_height() {
     action.settings.async_pipeline_compilation = self.asyncSwitch.on;
     action.settings.anisotropic_filtering = anisotropicValues[self.anisotropicControl.selectedSegmentIndex];
     action.settings.high_accuracy = self.highAccuracySwitch.on;
+    action.settings.surface_sync = self.surfaceSyncSwitch.on;
     if (self.perGameTitleId) {
         store_game_settings(self.perGameTitleId, action.settings);
         [self close];
@@ -1284,6 +1288,14 @@ CGFloat library_card_label_height() {
 @property(nonatomic, strong) UIButton *nextButton;
 @property(nonatomic, strong) UIVisualEffectView *card;
 @property(nonatomic, strong) UIStackView *contentStack;
+@property(nonatomic, strong) NSLayoutConstraint *cardWidthConstraint;
+@property(nonatomic, strong) NSLayoutConstraint *symbolHeightConstraint;
+@property(nonatomic, strong) NSLayoutConstraint *primaryHeightConstraint;
+@property(nonatomic, strong) NSLayoutConstraint *nextHeightConstraint;
+@property(nonatomic, strong) NSLayoutConstraint *contentTopConstraint;
+@property(nonatomic, strong) NSLayoutConstraint *contentBottomConstraint;
+@property(nonatomic) BOOL usesCompactLandscapeMetrics;
+@property(nonatomic) CGFloat lastOnboardingTextWidth;
 @property(nonatomic) BOOL hasAnimatedEntrance;
 - (instancetype)initWithFrame:(CGRect)frame settings:(const Vita3KIOSSettings &)settings;
 - (void)updateFirmwareSettings:(const Vita3KIOSSettings &)settings;
@@ -1310,12 +1322,21 @@ CGFloat library_card_label_height() {
     self.symbolView = [[UIImageView alloc] init];
     self.symbolView.contentMode = UIViewContentModeScaleAspectFit;
     self.symbolView.tintColor = UIColor.systemCyanColor;
-    [self.symbolView.heightAnchor constraintEqualToConstant:52].active = YES;
+    self.symbolHeightConstraint = [self.symbolView.heightAnchor constraintEqualToConstant:52];
+    self.symbolHeightConstraint.active = YES;
     self.titleLabel = [[UILabel alloc] init];
     self.titleLabel.font = [UIFont systemFontOfSize:28 weight:UIFontWeightBold];
     self.titleLabel.textColor = UIColor.labelColor;
     self.titleLabel.textAlignment = NSTextAlignmentCenter;
     self.titleLabel.numberOfLines = 0;
+    self.titleLabel.lineBreakMode = NSLineBreakByWordWrapping;
+    self.titleLabel.adjustsFontSizeToFitWidth = YES;
+    self.titleLabel.minimumScaleFactor = 0.82;
+    self.titleLabel.allowsDefaultTighteningForTruncation = YES;
+    [self.titleLabel setContentCompressionResistancePriority:UILayoutPriorityRequired
+                                                    forAxis:UILayoutConstraintAxisVertical];
+    [self.titleLabel setContentHuggingPriority:UILayoutPriorityRequired
+                                       forAxis:UILayoutConstraintAxisVertical];
     self.bodyLabel = [[UILabel alloc] init];
     self.bodyLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightRegular];
     self.bodyLabel.textColor = UIColor.secondaryLabelColor;
@@ -1334,12 +1355,14 @@ CGFloat library_card_label_height() {
     self.primaryButton.layer.cornerRadius = 13;
     self.primaryButton.backgroundColor = UIColor.systemCyanColor;
     [self.primaryButton setTitleColor:UIColor.blackColor forState:UIControlStateNormal];
-    [self.primaryButton.heightAnchor constraintEqualToConstant:44].active = YES;
+    self.primaryHeightConstraint = [self.primaryButton.heightAnchor constraintEqualToConstant:44];
+    self.primaryHeightConstraint.active = YES;
     [self.primaryButton addTarget:self action:@selector(primaryPressed) forControlEvents:UIControlEventTouchUpInside];
     self.nextButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.nextButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
     [self.nextButton setTitle:@"Next" forState:UIControlStateNormal];
-    [self.nextButton.heightAnchor constraintEqualToConstant:42].active = YES;
+    self.nextHeightConstraint = [self.nextButton.heightAnchor constraintEqualToConstant:42];
+    self.nextHeightConstraint.active = YES;
     [self.nextButton addTarget:self action:@selector(nextPressed) forControlEvents:UIControlEventTouchUpInside];
 
     self.contentStack = [[UIStackView alloc] initWithArrangedSubviews:@[
@@ -1350,17 +1373,19 @@ CGFloat library_card_label_height() {
     self.contentStack.alignment = UIStackViewAlignmentFill;
     self.contentStack.spacing = 10;
     [self.card.contentView addSubview:self.contentStack];
-    NSLayoutConstraint *cardWidth = [self.card.widthAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.widthAnchor multiplier:0.78];
-    cardWidth.priority = UILayoutPriorityDefaultHigh;
+    self.cardWidthConstraint = [self.card.widthAnchor constraintEqualToConstant:320];
+    self.contentTopConstraint = [self.contentStack.topAnchor constraintEqualToAnchor:self.card.contentView.topAnchor constant:18];
+    self.contentBottomConstraint = [self.contentStack.bottomAnchor constraintEqualToAnchor:self.card.contentView.bottomAnchor constant:-18];
     [NSLayoutConstraint activateConstraints:@[
         [self.card.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor],
         [self.card.centerYAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerYAnchor],
-        [self.card.widthAnchor constraintLessThanOrEqualToConstant:440],
-        cardWidth,
+        [self.card.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.safeAreaLayoutGuide.leadingAnchor constant:24],
+        [self.card.trailingAnchor constraintLessThanOrEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-24],
+        self.cardWidthConstraint,
         [self.contentStack.leadingAnchor constraintEqualToAnchor:self.card.contentView.leadingAnchor constant:20],
         [self.contentStack.trailingAnchor constraintEqualToAnchor:self.card.contentView.trailingAnchor constant:-20],
-        [self.contentStack.topAnchor constraintEqualToAnchor:self.card.contentView.topAnchor constant:18],
-        [self.contentStack.bottomAnchor constraintEqualToAnchor:self.card.contentView.bottomAnchor constant:-18],
+        self.contentTopConstraint,
+        self.contentBottomConstraint,
     ]];
     [self renderPageAnimated:NO];
     return self;
@@ -1370,7 +1395,44 @@ CGFloat library_card_label_height() {
     [super layoutSubviews];
     self.backgroundColor = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
         ? UIColor.blackColor : UIColor.whiteColor;
-    self.bodyLabel.preferredMaxLayoutWidth = MAX(1, CGRectGetWidth(self.card.bounds) - 40);
+    const CGRect safeFrame = self.safeAreaLayoutGuide.layoutFrame;
+    if (CGRectIsEmpty(safeFrame))
+        return;
+    const CGFloat safeWidth = CGRectGetWidth(safeFrame);
+    const CGFloat safeHeight = CGRectGetHeight(safeFrame);
+    const BOOL landscape = safeWidth > safeHeight;
+    const CGFloat horizontalSpace = landscape ? 96 : 48;
+    const CGFloat maximumWidth = landscape ? 400 : 360;
+    const CGFloat availableWidth = MAX(1, safeWidth - 48);
+    const CGFloat targetWidth = MIN(availableWidth,
+        MAX(240, MIN(maximumWidth, safeWidth - horizontalSpace)));
+    const BOOL widthChanged = fabs(self.cardWidthConstraint.constant - targetWidth) > 0.5;
+    const BOOL metricsChanged = self.usesCompactLandscapeMetrics != landscape;
+    if (widthChanged)
+        self.cardWidthConstraint.constant = targetWidth;
+
+    if (metricsChanged) {
+        self.usesCompactLandscapeMetrics = landscape;
+        self.contentStack.spacing = landscape ? 6 : 10;
+        self.symbolHeightConstraint.constant = landscape ? 40 : 52;
+        self.primaryHeightConstraint.constant = landscape ? 38 : 44;
+        self.nextHeightConstraint.constant = landscape ? 38 : 42;
+        self.contentTopConstraint.constant = landscape ? 12 : 18;
+        self.contentBottomConstraint.constant = landscape ? -12 : -18;
+        self.titleLabel.font = [UIFont systemFontOfSize:(landscape ? 24 : 28) weight:UIFontWeightBold];
+        self.bodyLabel.font = [UIFont systemFontOfSize:(landscape ? 13 : 15) weight:UIFontWeightRegular];
+    }
+
+    const CGFloat textWidth = MAX(1, targetWidth - 40);
+    if (metricsChanged || fabs(self.lastOnboardingTextWidth - textWidth) > 0.5) {
+        self.lastOnboardingTextWidth = textWidth;
+        self.titleLabel.preferredMaxLayoutWidth = textWidth;
+        self.bodyLabel.preferredMaxLayoutWidth = textWidth;
+        self.statusLabel.preferredMaxLayoutWidth = textWidth;
+        [self.titleLabel invalidateIntrinsicContentSize];
+        [self.bodyLabel invalidateIntrinsicContentSize];
+        [self.statusLabel invalidateIntrinsicContentSize];
+    }
 }
 
 - (void)didMoveToWindow {
@@ -1422,6 +1484,8 @@ CGFloat library_card_label_height() {
         self.symbolView.image = [UIImage systemImageNamed:symbols[self.pageIndex]];
         self.titleLabel.text = titles[self.pageIndex];
         self.bodyLabel.text = bodies[self.pageIndex];
+        [self.titleLabel invalidateIntrinsicContentSize];
+        [self.bodyLabel invalidateIntrinsicContentSize];
         self.bodyLabel.hidden = self.pageIndex == 0;
         self.symbolView.hidden = self.pageIndex == 0;
         self.statusLabel.text = @"";
@@ -2367,7 +2431,7 @@ static const NSInteger kCarouselRepeat = 400;
 
 - (void)showHelp {
     present_alert(@"Graphics help",
-        @"If a game's shaders or textures do not look correct, open that game's settings and enable Graphics > High accuracy.");
+        @"If a game's shaders or textures do not look correct, open that game's settings and try Graphics > High accuracy. If lighting appears white or missing, also enable Graphics > Surface sync.");
 }
 
 - (void)settings {

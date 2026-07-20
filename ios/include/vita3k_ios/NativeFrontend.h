@@ -57,6 +57,9 @@ struct Vita3KIOSSettings {
     // interlock where available). Slower, but bypasses the fast paths that
     // misrender some titles under MoltenVK.
     bool high_accuracy = false;
+    // Keep GPU render targets synchronized with guest-visible surface data.
+    // Some titles, including Gravity Rush, need this for correct lighting.
+    bool surface_sync = false;
     // Display-only: installed firmware version shown on the library header.
     std::string firmware_version;
     // Games stay unavailable until all three official firmware packages have
