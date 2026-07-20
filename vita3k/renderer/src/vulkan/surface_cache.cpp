@@ -1268,6 +1268,29 @@ ColorSurfaceCacheInfo *VKSurfaceCache::perform_surface_sync() {
         is_swizzle_identity = true;
     }
 
+    if (!state.features.enable_memory_mapping) {
+        // Unmapped (iOS/MoltenVK) sync records this readback right after the
+        // render pass in the same command buffer. Metal is a tile-based
+        // renderer: without an explicit barrier the transfer/blit encoder
+        // samples the color image before the render encoder's writes are
+        // resolved out of tile memory, so the readback comes back all-zero
+        // (desktop immediate-mode drivers tolerate the missing barrier).
+        // Make color-attachment writes available to the transfer read; the
+        // image stays in eGeneral, so no layout change is needed.
+        const vk::ImageMemoryBarrier readback_barrier{
+            .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+            .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+            .oldLayout = vk::ImageLayout::eGeneral,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = last_written_surface->texture.image,
+            .subresourceRange = vkutil::color_subresource_range
+        };
+        cmd_buffer.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, readback_barrier);
+    }
+
     if (state.res_multiplier != 1.0f) {
         // scale back the image using a blit command first
 

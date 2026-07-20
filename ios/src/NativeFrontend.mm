@@ -1039,9 +1039,9 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.16.1",
-        @"• Diagnostic build: adds detailed logging of the surface read-back that drives Gravity Rush's exposure/lighting, to pinpoint the remaining dark-scene rendering. No gameplay change.\n"
-        @"• Surface sync (0.16.0) remains the fix for Gravity Rush's white lighting — keep Graphics > Surface sync ON and High accuracy OFF.\n"
+    present_alert(@"What's new in 0.17.0",
+        @"• Fixed surface sync reading back all-black on iOS: the read-back copy ran without a GPU barrier, so on Apple's tile-based GPU it grabbed the frame before it finished drawing and got nothing. This was behind Gravity Rush's dark scenes and the pink/garbage square flashes.\n"
+        @"• Gravity Rush: keep Graphics > Surface sync ON and High accuracy OFF.\n"
         @"• Onboarding and earlier fixes remain included.");
 }
 
