@@ -179,22 +179,58 @@ NSAttributedString *game_metadata(const Vita3KIOSGameEntry &game) {
     return text;
 }
 
+// Untinted Regular glass. Apple's guidance is to tint the *primary action*
+// only — a global wash applied to every surface flattens the hierarchy and
+// fights the material's own adaptive tinting, so the former white/black wash
+// is gone. Use glass_effect_tinted() for the one call-to-action per screen.
+//
+// Both variants are cached: UIGlassEffect instances are immutable once
+// configured and a UIVisualEffectView rebuilds its whole backdrop when -effect
+// is assigned, so handing out a fresh object per call made cell reuse pay for
+// a full effect teardown on every dequeue.
 UIVisualEffect *glass_effect(const BOOL interactive = YES) {
     if (@available(iOS 26.0, *)) {
-        UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-        effect.interactive = interactive;
-        // A subtle tint that follows the interface style: a fixed dark tint
-        // washed the glass out in light mode.
-        effect.tintColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
-            return traits.userInterfaceStyle == UIUserInterfaceStyleDark
-                ? [UIColor colorWithWhite:0.04 alpha:0.12]
-                : [UIColor colorWithWhite:1.0 alpha:0.10];
-        }];
-        return effect;
+        static UIGlassEffect *live = nil;
+        static UIGlassEffect *stat = nil;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            live = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+            live.interactive = YES;
+            stat = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+            stat.interactive = NO;
+        });
+        return interactive ? live : stat;
     }
     // Adaptive material (not the ...Dark variant) so the pre-iOS 26 fallback
     // also tracks light/dark mode.
-    return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+    static UIBlurEffect *fallback = nil;
+    static dispatch_once_t fallback_once;
+    dispatch_once(&fallback_once, ^{
+        fallback = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+    });
+    return fallback;
+}
+
+// Tinted glass for the one element per screen that should stand out. Callers
+// pass `interactive` only for a control the user actually presses; static
+// banners leave it off so they cost a single composite instead of a live
+// refraction pass.
+UIVisualEffect *glass_effect_tinted(UIColor *tint, const BOOL interactive = NO) {
+    if (@available(iOS 26.0, *)) {
+        UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+        effect.interactive = interactive;
+        effect.tintColor = tint;
+        return effect;
+    }
+    return glass_effect(interactive);
+}
+
+// Liquid Glass shapes use continuous ("squircle") corners, not circular arcs.
+// Every rounded surface in the app goes through here so the curvature matches
+// the system's own glass containers.
+void round_continuous(UIView *view, const CGFloat radius) {
+    view.layer.cornerRadius = radius;
+    view.layer.cornerCurve = kCACornerCurveContinuous;
 }
 
 // Plain toolbar glyph, no material behind it: header controls read as system
@@ -213,6 +249,70 @@ UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessib
     button.tintColor = UIColor.labelColor;
     button.accessibilityLabel = accessibility;
     return button;
+}
+
+// ---- Cover art cache --------------------------------------------------------
+// Cells used to call -imageWithContentsOfFile: on every dequeue, so scrolling
+// the library re-read and re-decoded a PNG per cell per frame on the main
+// thread — the app's main source of scroll jank and of CPU wake-ups while
+// simply browsing. Decode once off-main, keep the decoded bitmap in an NSCache
+// (the system evicts it under pressure), and hand cells the ready image.
+
+NSCache<NSString *, UIImage *> *cover_cache() {
+    static NSCache<NSString *, UIImage *> *cache = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        cache = [[NSCache alloc] init];
+        cache.countLimit = 240;
+        // Evict on memory warnings rather than competing with the emulator's
+        // guest allocations.
+        [NSNotificationCenter.defaultCenter
+            addObserverForName:UIApplicationDidReceiveMemoryWarningNotification
+                        object:nil
+                         queue:NSOperationQueue.mainQueue
+                    usingBlock:^(__unused NSNotification *note) { [cache removeAllObjects]; }];
+    });
+    return cache;
+}
+
+void invalidate_cover_cache(NSString *path) {
+    if (path.length)
+        [cover_cache() removeObjectForKey:path];
+    else
+        [cover_cache() removeAllObjects];
+}
+
+// Cached decode. Returns the image immediately when it is already resident;
+// otherwise decodes on a background queue and invokes `ready` on the main
+// thread. `ready` is not called when the image was returned synchronously.
+UIImage *cover_image(NSString *path, void (^ready)(UIImage *)) {
+    if (!path.length)
+        return nil;
+    if (UIImage *cached = [cover_cache() objectForKey:path])
+        return cached;
+    static dispatch_queue_t queue = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = dispatch_queue_create("tsubomi.covers", DISPATCH_QUEUE_SERIAL);
+    });
+    NSString *key = [path copy];
+    dispatch_async(queue, ^{
+        UIImage *image = [UIImage imageWithContentsOfFile:key];
+        // Force the decode here instead of on the first draw, which is what
+        // actually stalls the render loop mid-scroll.
+        if (image)
+            image = [image imageByPreparingForDisplay] ?: image;
+        if (!image) {
+            LOG_ERROR("iOS library art could not be decoded at '{}'", key.UTF8String);
+            return;
+        }
+        [cover_cache() setObject:image forKey:key];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (ready)
+                ready(image);
+        });
+    });
+    return nil;
 }
 
 // ---- Custom cover art -------------------------------------------------------
@@ -415,6 +515,7 @@ std::string hex_bytes(const std::string &value) {
             image.size.width * scale, image.size.height * scale)];
     }];
     [UIImagePNGRepresentation(rendered) writeToFile:cover_render_path(self.titleId) atomically:YES];
+    invalidate_cover_cache(cover_render_path(self.titleId));
     dispatch_block_t done = self.onDone;
     [self dismissViewControllerAnimated:YES completion:^{
         if (done)
@@ -482,12 +583,17 @@ static void present_cover_picker(NSString *titleId) {
 }
 
 @interface Vita3KGameCell : UICollectionViewCell
-@property(nonatomic, strong) UIVisualEffectView *glass;
+// Content layer, so a fill and not glass: Liquid Glass belongs to the
+// navigation layer (header, HUD, controls, menus). A glass card per cell also
+// meant one live backdrop per visible row, which is what made grid scrolling
+// expensive.
+@property(nonatomic, strong) UIView *card;
 @property(nonatomic, strong) UIImageView *icon;
 @property(nonatomic, strong) UILabel *titleLabel;
 @property(nonatomic, strong) UILabel *identifierLabel;
 @property(nonatomic, strong) UILabel *metadataLabel;
 @property(nonatomic, strong) UIView *separator;
+@property(nonatomic, copy) NSString *iconPath;
 @property(nonatomic) BOOL listMode;
 // Landscape card view: a centered cover-flow item — bare cover art with the
 // title and play info centered beneath it, no glass card.
@@ -502,41 +608,39 @@ static void present_cover_picker(NSString *titleId) {
     self = [super initWithFrame:frame];
     if (!self)
         return nil;
-    // Non-interactive glass: live refraction on every visible cell made the
-    // library grid scroll stutter. Cells only need the static material.
-    self.glass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
-    self.glass.frame = self.contentView.bounds;
-    self.glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.glass.layer.cornerRadius = 26;
-    self.glass.clipsToBounds = YES;
-    [self.contentView addSubview:self.glass];
+    self.card = [[UIView alloc] initWithFrame:self.contentView.bounds];
+    self.card.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.card.backgroundColor = UIColor.secondarySystemGroupedBackgroundColor;
+    round_continuous(self.card, 26);
+    self.card.clipsToBounds = YES;
+    [self.contentView addSubview:self.card];
 
     self.icon = [[UIImageView alloc] init];
     self.icon.contentMode = UIViewContentModeScaleAspectFill;
     self.icon.clipsToBounds = YES;
-    self.icon.layer.cornerRadius = 18;
-    [self.glass.contentView addSubview:self.icon];
+    round_continuous(self.icon, 18);
+    [self.card addSubview:self.icon];
 
     self.titleLabel = [[UILabel alloc] init];
     self.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
     self.titleLabel.textColor = UIColor.labelColor;
     self.titleLabel.numberOfLines = 2;
-    [self.glass.contentView addSubview:self.titleLabel];
+    [self.card addSubview:self.titleLabel];
 
     self.identifierLabel = [[UILabel alloc] init];
     self.identifierLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightMedium];
     self.identifierLabel.textColor = UIColor.secondaryLabelColor;
-    [self.glass.contentView addSubview:self.identifierLabel];
+    [self.card addSubview:self.identifierLabel];
     self.metadataLabel = [[UILabel alloc] init];
     self.metadataLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
     self.metadataLabel.textColor = UIColor.secondaryLabelColor;
     self.metadataLabel.tintColor = UIColor.systemYellowColor;
     self.metadataLabel.tintAdjustmentMode = UIViewTintAdjustmentModeNormal;
     self.metadataLabel.numberOfLines = 0;
-    [self.glass.contentView addSubview:self.metadataLabel];
+    [self.card addSubview:self.metadataLabel];
     self.separator = [[UIView alloc] init];
     self.separator.backgroundColor = UIColor.separatorColor;
-    [self.glass.contentView addSubview:self.separator];
+    [self.card addSubview:self.separator];
     return self;
 }
 
@@ -597,10 +701,19 @@ CGFloat library_card_label_height() {
     [super setHighlighted:highlighted];
     if (self.carouselMode)
         return; // the carousel owns transform and alpha
-    [UIView animateWithDuration:0.16 animations:^{
+    // BeginFromCurrentState so a fast tap-tap-tap picks up mid-flight instead
+    // of queueing conflicting animations (which left cells stuck dimmed), and
+    // AllowUserInteraction so the 160ms press animation never eats a tap.
+    [UIView animateWithDuration:0.16
+                          delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState
+                                | UIViewAnimationOptionAllowUserInteraction
+                                | UIViewAnimationOptionCurveEaseOut
+                     animations:^{
         self.transform = highlighted ? CGAffineTransformMakeScale(0.96, 0.96) : CGAffineTransformIdentity;
         self.alpha = highlighted ? 0.78 : 1.0;
-    }];
+    }
+                     completion:nil];
 }
 
 - (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSAttributedString *)metadata
@@ -611,13 +724,13 @@ CGFloat library_card_label_height() {
     self.metadataLabel.attributedText = metadata;
     self.identifierLabel.hidden = !show_title_ids() || self.carouselMode;
     self.separator.hidden = !listMode;
-    // List rows sit directly on the background like a system list: no
-    // material, no forced palette — every color adapts to light/dark mode.
-    // Carousel items are bare covers with no material at all.
-    self.glass.effect = (listMode || self.carouselMode) ? nil : glass_effect(NO);
-    self.glass.backgroundColor = UIColor.clearColor;
-    self.glass.layer.cornerRadius = (listMode || self.carouselMode) ? 0 : 26;
-    self.icon.layer.cornerRadius = listMode ? 8 : 18;
+    // List rows sit directly on the background like a system list: no fill, no
+    // forced palette — every color adapts to light/dark mode. Carousel items
+    // are bare covers. Grid cards get the grouped-content fill.
+    const BOOL bare = listMode || self.carouselMode;
+    self.card.backgroundColor = bare ? UIColor.clearColor : UIColor.secondarySystemGroupedBackgroundColor;
+    round_continuous(self.card, bare ? 0 : 26);
+    round_continuous(self.icon, listMode ? 8 : 18);
     self.titleLabel.numberOfLines = (listMode || self.carouselMode) ? 1 : 2;
     self.titleLabel.textAlignment = self.carouselMode ? NSTextAlignmentCenter : NSTextAlignmentLeft;
     self.metadataLabel.textAlignment = self.carouselMode ? NSTextAlignmentCenter : NSTextAlignmentLeft;
@@ -628,12 +741,26 @@ CGFloat library_card_label_height() {
     self.titleLabel.textColor = UIColor.labelColor;
     self.identifierLabel.textColor = UIColor.secondaryLabelColor;
     self.metadataLabel.textColor = UIColor.secondaryLabelColor;
-    UIImage *image = iconPath.length ? [UIImage imageWithContentsOfFile:iconPath] : nil;
-    if (iconPath.length && !image)
-        LOG_ERROR("iOS library art could not be decoded at '{}'", iconPath.UTF8String);
-    self.icon.image = image ?: [UIImage systemImageNamed:@"gamecontroller.fill"];
     self.icon.tintColor = UIColor.systemPinkColor;
     self.icon.backgroundColor = UIColor.secondarySystemFillColor;
+    // Remember what this cell is showing so an in-flight decode that lands
+    // after the cell has been reused for another game is discarded.
+    self.iconPath = iconPath;
+    __weak Vita3KGameCell *weakSelf = self;
+    NSString *wanted = [iconPath copy];
+    UIImage *image = cover_image(iconPath, ^(UIImage *decoded) {
+        Vita3KGameCell *cell = weakSelf;
+        if (!cell || ![cell.iconPath isEqualToString:wanted])
+            return;
+        // Crossfade rather than snap: a decode landing a frame or two after the
+        // cell appears should read as the art settling in, not as a flicker.
+        [UIView transitionWithView:cell.icon
+                          duration:0.2
+                           options:UIViewAnimationOptionTransitionCrossDissolve
+                        animations:^{ cell.icon.image = decoded; }
+                        completion:nil];
+    });
+    self.icon.image = image ?: [UIImage systemImageNamed:@"gamecontroller.fill"];
     [self setNeedsLayout];
 }
 
@@ -936,7 +1063,7 @@ CGFloat library_card_label_height() {
     [button setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
     button.tintColor = color;
     button.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    button.layer.cornerRadius = 20;
+    round_continuous(button, 20);
     button.contentEdgeInsets = UIEdgeInsetsMake(0, 18, 0, 18);
     [button.heightAnchor constraintEqualToConstant:68].active = YES;
     [button addTarget:self action:@selector(openCategory:) forControlEvents:UIControlEventTouchUpInside];
@@ -1071,8 +1198,13 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.21.0",
-        @"• Fixed Persona 4 Golden's character models rendering as garbled/shattered shards — a regression from 0.20.0's memory-mapping change: shader-store vertex buffers were getting overwritten with stale data on every frame instead of keeping the GPU-written data.\n"
+    present_alert(@"What's new in 0.22.0",
+        @"• Big battery and smoothness pass. On-screen controls no longer run a live glass refraction pass per element every frame of gameplay — that was the app's single largest GPU cost.\n"
+        @"• Library covers are now decoded once off the main thread and cached, so scrolling a large library is smooth instead of stuttering on every row.\n"
+        @"• The library screen no longer wakes the CPU 62 times a second while you sit browsing, and a background timer that ran forever now stops after startup settles.\n"
+        @"• Liquid Glass cleanup to match Apple's guidelines: glass is now reserved for bars, HUDs, menus and controls (library cards use a content fill), rounded cards and panels use continuous corners, the leftover pre-iOS 26 blur materials are gone, and tint is reserved for the JIT warning instead of washing every surface.\n"
+        @"• Control presses now tint the glass instead of painting a flat blue chip over it, and the hard white outline around each control is gone on iOS 26.\n"
+        @"• 0.21.0: Fixed Persona 4 Golden's character models rendering as garbled/shattered shards — a regression from 0.20.0's memory-mapping change: shader-store vertex buffers were getting overwritten with stale data on every frame instead of keeping the GPU-written data.\n"
         @"• Added Settings > Controller button mapping: remap which physical face button (Bottom/Right/Left/Top) triggers Cross/Circle/Square/Triangle, for controllers that report them in the wrong position.\n"
         @"• Save export now bundles play time along with trophy progress; importing a save restores it too (never rolling time back if the device already has more logged).\n"
         @"• Trophy counts and play time in the library now refresh immediately after importing a save, instead of only after the game is next booted.\n"
@@ -1153,7 +1285,7 @@ CGFloat library_card_label_height() {
     // bleeding through UIKit material views.
     UIView *card = [[UIView alloc] init];
     card.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    card.layer.cornerRadius = 24;
+    round_continuous(card, 24);
     card.clipsToBounds = YES;
     [card addSubview:content];
     content.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1239,7 +1371,7 @@ CGFloat library_card_label_height() {
     UIView *card = [[UIView alloc] init];
     card.translatesAutoresizingMaskIntoConstraints = NO;
     card.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    card.layer.cornerRadius = 24;
+    round_continuous(card, 24);
     card.clipsToBounds = YES;
     [menu addSubview:card];
 
@@ -1361,7 +1493,7 @@ CGFloat library_card_label_height() {
 
     self.card = [[UIVisualEffectView alloc] initWithEffect:glass_effect(YES)];
     self.card.translatesAutoresizingMaskIntoConstraints = NO;
-    self.card.layer.cornerRadius = 22;
+    round_continuous(self.card, 22);
     self.card.clipsToBounds = YES;
     [self addSubview:self.card];
 
@@ -1398,7 +1530,7 @@ CGFloat library_card_label_height() {
     self.statusLabel.numberOfLines = 0;
     self.primaryButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.primaryButton.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    self.primaryButton.layer.cornerRadius = 13;
+    round_continuous(self.primaryButton, 13);
     self.primaryButton.backgroundColor = UIColor.systemCyanColor;
     [self.primaryButton setTitleColor:UIColor.blackColor forState:UIControlStateNormal];
     self.primaryHeightConstraint = [self.primaryButton.heightAnchor constraintEqualToConstant:44];
@@ -1689,8 +1821,9 @@ CGFloat library_card_label_height() {
     // whatever passes below the title/controls, exactly like a system
     // navigation bar's scroll-edge appearance. It stays invisible while the
     // content is at rest at the top.
-    self.headerGlass = [[UIVisualEffectView alloc]
-        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterial]];
+    // Glass, not a legacy chrome blur: mixing Liquid Glass with UIBlurEffect
+    // materials in one interface reads as two different design systems.
+    self.headerGlass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
     self.headerGlass.alpha = 0;
     [self addSubview:self.headerGlass];
 
@@ -1758,8 +1891,12 @@ CGFloat library_card_label_height() {
     [self addSubview:self.firmwareGlass];
 
     // Persistent notice shown when JIT is not enabled; games cannot boot.
-    self.jitBanner = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
-    self.jitBanner.layer.cornerRadius = 16;
+    // This is the one surface on the library screen that earns a tint: adaptive
+    // glass tinting is meant to mark a single urgent element, and a warning
+    // banner nobody can act around is exactly that.
+    self.jitBanner = [[UIVisualEffectView alloc]
+        initWithEffect:glass_effect_tinted([UIColor.systemYellowColor colorWithAlphaComponent:0.30])];
+    round_continuous(self.jitBanner, 16);
     self.jitBanner.clipsToBounds = YES;
     self.jitBanner.hidden = YES;
     self.jitBannerLabel = [[UILabel alloc] init];
@@ -2301,6 +2438,8 @@ static const NSInteger kCarouselRepeat = 400;
                     handler:^(__unused UIAction *action) {
                         [NSFileManager.defaultManager removeItemAtPath:cover_render_path(identifier) error:nil];
                         [NSFileManager.defaultManager removeItemAtPath:cover_original_path(identifier) error:nil];
+                        invalidate_cover_cache(cover_render_path(identifier));
+                        invalidate_cover_cache(cover_original_path(identifier));
                         [weakSelf.collectionView reloadData];
                     }];
                 resetCover.attributes = UIMenuElementAttributesDestructive;
@@ -2438,13 +2577,12 @@ static const NSInteger kCarouselRepeat = 400;
     }];
     dim.alpha = 0;
 
-    UIVisualEffectView *panel = [[UIVisualEffectView alloc]
-        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
+    UIVisualEffectView *panel = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
     panel.frame = CGRectMake(0, 0, 260, 130);
     panel.center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
     panel.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin
         | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
-    panel.layer.cornerRadius = 26;
+    round_continuous(panel, 26);
     panel.clipsToBounds = YES;
 
     UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
@@ -2730,7 +2868,7 @@ static CGPoint center_in(UIView *view, UIView *root) {
     view.layer.borderWidth = 3;
     view.layer.borderColor = UIColor.systemCyanColor.CGColor;
     if (view.layer.cornerRadius == 0)
-        view.layer.cornerRadius = 10;
+        round_continuous(view, 10);
     self.focused = view;
 
     UIView *scroller = view.superview;
@@ -3149,13 +3287,20 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         // Teardown can still straggle past that one tick (see
         // g_library_metal_hide_timer above), so keep re-hiding on a short
         // timer for as long as the library stays on screen.
+        // Bounded, not forever: teardown straggles for a few hundred ms at
+        // most, but the library is the screen the app idles on, so a permanent
+        // 4 Hz hierarchy walk was burning wake-ups for the entire time the
+        // user sits browsing. Sweep for two seconds, then stop.
         if (!g_library_metal_hide_timer) {
+            __block NSInteger sweeps = 8;
             g_library_metal_hide_timer = [NSTimer scheduledTimerWithTimeInterval:0.25
                                                                           repeats:YES
                                                                             block:^(NSTimer *timer) {
-                if (!g_library) {
+                if (!g_library || --sweeps <= 0) {
                     [timer invalidate];
                     g_library_metal_hide_timer = nil;
+                    if (g_library)
+                        set_metal_drawables_hidden(g_library.window ?: active_window(), YES);
                     return;
                 }
                 set_metal_drawables_hidden(g_library.window ?: active_window(), YES);
@@ -3425,7 +3570,7 @@ static void update_log_overlay(UIWindow *window) {
         // Non-interactive: never intercepts the game's touch controls, which
         // stay above it in the window's subview order.
         g_log_hud = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
-        g_log_hud.layer.cornerRadius = 10;
+        round_continuous(g_log_hud, 10);
         g_log_hud.clipsToBounds = YES;
         g_log_hud.userInteractionEnabled = NO;
         g_log_text = [[UITextView alloc] init];

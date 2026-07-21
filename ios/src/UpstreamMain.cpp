@@ -1426,7 +1426,16 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
 
         // Service UIKit instead of a blind sleep so library scrolling and the
         // settings sliders stay smooth on this SDL/UIKit-owning thread.
-        vita3k_ios_pump_runloop(0.016);
+        //
+        // The interval is *not* a frame budget: CFRunLoopRunInMode services
+        // every UIKit input source, timer and display-link callback inside the
+        // window, so scrolling runs at full rate regardless. All it sets is how
+        // often we come back to poll SDL, which on the library screen only
+        // needs to notice a termination event. It used to be 16 ms, which woke
+        // the CPU 62 times a second for the entire time the user sat browsing
+        // a static list — pure idle drain. 50 ms cuts that by 4x with no
+        // perceptible change in responsiveness.
+        vita3k_ios_pump_runloop(0.05);
     }
 }
 

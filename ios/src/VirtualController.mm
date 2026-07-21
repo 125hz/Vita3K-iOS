@@ -46,36 +46,79 @@ static UIWindow *activeWindow() {
     return nil;
 }
 
+// Untinted Regular glass, cached. The former global white/black wash tinted
+// every surface, which Apple's guidance reserves for the primary action;
+// pressed-state feedback below uses a real glass tint instead.
 static UIVisualEffect *glassEffect(const BOOL interactive = YES) {
     if (@available(iOS 26.0, *)) {
-        UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-        effect.interactive = interactive;
-        effect.tintColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
-            return traits.userInterfaceStyle == UIUserInterfaceStyleDark
-                ? [UIColor colorWithWhite:0.04 alpha:0.12]
-                : [UIColor colorWithWhite:1.0 alpha:0.10];
-        }];
-        return effect;
+        static UIGlassEffect *live = nil;
+        static UIGlassEffect *stat = nil;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            live = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+            live.interactive = YES;
+            stat = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+            stat.interactive = NO;
+        });
+        return interactive ? live : stat;
     }
-    return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+    static UIBlurEffect *fallback = nil;
+    static dispatch_once_t fallbackOnce;
+    dispatch_once(&fallbackOnce, ^{
+        fallback = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+    });
+    return fallback;
 }
 
 static constexpr NSInteger glassBackgroundTag = 0x3301;
+static constexpr NSInteger glassTintTag = 0x3302;
 
-static void installGlassBackground(UIView *view, const BOOL interactive = YES) {
+// interactive == NO by default now. Interactive glass continuously re-samples
+// and lenses whatever is beneath it; with ~17 control elements sitting over a
+// full-screen 60 fps Metal drawable that meant seventeen live refraction
+// passes every single frame of gameplay — by far the largest GPU/energy cost
+// in the app, and invisible anyway under a thumb. The controls' own pressed
+// state supplies the feedback interactivity was providing.
+static void installGlassBackground(UIView *view, const BOOL interactive = NO) {
     UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect(interactive)];
     glass.tag = glassBackgroundTag;
     glass.userInteractionEnabled = NO;
     glass.frame = view.bounds;
     glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [view insertSubview:glass atIndex:0];
+
+    // Pressed-state tint, living *inside* the material's content view so it
+    // colors the glass rather than being painted over the whole control (the
+    // old flat blue chip). Alpha-only toggling is a pure compositor change:
+    // no backdrop rebuild, which matters because this fires on every button
+    // press in a game where input latency is the whole point. Swapping the
+    // view's -effect for a tinted UIGlassEffect would be more literally "tint
+    // the glass", but it re-renders the effect per press — the wrong trade
+    // here.
+    UIView *tint = [[UIView alloc] initWithFrame:glass.bounds];
+    tint.tag = glassTintTag;
+    tint.userInteractionEnabled = NO;
+    tint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    tint.backgroundColor = [UIColor colorWithRed:0.2 green:0.65 blue:1 alpha:0.34];
+    tint.alpha = 0;
+    [glass.contentView addSubview:tint];
+}
+
+static void setGlassPressed(UIView *view, const BOOL pressed) {
+    UIView *glass = [view viewWithTag:glassBackgroundTag];
+    [glass viewWithTag:glassTintTag].alpha = pressed ? 1 : 0;
 }
 
 static void layoutGlassBackground(UIView *view) {
     UIView *glass = [view viewWithTag:glassBackgroundTag];
     glass.frame = view.bounds;
     glass.layer.cornerRadius = view.layer.cornerRadius;
+    glass.layer.cornerCurve = view.layer.cornerCurve;
     glass.clipsToBounds = YES;
+    // Sized here, not by autoresizing: controls are built at zero size and only
+    // get their frames in -layoutSubviews, so a mask anchored to an empty
+    // parent would leave the tint permanently zero-sized.
+    [glass viewWithTag:glassTintTag].frame = glass.bounds;
 }
 
 static NSString *configPath() {
@@ -279,7 +322,9 @@ static void hapticTick() {
     self.backgroundColor = UIColor.clearColor;
     self.layer.borderWidth = 1.5;
     self.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.55].CGColor;
-    self.glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect()];
+    // Non-interactive: the stick is under a thumb whenever it matters, so live
+    // lensing costs a per-frame refraction pass nobody can see.
+    self.glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect(NO)];
     self.glass.userInteractionEnabled = NO;
     [self addSubview:self.glass];
     self.thumb = [[UIView alloc] init];
@@ -490,8 +535,15 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     button.multipleTouchEnabled = YES;
     button.exclusiveTouch = NO;
     button.backgroundColor = UIColor.clearColor;
-    button.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.62].CGColor;
-    button.layer.borderWidth = 1.25;
+    // Liquid Glass draws its own edge highlight; a hard 1.25pt white hairline
+    // on top of it reads as a sticker border and fights the material. Keep the
+    // stroke only on the pre-iOS 26 blur fallback, which has no edge of its own.
+    if (@available(iOS 26.0, *)) {
+        button.layer.borderWidth = 0;
+    } else {
+        button.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.62].CGColor;
+        button.layer.borderWidth = 1.25;
+    }
     // SELECT/START carry a whole word inside a small capsule; use a smaller
     // font so the label fits instead of hugging the edges.
     const BOOL wordLabel = [key isEqualToString:@"select"] || [key isEqualToString:@"start"];
@@ -534,13 +586,13 @@ static constexpr NSInteger triggerTagOffset = 1000;
     if (self.layoutEditing)
         return;
     hapticTick();
-    sender.backgroundColor = [UIColor colorWithRed:0.2 green:0.65 blue:1 alpha:0.28];
+    setGlassPressed(sender, YES);
     if (g_virtual_joystick)
         SDL_SetJoystickVirtualAxis(g_virtual_joystick, static_cast<int>(sender.tag - triggerTagOffset), SDL_JOYSTICK_AXIS_MAX);
 }
 
 - (void)triggerReleased:(UIButton *)sender {
-    sender.backgroundColor = UIColor.clearColor;
+    setGlassPressed(sender, NO);
     if (g_virtual_joystick)
         SDL_SetJoystickVirtualAxis(g_virtual_joystick, static_cast<int>(sender.tag - triggerTagOffset), SDL_JOYSTICK_AXIS_MIN);
 }
@@ -560,13 +612,13 @@ static constexpr NSInteger triggerTagOffset = 1000;
     if (self.layoutEditing)
         return;
     hapticTick();
-    sender.backgroundColor = [UIColor colorWithRed:0.2 green:0.65 blue:1 alpha:0.28];
+    setGlassPressed(sender, YES);
     if (g_virtual_joystick)
         SDL_SetJoystickVirtualButton(g_virtual_joystick, static_cast<int>(sender.tag), true);
 }
 
 - (void)buttonReleased:(UIButton *)sender {
-    sender.backgroundColor = UIColor.clearColor;
+    setGlassPressed(sender, NO);
     if (g_virtual_joystick)
         SDL_SetJoystickVirtualButton(g_virtual_joystick, static_cast<int>(sender.tag), false);
 }
@@ -823,6 +875,9 @@ static constexpr NSInteger triggerTagOffset = 1000;
         return;
     for (UIView *elementView in self.controllerElements) {
         if ([elementView isKindOfClass:UIButton.class]) {
+            // Clear the pressed tint too, or a control the user was holding
+            // when the session paused stays lit after inputs are released.
+            setGlassPressed(elementView, NO);
             const NSInteger tag = ((UIButton *)elementView).tag;
             if (tag >= triggerTagOffset)
                 SDL_SetJoystickVirtualAxis(g_virtual_joystick, static_cast<int>(tag - triggerTagOffset), SDL_JOYSTICK_AXIS_MIN);
@@ -855,6 +910,7 @@ static constexpr NSInteger triggerTagOffset = 1000;
     UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect()];
     glass.translatesAutoresizingMaskIntoConstraints = NO;
     glass.layer.cornerRadius = 28;
+    glass.layer.cornerCurve = kCACornerCurveContinuous;
     glass.clipsToBounds = YES;
     [self addSubview:glass];
     // Size against the safe-area width so the panel never slips under the
@@ -991,6 +1047,7 @@ static constexpr NSInteger triggerTagOffset = 1000;
     [button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     button.backgroundColor = [color colorWithAlphaComponent:0.75];
     button.layer.cornerRadius = 17;
+    button.layer.cornerCurve = kCACornerCurveContinuous;
     [button.heightAnchor constraintEqualToConstant:44].active = YES;
     [button addTarget:self action:selector forControlEvents:UIControlEventTouchUpInside];
     return button;
@@ -1159,6 +1216,7 @@ static Vita3KGameMenuTarget *g_game_menu_target = nil;
     UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect()];
     glass.translatesAutoresizingMaskIntoConstraints = NO;
     glass.layer.cornerRadius = 28;
+    glass.layer.cornerCurve = kCACornerCurveContinuous;
     glass.clipsToBounds = YES;
     [self addSubview:glass];
     NSLayoutConstraint *preferredWidth = [glass.widthAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.widthAnchor multiplier:0.92];
@@ -1266,6 +1324,7 @@ static void presentGameMenu() {
     UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect()];
     glass.translatesAutoresizingMaskIntoConstraints = NO;
     glass.layer.cornerRadius = 28;
+    glass.layer.cornerCurve = kCACornerCurveContinuous;
     glass.clipsToBounds = YES;
     [shade addSubview:glass];
     const UIEdgeInsets safe = window.safeAreaInsets;
