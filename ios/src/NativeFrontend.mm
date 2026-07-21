@@ -818,6 +818,8 @@ CGFloat library_card_label_height() {
             accessory:[self defaultsSwitch:@"vita3k.perf.ram" defaults:defaults]],
         [self row:@"Show battery %" hint:@"Current device battery level."
             accessory:[self defaultsSwitch:@"vita3k.perf.battery" defaults:defaults]],
+        [self row:@"Show live log" hint:@"Scrolling panel of the last ~250 log lines while playing, for reporting bugs."
+            accessory:[self defaultsSwitch:@"vita3k.perf.log" defaults:defaults]],
     ]];
 
     UISwitch *titleIds = [[UISwitch alloc] init];
@@ -1039,7 +1041,8 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.18.0",
+    present_alert(@"What's new in 0.19.0",
+        @"• Added an optional live log panel (Settings > Performance overlay > Show live log): a scrolling view of the last ~250 log lines while playing, for reporting bugs without pulling the device off to read tsubomi.log.\n"
         @"• App launch now fades/scales the library in instead of popping onto screen instantly.\n"
         @"• Fixed a controller D-pad navigation bug where scrolling the landscape game carousel with a gamepad made covers drift up and down slightly (touch scrolling was never affected).\n"
         @"• Gravity Rush: added a diagnostic that periodically dumps every render-target surface currently cached on iOS (address/format/size/tiling), to help pin down the remaining dark-scene rendering gap. Keep Graphics > Surface sync ON and High accuracy OFF.\n"
@@ -3333,6 +3336,65 @@ static UIVisualEffectView *g_perf_hud = nil;
 static UILabel *g_perf_label = nil;
 static Vita3KFrametimeGraph *g_perf_graph = nil;
 
+// Optional live log/console overlay (Settings > Performance overlay > Show
+// live log): a bottom-docked scrolling panel of the most recent log lines,
+// for reporting bugs without pulling the device off to read tsubomi.log.
+// Independent of the FPS/frametime/RAM/battery HUD toggles above, so it is
+// updated on every vita3k_ios_update_perf_overlay tick regardless of whether
+// that HUD itself is shown.
+static UIVisualEffectView *g_log_hud = nil;
+static UITextView *g_log_text = nil;
+
+static void update_log_overlay(UIWindow *window) {
+    const BOOL show_log = [NSUserDefaults.standardUserDefaults boolForKey:@"vita3k.perf.log"];
+    if (!show_log || !window) {
+        g_log_hud.hidden = YES;
+        return;
+    }
+    if (!g_log_hud) {
+        // Non-interactive: never intercepts the game's touch controls, which
+        // stay above it in the window's subview order.
+        g_log_hud = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
+        g_log_hud.layer.cornerRadius = 10;
+        g_log_hud.clipsToBounds = YES;
+        g_log_hud.userInteractionEnabled = NO;
+        g_log_text = [[UITextView alloc] init];
+        g_log_text.backgroundColor = UIColor.clearColor;
+        g_log_text.textColor = [UIColor colorWithWhite:0.85 alpha:1.0];
+        g_log_text.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
+        g_log_text.editable = NO;
+        g_log_text.selectable = NO;
+        g_log_text.userInteractionEnabled = NO;
+        g_log_text.showsVerticalScrollIndicator = NO;
+        g_log_text.textContainerInset = UIEdgeInsetsMake(4, 6, 4, 6);
+        [g_log_hud.contentView addSubview:g_log_text];
+    }
+    if (g_log_hud.superview != window) {
+        [window addSubview:g_log_hud];
+        [window bringSubviewToFront:g_log_hud];
+    }
+    g_log_hud.hidden = NO;
+
+    const std::vector<std::string> lines = vita3k_ios_recent_log_lines();
+    const size_t shown = std::min<size_t>(lines.size(), 40);
+    NSMutableString *joined = [NSMutableString string];
+    for (size_t i = lines.size() - shown; i < lines.size(); ++i) {
+        [joined appendString:[NSString stringWithUTF8String:lines[i].c_str()] ?: @""];
+        [joined appendString:@"\n"];
+    }
+    g_log_text.text = joined;
+
+    const UIEdgeInsets safe = window.safeAreaInsets;
+    const CGFloat windowWidth = CGRectGetWidth(window.bounds);
+    const CGFloat windowHeight = CGRectGetHeight(window.bounds);
+    const CGFloat width = windowWidth - safe.left - safe.right - 16;
+    const CGFloat height = MIN(220.0, windowHeight * 0.32);
+    g_log_hud.frame = CGRectMake(safe.left + 8, windowHeight - safe.bottom - height - 8, width, height);
+    g_log_text.frame = g_log_hud.bounds;
+    if (g_log_text.text.length > 0)
+        [g_log_text scrollRangeToVisible:NSMakeRange(g_log_text.text.length - 1, 1)];
+}
+
 void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime_ms) {
     perform_on_main(^{
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
@@ -3341,13 +3403,14 @@ void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime
         const BOOL show_graph = [defaults boolForKey:@"vita3k.perf.frametimeGraph"];
         const BOOL show_ram = [defaults boolForKey:@"vita3k.perf.ram"];
         const BOOL show_battery = [defaults boolForKey:@"vita3k.perf.battery"];
+        UIWindow *window = active_window();
+        update_log_overlay(window);
         if ([defaults boolForKey:@"vita3k.perf.hidden"]
             || (!show_fps && !show_frametime && !show_graph && !show_ram && !show_battery)) {
             g_perf_hud.hidden = YES;
             return;
         }
 
-        UIWindow *window = active_window();
         if (!window)
             return;
         if (!g_perf_hud) {
@@ -3435,6 +3498,9 @@ void vita3k_ios_hide_perf_overlay() {
         g_perf_hud = nil;
         g_perf_label = nil;
         g_perf_graph = nil;
+        [g_log_hud removeFromSuperview];
+        g_log_hud = nil;
+        g_log_text = nil;
     });
 }
 

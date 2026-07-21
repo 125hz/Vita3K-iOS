@@ -72,17 +72,43 @@
 #include <chrono>
 #include <cctype>
 #include <cstddef>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <utility>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
+
+// Backs the optional in-game live log overlay: a small ring buffer fed by a
+// spdlog callback sink (the same mechanism the desktop Qt log widget uses),
+// so the frontend can poll recent lines without touching the log file. Kept
+// outside the anonymous namespace below so vita3k_ios_recent_log_lines has
+// external linkage and NativeFrontend.mm (a separate translation unit) can
+// call it.
+namespace {
+constexpr size_t kRecentLogLinesCapacity = 500;
+std::mutex g_recent_log_mutex;
+std::deque<std::string> g_recent_log_lines;
+
+void push_recent_log_line(std::string line) {
+    const std::lock_guard<std::mutex> lock(g_recent_log_mutex);
+    if (g_recent_log_lines.size() >= kRecentLogLinesCapacity)
+        g_recent_log_lines.pop_front();
+    g_recent_log_lines.push_back(std::move(line));
+}
+} // namespace
+
+std::vector<std::string> vita3k_ios_recent_log_lines() {
+    const std::lock_guard<std::mutex> lock(g_recent_log_mutex);
+    return std::vector<std::string>(g_recent_log_lines.begin(), g_recent_log_lines.end());
+}
 
 namespace {
 
@@ -415,6 +441,9 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
 
         if (logging::init(root_paths, true) != Success)
             return false;
+        logging::set_log_callback([](std::string msg, int) {
+            push_recent_log_line(std::move(msg));
+        });
 
         LOG_INFO("{}", window_title);
         LOG_INFO("iOS storage path: {}", storage_path);

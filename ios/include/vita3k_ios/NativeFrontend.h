@@ -146,3 +146,9 @@ void vita3k_ios_report_import_result(const std::string &message, bool success);
 // Dismisses the "Booting…" overlay and shows a boot-failure alert so a failed
 // launch returns to the library instead of taking the whole app down.
 void vita3k_ios_show_boot_error(const std::string &message);
+
+// Most recent formatted log lines (oldest first, newest last), fed by a
+// spdlog callback sink registered at startup. Backs an optional in-game live
+// log overlay: cheap to poll (a small in-memory ring buffer, no file IO), so
+// the frontend can call it every frame or two while the overlay is visible.
+std::vector<std::string> vita3k_ios_recent_log_lines();
