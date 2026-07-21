@@ -72,6 +72,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstddef>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -412,6 +413,40 @@ fs::path ios_storage_path() {
     return current_root / "";
 }
 
+// Physical face-button remap: controller_binds is indexed by the LOGICAL
+// Vita face-button slot (SDL_GAMEPAD_BUTTON_SOUTH/EAST/WEST/NORTH) and holds
+// which physical button to actually poll for it. A UI slot is one of the 4
+// physical face-button positions (0=Bottom/South, 1=Right/East, 2=Left/West,
+// 3=Top/North); this lets a controller that reports face buttons in the
+// wrong physical position (a real MFi/third-party quirk - some report
+// Xbox-style positions where Vita3K expects PlayStation-style) be corrected
+// from Settings instead of needing Vita3K's full desktop rebinding UI.
+int face_button_slot_for_physical(short physical_button) {
+    switch (physical_button) {
+    case SDL_GAMEPAD_BUTTON_EAST: return 1;
+    case SDL_GAMEPAD_BUTTON_WEST: return 2;
+    case SDL_GAMEPAD_BUTTON_NORTH: return 3;
+    default: return 0;
+    }
+}
+short face_button_physical_for_slot(int slot) {
+    switch (slot) {
+    case 1: return SDL_GAMEPAD_BUTTON_EAST;
+    case 2: return SDL_GAMEPAD_BUTTON_WEST;
+    case 3: return SDL_GAMEPAD_BUTTON_NORTH;
+    default: return SDL_GAMEPAD_BUTTON_SOUTH;
+    }
+}
+// Only ever written by face_button_physical_for_slot above, so a value
+// outside this set at boot means the config.yml face-button slots are
+// unrelated corruption (e.g. a stale desktop full-remap copy), not an
+// intentional custom mapping - fall back to identity for those instead of
+// preserving nonsense.
+bool is_valid_face_button_value(short value) {
+    return value == SDL_GAMEPAD_BUTTON_SOUTH || value == SDL_GAMEPAD_BUTTON_EAST
+        || value == SDL_GAMEPAD_BUTTON_WEST || value == SDL_GAMEPAD_BUTTON_NORTH;
+}
+
 bool initialize_session(const fs::path &storage_path, Root &root_paths,
     std::unique_ptr<EmuEnvState> &emuenv) {
     try {
@@ -476,11 +511,37 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
             return false;
         }
 
-        // Always use the positional default binds on iOS. There is no
-        // rebinding UI here, so any custom controller-binds can only be stale
-        // carry-over from a desktop config copy — one such copy shipped
-        // swapped Cross/Circle and Square/Triangle to every physical pad.
+        // Reset every controller-bind slot to its identity default first -
+        // this guards against corruption from a desktop config.yml copy (one
+        // such copy shipped every physical pad with Cross/Circle and
+        // Square/Triangle swapped, with no way for the user to see or fix
+        // it). Then restore just the four face-button slots if they hold a
+        // value our own Settings > Controller button mapping could have
+        // written (see face_button_physical_for_slot); unlike the original
+        // corruption, that's now a visible, user-correctable choice, not a
+        // silent bug, so it's safe to carry across relaunches.
+        short saved_cross = SDL_GAMEPAD_BUTTON_SOUTH;
+        short saved_circle = SDL_GAMEPAD_BUTTON_EAST;
+        short saved_square = SDL_GAMEPAD_BUTTON_WEST;
+        short saved_triangle = SDL_GAMEPAD_BUTTON_NORTH;
+        if (emuenv->cfg.controller_binds.size() > SDL_GAMEPAD_BUTTON_NORTH) {
+            const auto &binds = emuenv->cfg.controller_binds;
+            if (is_valid_face_button_value(binds[SDL_GAMEPAD_BUTTON_SOUTH]))
+                saved_cross = binds[SDL_GAMEPAD_BUTTON_SOUTH];
+            if (is_valid_face_button_value(binds[SDL_GAMEPAD_BUTTON_EAST]))
+                saved_circle = binds[SDL_GAMEPAD_BUTTON_EAST];
+            if (is_valid_face_button_value(binds[SDL_GAMEPAD_BUTTON_WEST]))
+                saved_square = binds[SDL_GAMEPAD_BUTTON_WEST];
+            if (is_valid_face_button_value(binds[SDL_GAMEPAD_BUTTON_NORTH]))
+                saved_triangle = binds[SDL_GAMEPAD_BUTTON_NORTH];
+        }
         app::reset_controller_binding(*emuenv);
+        if (emuenv->cfg.controller_binds.size() > SDL_GAMEPAD_BUTTON_NORTH) {
+            emuenv->cfg.controller_binds[SDL_GAMEPAD_BUTTON_SOUTH] = saved_cross;
+            emuenv->cfg.controller_binds[SDL_GAMEPAD_BUTTON_EAST] = saved_circle;
+            emuenv->cfg.controller_binds[SDL_GAMEPAD_BUTTON_WEST] = saved_square;
+            emuenv->cfg.controller_binds[SDL_GAMEPAD_BUTTON_NORTH] = saved_triangle;
+        }
 
         init_libraries(*emuenv);
 
@@ -585,6 +646,8 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
             missing_text += ", ";
         missing_text += name;
     }
+    const auto &binds = emuenv.cfg.controller_binds;
+    const bool binds_sized = binds.size() > SDL_GAMEPAD_BUTTON_NORTH;
     return {
         .resolution_multiplier = current.resolution_multiplier,
         .v_sync = current.v_sync,
@@ -595,6 +658,10 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
         .anisotropic_filtering = current.anisotropic_filtering,
         .high_accuracy = current.high_accuracy,
         .surface_sync = !current.disable_surface_sync,
+        .bind_cross = binds_sized ? face_button_slot_for_physical(binds[SDL_GAMEPAD_BUTTON_SOUTH]) : 0,
+        .bind_circle = binds_sized ? face_button_slot_for_physical(binds[SDL_GAMEPAD_BUTTON_EAST]) : 1,
+        .bind_square = binds_sized ? face_button_slot_for_physical(binds[SDL_GAMEPAD_BUTTON_WEST]) : 2,
+        .bind_triangle = binds_sized ? face_button_slot_for_physical(binds[SDL_GAMEPAD_BUTTON_NORTH]) : 3,
         .firmware_version = firmware_version_display(emuenv),
         .firmware_ready = missing.empty(),
         .font_package_ready = firmware.font_package,
@@ -609,6 +676,12 @@ struct ImportJob {
     bool firmware = false;
     bool success = false;
     bool rescan_apps = true;
+    // Set for a successful save import: trophy/playtime data on disk changed
+    // but the installed-apps list itself didn't, so this asks for the light
+    // native_games()+vita3k_ios_update_library() refresh instead of a full
+    // (expensive) app rescan, so the library shows updated trophy counts and
+    // play time without requiring the game to be booted first.
+    bool refresh_library = false;
     std::string message;
     std::string share_path;
     // Populated for a successful game archive install so the frontend can offer
@@ -699,11 +772,32 @@ void start_save_export(EmuEnvState &emuenv, const std::string &title_id) {
                         if (fs::exists(trophy_data, trophy_error) && !trophy_error)
                             add_tree(trophy_data, "trophy/" + np_com_id + "/");
                     }
+                    bool bundled_playtime = false;
+                    if (ok && !error) {
+                        // Time-played is tracked keyed by app_path (usually
+                        // == title_id for iOS-installed titles) in a single
+                        // shared ux0/user/time.xml, not per-title, so it
+                        // can't just be added to the archive like the
+                        // savedata/trophy trees above; write a small text
+                        // file with just this title's values instead.
+                        const auto times = app::get_user_app_times(emuenv);
+                        const auto time_it = times.find(title_id);
+                        if (time_it != times.end()) {
+                            const std::string meta = "time_used=" + std::to_string(time_it->second.time_used)
+                                + "\nlast_time_used=" + std::to_string(static_cast<int64_t>(time_it->second.last_time_used)) + "\n";
+                            if (mz_zip_writer_add_mem(&zip, "meta/playtime.txt", meta.data(), meta.size(), MZ_DEFAULT_COMPRESSION))
+                                bundled_playtime = true;
+                            else
+                                ok = false;
+                        }
+                    }
                     ok = ok && !error && files > 0 && mz_zip_writer_finalize_archive(&zip);
                     mz_zip_writer_end(&zip);
                     if (ok) {
                         job->success = true;
-                        job->message = "Save exported (with trophy progress)";
+                        job->message = bundled_playtime
+                            ? "Save exported (with trophy progress and play time)"
+                            : "Save exported (with trophy progress)";
                         job->share_path = output_text;
                     } else {
                         boost::system::error_code cleanup_error;
@@ -749,9 +843,10 @@ void start_save_import(EmuEnvState &emuenv, const std::string &title_id, const s
                 const mz_uint entries = mz_zip_reader_get_num_files(&zip);
                 if (entries == 0 || entries > 100000)
                     ok = false;
-                // New archives carry "savedata/" and "trophy/<np-com-id>/"
-                // top-level folders; legacy archives have savedata files at the
-                // root. Route both into a split staging tree.
+                // New archives carry "savedata/", "trophy/<np-com-id>/", and
+                // optionally "meta/" (play time) top-level folders; legacy
+                // archives have savedata files at the root. Route all three
+                // into a split staging tree.
                 bool has_prefixes = false;
                 for (mz_uint index = 0; ok && index < entries; ++index) {
                     mz_zip_archive_file_stat stat{};
@@ -760,7 +855,7 @@ void start_save_import(EmuEnvState &emuenv, const std::string &title_id, const s
                         break;
                     }
                     const std::string_view name(stat.m_filename);
-                    if (name.starts_with("savedata/") || name.starts_with("trophy/"))
+                    if (name.starts_with("savedata/") || name.starts_with("trophy/") || name.starts_with("meta/"))
                         has_prefixes = true;
                 }
                 const fs::path staged_savedata = has_prefixes ? staging / "savedata" : staging;
@@ -783,7 +878,7 @@ void start_save_import(EmuEnvState &emuenv, const std::string &title_id, const s
                     if (has_prefixes) {
                         // Mixed legacy files inside a prefixed archive are
                         // treated as savedata for safety.
-                        output = (name.starts_with("savedata/") || name.starts_with("trophy/"))
+                        output = (name.starts_with("savedata/") || name.starts_with("trophy/") || name.starts_with("meta/"))
                             ? staging / fs::path(stat.m_filename)
                             : staged_savedata / fs::path(stat.m_filename);
                     } else {
@@ -836,6 +931,40 @@ void start_save_import(EmuEnvState &emuenv, const std::string &title_id, const s
                                 trophies_installed = trophies_installed || !swap_error;
                             }
                         }
+                        // Restore bundled play time, if any: take the max of
+                        // what's already recorded locally and what came with
+                        // the save, so importing an older save never rolls
+                        // back time already logged on this device.
+                        bool playtime_restored = false;
+                        const fs::path staged_playtime = staging / "meta/playtime.txt";
+                        boost::system::error_code playtime_error;
+                        if (fs::exists(staged_playtime, playtime_error) && !playtime_error) {
+                            fs::ifstream in(staged_playtime);
+                            std::string line;
+                            int64_t imported_time_used = 0;
+                            std::time_t imported_last_time_used = 0;
+                            while (std::getline(in, line)) {
+                                if (line.starts_with("time_used="))
+                                    imported_time_used = std::atoll(line.c_str() + 10);
+                                else if (line.starts_with("last_time_used="))
+                                    imported_last_time_used = static_cast<std::time_t>(std::atoll(line.c_str() + 15));
+                            }
+                            auto &apps_list = emuenv.app.apps_list;
+                            const std::lock_guard<std::mutex> lock(apps_list.mutex);
+                            auto &times = apps_list.app_times[emuenv.io.user_id];
+                            const auto time_it = std::find_if(times.begin(), times.end(),
+                                [&](const app::AppTime &t) { return t.app_path == title_id; });
+                            if (time_it != times.end()) {
+                                time_it->time_used = std::max(time_it->time_used, imported_time_used);
+                                time_it->last_time_used = std::max(time_it->last_time_used, imported_last_time_used);
+                            } else {
+                                times.push_back(app::AppTime{ title_id, imported_last_time_used, imported_time_used });
+                            }
+                            playtime_restored = true;
+                        }
+                        if (playtime_restored)
+                            app::save_app_times(emuenv);
+                        job->refresh_library = trophies_installed || playtime_restored;
                         job->success = true;
                         job->message = trophies_installed
                             ? "Save and trophy progress imported for " + title_id
@@ -1068,6 +1197,14 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     desired.high_accuracy = settings.high_accuracy;
     desired.disable_surface_sync = !settings.surface_sync;
     desired.audio_backend = "SDL";
+    // See face_button_slot_for_physical/face_button_physical_for_slot above
+    // and the reset_controller_binding call at boot.
+    if (desired.controller_binds.size() > SDL_GAMEPAD_BUTTON_NORTH) {
+        desired.controller_binds[SDL_GAMEPAD_BUTTON_SOUTH] = face_button_physical_for_slot(settings.bind_cross);
+        desired.controller_binds[SDL_GAMEPAD_BUTTON_EAST] = face_button_physical_for_slot(settings.bind_circle);
+        desired.controller_binds[SDL_GAMEPAD_BUTTON_WEST] = face_button_physical_for_slot(settings.bind_square);
+        desired.controller_binds[SDL_GAMEPAD_BUTTON_NORTH] = face_button_physical_for_slot(settings.bind_triangle);
+    }
 
     const auto result = app::commit_settings(emuenv, desired);
     emuenv.display.fps_hack = false;
@@ -1129,6 +1266,7 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
         if (g_import_job && g_import_job->done.load()) {
             const bool was_firmware = g_import_job->firmware;
             const bool rescan_apps = g_import_job->rescan_apps;
+            const bool refresh_library = g_import_job->refresh_library;
             const bool success = g_import_job->success;
             const std::string message = g_import_job->message;
             const std::string share_path = g_import_job->share_path;
@@ -1136,7 +1274,7 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
             g_import_job.reset();
             if (rescan_apps && !was_firmware && !app::init_apps_list(emuenv))
                 LOG_ERROR("Failed to rescan apps list after import.");
-            if (rescan_apps) {
+            if (rescan_apps || (success && refresh_library)) {
                 games = native_games(emuenv);
                 vita3k_ios_update_library(games, native_settings(emuenv));
             }

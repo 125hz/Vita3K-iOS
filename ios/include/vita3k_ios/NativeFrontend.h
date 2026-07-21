@@ -60,6 +60,17 @@ struct Vita3KIOSSettings {
     // Keep GPU render targets synchronized with guest-visible surface data.
     // Some titles, including Gravity Rush, need this for correct lighting.
     bool surface_sync = false;
+    // Physical face-button remap: which physical face-button position
+    // (0=Bottom, 1=Right, 2=Left, 3=Top) triggers each Vita face button.
+    // Global only (not a per-game override) - a controller's button layout
+    // is a device property, not a per-game preference. Defaults are the
+    // identity mapping (Cross=Bottom, Circle=Right, Square=Left,
+    // Triangle=Top); some third-party controllers report face buttons in
+    // Xbox-style positions where Vita3K expects PlayStation-style ones.
+    int bind_cross = 0;
+    int bind_circle = 1;
+    int bind_square = 2;
+    int bind_triangle = 3;
     // Display-only: installed firmware version shown on the library header.
     std::string firmware_version;
     // Games stay unavailable until all three official firmware packages have

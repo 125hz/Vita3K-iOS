@@ -653,6 +653,13 @@ CGFloat library_card_label_height() {
 @property(nonatomic, strong) UISwitch *highAccuracySwitch;
 @property(nonatomic, strong) UISwitch *surfaceSyncSwitch;
 @property(nonatomic, strong) UISegmentedControl *anisotropicControl;
+// Physical face-button remap (Settings > Controller button mapping, global
+// only): each holds which physical position (Bottom/Right/Left/Top) is
+// bound to that Vita button.
+@property(nonatomic, strong) UISegmentedControl *bindCrossControl;
+@property(nonatomic, strong) UISegmentedControl *bindCircleControl;
+@property(nonatomic, strong) UISegmentedControl *bindSquareControl;
+@property(nonatomic, strong) UISegmentedControl *bindTriangleControl;
 @property(nonatomic, strong) UILabel *headerTitle;
 @property(nonatomic, strong) NSDictionary<NSString *, NSArray<UIView *> *> *pages;
 @property(nonatomic) BOOL showingRoot;
@@ -804,6 +811,27 @@ CGFloat library_card_label_height() {
         [self row:@"Virtual controls" hint:@"Opacity, scale, layout, visibility, and physical-pad auto-hide." accessory:controller],
     ]];
 
+    // A controller's face-button layout is a device property, not a
+    // per-game preference, so this section is device-global only: it is not
+    // in enterPerGameModeForTitle's category list below, and its choices are
+    // ignored by the per-game apply path even if this view somehow reaches
+    // it (see apply_game_session_settings in UpstreamMain.cpp).
+    NSArray<NSString *> *facePositions = @[@"Bottom", @"Right", @"Left", @"Top"];
+    self.bindCrossControl = [[UISegmentedControl alloc] initWithItems:facePositions];
+    self.bindCrossControl.selectedSegmentIndex = std::clamp(values.bind_cross, 0, 3);
+    self.bindCircleControl = [[UISegmentedControl alloc] initWithItems:facePositions];
+    self.bindCircleControl.selectedSegmentIndex = std::clamp(values.bind_circle, 0, 3);
+    self.bindSquareControl = [[UISegmentedControl alloc] initWithItems:facePositions];
+    self.bindSquareControl.selectedSegmentIndex = std::clamp(values.bind_square, 0, 3);
+    self.bindTriangleControl = [[UISegmentedControl alloc] initWithItems:facePositions];
+    self.bindTriangleControl.selectedSegmentIndex = std::clamp(values.bind_triangle, 0, 3);
+    [self addSection:@"Controller button mapping" rows:@[
+        [self row:@"× Cross" hint:@"Which physical face button triggers Cross. Change this if your controller reports Cross/Circle or Square/Triangle swapped." accessory:self.bindCrossControl],
+        [self row:@"○ Circle" hint:@"Which physical face button triggers Circle." accessory:self.bindCircleControl],
+        [self row:@"□ Square" hint:@"Which physical face button triggers Square." accessory:self.bindSquareControl],
+        [self row:@"△ Triangle" hint:@"Which physical face button triggers Triangle." accessory:self.bindTriangleControl],
+    ]];
+
     // Performance-overlay toggles live in NSUserDefaults (frontend-only
     // state); they apply immediately without Save.
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
@@ -858,9 +886,10 @@ CGFloat library_card_label_height() {
         @"Graphics": @[sections[1]],
         @"Audio": @[sections[2]],
         @"System & Input": @[sections[3]],
-        @"Performance Overlay": @[sections[4]],
-        @"Library": @[sections[5]],
-        @"About": @[sections[6]],
+        @"Controller button mapping": @[sections[4]],
+        @"Performance Overlay": @[sections[5]],
+        @"Library": @[sections[6]],
+        @"About": @[sections[7]],
     };
     [self showSettingsRoot];
     return self;
@@ -923,6 +952,7 @@ CGFloat library_card_label_height() {
         @[@"Graphics", @"sparkles", UIColor.systemPurpleColor],
         @[@"Audio", @"speaker.wave.2.fill", UIColor.systemOrangeColor],
         @[@"System & Input", @"gamecontroller.fill", UIColor.systemGreenColor],
+        @[@"Controller button mapping", @"circle.grid.cross.fill", UIColor.systemIndigoColor],
         @[@"Performance Overlay", @"gauge.with.dots.needle.67percent", UIColor.systemPinkColor],
         @[@"Library", @"square.grid.2x2.fill", UIColor.systemTealColor],
         @[@"Submit bugs", @"ladybug.fill", UIColor.systemRedColor],
@@ -982,7 +1012,7 @@ CGFloat library_card_label_height() {
 // they are listed on the root page.
 - (void)padSwitchCategory:(NSInteger)delta {
     NSArray<NSString *> *order = @[
-        @"Video", @"Graphics", @"Audio", @"System & Input",
+        @"Video", @"Graphics", @"Audio", @"System & Input", @"Controller button mapping",
         @"Performance Overlay", @"Library", @"Submit bugs", @"About"
     ];
     if (self.showingRoot) {
@@ -1041,9 +1071,14 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.20.0",
-        @"• EXPERIMENTAL: enabled real GPU memory mapping (\"double buffer\" mode) on iOS for the first time — previously hard-disabled on all Apple platforms. This replaces the surface-sync workaround with the same mechanism desktop Vita3K uses, and may fix Gravity Rush's dark environment rendering, but it changes vertex/uniform buffer and render-target handling for every game. Please test Amagami, P4G, VA-11, and GR after this update — if anything regresses, this is a single isolated commit and easy to roll back.\n"
-        @"• 0.19.0: added an optional live log panel (Settings > Performance overlay > Show live log): a scrolling view of the last ~250 log lines while playing, for reporting bugs without pulling the device off to read tsubomi.log.\n"
+    present_alert(@"What's new in 0.21.0",
+        @"• Fixed Persona 4 Golden's character models rendering as garbled/shattered shards — a regression from 0.20.0's memory-mapping change: shader-store vertex buffers were getting overwritten with stale data on every frame instead of keeping the GPU-written data.\n"
+        @"• Added Settings > Controller button mapping: remap which physical face button (Bottom/Right/Left/Top) triggers Cross/Circle/Square/Triangle, for controllers that report them in the wrong position.\n"
+        @"• Save export now bundles play time along with trophy progress; importing a save restores it too (never rolling time back if the device already has more logged).\n"
+        @"• Trophy counts and play time in the library now refresh immediately after importing a save, instead of only after the game is next booted.\n"
+        @"• Fixed a lingering frozen frame of a just-quit game sometimes showing behind Settings.\n"
+        @"• 0.20.0: EXPERIMENTAL real GPU memory mapping (\"double buffer\" mode) on iOS — fixed Gravity Rush's black environment/textures. Still open: occasional pink light-streak artifacts in Gravity Rush, and a slow loading screen in VA-11 HALL-A (both pre-existing, not caused by this change).\n"
+        @"• 0.19.0: added an optional live log panel (Settings > Performance overlay > Show live log).\n"
         @"• App launch now fades/scales the library in instead of popping onto screen instantly.\n"
         @"• Fixed a controller D-pad navigation bug where scrolling the landscape game carousel with a gamepad made covers drift up and down slightly (touch scrolling was never affected).\n"
         @"• Onboarding and earlier fixes remain included.");
@@ -1164,6 +1199,13 @@ CGFloat library_card_label_height() {
     action.settings.anisotropic_filtering = anisotropicValues[self.anisotropicControl.selectedSegmentIndex];
     action.settings.high_accuracy = self.highAccuracySwitch.on;
     action.settings.surface_sync = self.surfaceSyncSwitch.on;
+    // Global only - not read by the per-game apply path (see
+    // apply_game_session_settings), so it's harmless that these controls
+    // still exist (just not shown) in per-game mode.
+    action.settings.bind_cross = (int)self.bindCrossControl.selectedSegmentIndex;
+    action.settings.bind_circle = (int)self.bindCircleControl.selectedSegmentIndex;
+    action.settings.bind_square = (int)self.bindSquareControl.selectedSegmentIndex;
+    action.settings.bind_triangle = (int)self.bindTriangleControl.selectedSegmentIndex;
     if (self.perGameTitleId) {
         store_game_settings(self.perGameTitleId, action.settings);
         [self close];
@@ -2456,6 +2498,9 @@ static const NSInteger kCarouselRepeat = 400;
     [settings enterPerGameModeForTitle:identifier];
     settings.alpha = 0;
     [self addSubview:settings];
+    // Belt and braces: a lingering game drawable must never be visible under
+    // the settings page (same reasoning as -settings above).
+    set_metal_drawables_hidden(self.window, YES);
     [UIView animateWithDuration:0.22 animations:^{ settings.alpha = 1; }];
 }
 
@@ -2525,6 +2570,14 @@ static Vita3KLibraryView *g_library = nil;
 // Last-known JIT availability, applied whenever the library is (re)shown so the
 // banner is correct even across library rebuilds between game sessions.
 static BOOL g_jit_available = YES;
+// A quit game's SDL/Metal drawable can be torn down over several runloop
+// ticks, not just the one after vita3k_ios_show_library reasserts visibility
+// - if settings gets opened (or the library redraws) in that window, the
+// one-shot hide can miss a drawable that gets (re)added moments later,
+// showing a frozen frame of the game that was just quit behind the UI.
+// Re-run the hide pass on a short repeating timer for as long as the library
+// is on screen instead of relying on a single reassertion.
+static NSTimer *g_library_metal_hide_timer = nil;
 // Set once the very first library presentation of this process has played its
 // launch intro. Returning to the library after quitting a game recreates
 // g_library too (vita3k_ios_hide_library nils it out), so this can't just be
@@ -3093,6 +3146,21 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
             [g_library.superview bringSubviewToFront:g_library];
             set_metal_drawables_hidden(g_library.window ?: active_window(), YES);
         });
+        // Teardown can still straggle past that one tick (see
+        // g_library_metal_hide_timer above), so keep re-hiding on a short
+        // timer for as long as the library stays on screen.
+        if (!g_library_metal_hide_timer) {
+            g_library_metal_hide_timer = [NSTimer scheduledTimerWithTimeInterval:0.25
+                                                                          repeats:YES
+                                                                            block:^(NSTimer *timer) {
+                if (!g_library) {
+                    [timer invalidate];
+                    g_library_metal_hide_timer = nil;
+                    return;
+                }
+                set_metal_drawables_hidden(g_library.window ?: active_window(), YES);
+            }];
+        }
     });
 }
 
@@ -3111,6 +3179,8 @@ void vita3k_ios_hide_library() {
         set_metal_drawables_hidden(g_library.window ?: active_window(), NO);
         [g_library removeFromSuperview];
         g_library = nil;
+        [g_library_metal_hide_timer invalidate];
+        g_library_metal_hide_timer = nil;
     });
 }
 
