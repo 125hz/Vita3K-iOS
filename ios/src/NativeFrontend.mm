@@ -1039,9 +1039,10 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.17.1",
-        @"• Broadens the surface-sync GPU barrier (0.17.0) to cover transfer/clear writes too, and improves the read-back diagnostics — narrowing down Gravity Rush's remaining dark-scene rendering.\n"
-        @"• Gravity Rush: keep Graphics > Surface sync ON and High accuracy OFF.\n"
+    present_alert(@"What's new in 0.18.0",
+        @"• App launch now fades/scales the library in instead of popping onto screen instantly.\n"
+        @"• Fixed a controller D-pad navigation bug where scrolling the landscape game carousel with a gamepad made covers drift up and down slightly (touch scrolling was never affected).\n"
+        @"• Gravity Rush: added a diagnostic that periodically dumps every render-target surface currently cached on iOS (address/format/size/tiling), to help pin down the remaining dark-scene rendering gap. Keep Graphics > Surface sync ON and High accuracy OFF.\n"
         @"• Onboarding and earlier fixes remain included.");
 }
 
@@ -2521,6 +2522,11 @@ static Vita3KLibraryView *g_library = nil;
 // Last-known JIT availability, applied whenever the library is (re)shown so the
 // banner is correct even across library rebuilds between game sessions.
 static BOOL g_jit_available = YES;
+// Set once the very first library presentation of this process has played its
+// launch intro. Returning to the library after quitting a game recreates
+// g_library too (vita3k_ios_hide_library nils it out), so this can't just be
+// "!g_library" or every game-to-library transition would replay the intro.
+static BOOL g_app_launch_intro_shown = NO;
 
 namespace {
 void reload_library_cells() {
@@ -2675,8 +2681,26 @@ static CGPoint center_in(UIView *view, UIView *root) {
     while (scroller && ![scroller isKindOfClass:UIScrollView.class])
         scroller = scroller.superview;
     if (scroller) {
-        const CGRect rect = [view convertRect:view.bounds toView:scroller];
-        [(UIScrollView *)scroller scrollRectToVisible:CGRectInset(rect, -24, -24) animated:YES];
+        UIScrollView *scrollView = (UIScrollView *)scroller;
+        CGRect rect = CGRectInset([view convertRect:view.bounds toView:scroller], -24, -24);
+        // The landscape carousel scrolls horizontally only, but its cells are
+        // scaled down by distance-from-center (applyCarouselTransforms), so
+        // an off-center cell's transformed frame is a few points shorter than
+        // the row. scrollRectToVisible fits both axes, so it was nudging
+        // contentOffset.y by that difference on every D-pad move — the
+        // "games move up and down slightly" jitter (touch scrolling never
+        // goes through here, which is why it stayed steady). A horizontally
+        // scrolling collection view only needs the X axis fit; clamp the
+        // rect's vertical span to the current viewport so Y never moves.
+        if ([scrollView isKindOfClass:UICollectionView.class]) {
+            UICollectionViewLayout *layout = ((UICollectionView *)scrollView).collectionViewLayout;
+            if ([layout isKindOfClass:UICollectionViewFlowLayout.class]
+                && ((UICollectionViewFlowLayout *)layout).scrollDirection == UICollectionViewScrollDirectionHorizontal) {
+                rect.origin.y = scrollView.bounds.origin.y;
+                rect.size.height = scrollView.bounds.size.height;
+            }
+        }
+        [scrollView scrollRectToVisible:rect animated:YES];
     }
 }
 
@@ -3001,14 +3025,26 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         // controller in the responder chain to present from; a view parented
         // straight to the window has none, so taps did nothing.
         UIView *host = window.rootViewController.view ?: window;
+        BOOL playLaunchIntro = NO;
         if (!g_library) {
             g_library = [[Vita3KLibraryView alloc] initWithFrame:host.bounds];
             [host addSubview:g_library];
+            if (!g_app_launch_intro_shown) {
+                playLaunchIntro = YES;
+                g_app_launch_intro_shown = YES;
+            }
         } else if (g_library.superview != host) {
             [host addSubview:g_library];
         }
         g_library.frame = host.bounds;
         g_library.hidden = NO;
+        if (playLaunchIntro) {
+            // Cold app launch dropped the library on screen with no
+            // transition at all. A short fade + gentle scale-up reads as an
+            // intentional entrance instead of the UI just appearing.
+            g_library.alpha = 0.0;
+            g_library.transform = CGAffineTransformMakeScale(0.96, 0.96);
+        }
         [g_library updateGames:gamesCopy settings:settingsCopy];
         [g_library setJitAvailable:g_jit_available];
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
@@ -3031,6 +3067,19 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         [g_library.superview bringSubviewToFront:g_library];
         set_metal_drawables_hidden(window, YES);
         [Vita3KPadNavigator.shared start];
+        if (playLaunchIntro) {
+            Vita3KLibraryView *introTarget = g_library;
+            [UIView animateWithDuration:0.5
+                                  delay:0.05
+                 usingSpringWithDamping:0.86
+                  initialSpringVelocity:0.4
+                                options:UIViewAnimationOptionCurveEaseOut
+                             animations:^{
+                introTarget.alpha = 1.0;
+                introTarget.transform = CGAffineTransformIdentity;
+            }
+                             completion:nil];
+        }
         // Session teardown may still mutate the view hierarchy after this
         // block (SDL drawable churn); reassert visibility one tick later so a
         // late-added game drawable can't cover or hide the library.

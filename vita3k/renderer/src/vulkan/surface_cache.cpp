@@ -272,6 +272,35 @@ SurfaceRetrieveResult VKSurfaceCache::retrieve_color_surface_for_framebuffer(Mem
     else
         tiling = SurfaceTiling::Tiled;
 
+#ifdef VITA3K_PLATFORM_IOS
+    {
+        // The surface-sync readback diagnostic in perform_post_surface_sync
+        // only ever sees LINEAR surfaces (need_surface_sync is only set for
+        // those, further down in this function) - a scene whose actual color
+        // output lives in a SWIZZLED/TILED render target is completely
+        // invisible to it. Periodically dump every surface currently
+        // resident in the cache (this function runs once per scene, for
+        // every render target) so a device log can show whether such a
+        // surface exists, and how large/what-format it is, even though we
+        // can't read its GPU-side content back without memory mapping.
+        static uint64_t last_cache_dump_ms = 0;
+        const uint64_t now_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        if (now_ms - last_cache_dump_ms >= 3000) {
+            last_cache_dump_ms = now_ms;
+            static const char *const tiling_names[] = { "Linear", "Swizzled", "Tiled" };
+            for (const auto &entry : color_address_lookup) {
+                const ColorSurfaceCacheInfo &info = *entry.second;
+                LOG_INFO("iOS surface-cache entry: addr=0x{:08X} fmt={} {}x{} stride={} tiling={} last_frame_rendered={}",
+                    entry.first, vk::to_string(info.texture.format), info.original_width, info.original_height,
+                    info.stride_bytes, tiling_names[static_cast<int>(info.tiling)], info.last_frame_rendered);
+            }
+        }
+    }
+#endif
+
     const bool is_srgb = color->gamma != 0;
     if (is_srgb) {
         if (vk_format == vk::Format::eR8G8B8A8Unorm) {
