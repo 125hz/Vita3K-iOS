@@ -694,7 +694,7 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
         }
         support_memory_mapping &= support_standard_layout;
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(VITA3K_PLATFORM_IOS)
         // we need to make a copy of the vertex buffer for moltenvk, so disable memory mapping
         support_memory_mapping = false;
 #endif
@@ -710,7 +710,19 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
             // No additional check needed for these methods
             mapping_method = MappingMethod::DoubleBuffer;
             supported_mapping_methods_mask |= (1 << static_cast<int>(MappingMethod::DoubleBuffer));
+#if !defined(VITA3K_PLATFORM_IOS)
+            // PageTable maps one buffer once and reads/writes it directly in
+            // place; ExternalHost imports the guest's own malloc'd pointer as
+            // GPU memory. Both assume the desktop-driver host-pointer
+            // semantics the "we need to make a copy of the vertex buffer for
+            // moltenvk" comment above is about, which MoltenVK does not
+            // provide reliably. DoubleBuffer explicitly allocates its own
+            // host-visible buffer and copies to/from guest RAM every access
+            // (see BufferTrapping::access_buffer) instead of aliasing guest
+            // memory directly, so it does not share that dependency and is
+            // allowed through above on iOS.
             supported_mapping_methods_mask |= (1 << static_cast<int>(MappingMethod::PageTable));
+#endif
 
             if (support_external_memory) {
                 // disable this extension on GPUs with an alignment requirement higher than 4096 (should only
@@ -719,8 +731,10 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
                 support_external_memory = (props.get<vk::PhysicalDeviceExternalMemoryHostPropertiesEXT>().minImportedHostPointerAlignment <= 4096);
             }
 
+#if !defined(VITA3K_PLATFORM_IOS)
             if (support_external_memory)
                 supported_mapping_methods_mask |= (1 << static_cast<int>(MappingMethod::ExernalHost));
+#endif
 
 #ifdef __ANDROID__
             if (support_android_buffer_import || support_unix_fd_import)
@@ -1017,6 +1031,13 @@ void VKState::late_init(const Config &cfg, const std::string_view game_id, MemSt
     // here, surface sync is inert, so this only removes the traps.
     surface_cache.can_mprotect_mapped_memory = false;
     LOG_INFO("iOS: fault-based surface dirty tracking disabled (traps are debugger-delivered)");
+    // Same debugger-trap issue applies to BufferTrapping's mprotect calls
+    // (vertex/uniform/index data for the newly-enabled DoubleBuffer mapping
+    // method - see can_mprotect_buffer_trapping in state.h). Force the
+    // always-recopy fallback instead of trusting a dirty flag a missed fault
+    // would never set.
+    can_mprotect_buffer_trapping = false;
+    LOG_INFO("iOS: fault-based buffer trapping disabled (traps are debugger-delivered); always re-syncing double-buffered data");
 #endif
 
     pipeline_cache.init(support_rasterized_order_access);
@@ -1861,7 +1882,11 @@ TrappedBuffer *BufferTrapping::access_buffer(Address addr, uint32_t size, MemSta
     if (it != trapped_buffers.end()) {
         // must check if everything match
         TrappedBuffer &buffer = it->second;
-        if (!buffer.dirty && buffer.size >= size)
+        // Without working mprotect faults (see can_mprotect_buffer_trapping),
+        // `dirty` would never be set by a write we can't detect, so trusting
+        // "not dirty" here would mean never re-syncing this buffer again
+        // after its first upload. Always fall through to the re-copy below.
+        if (state.can_mprotect_buffer_trapping && !buffer.dirty && buffer.size >= size)
             // nothing to change
             return &it->second;
     } else {
@@ -1896,19 +1921,21 @@ TrappedBuffer *BufferTrapping::access_buffer(Address addr, uint32_t size, MemSta
         it->second.mapped_location += addr - mem_it->first;
     }
 
-    Address aligned_addr;
-    uint32_t aligned_size;
-    if (cover_everything) {
-        aligned_addr = align_down(addr, KiB(4));
-        aligned_size = align(addr + size, KiB(4)) - aligned_addr;
-    } else {
-        aligned_addr = align(addr, KiB(4));
-        aligned_size = align_down(addr + size - aligned_addr, KiB(4));
+    if (state.can_mprotect_buffer_trapping) {
+        Address aligned_addr;
+        uint32_t aligned_size;
+        if (cover_everything) {
+            aligned_addr = align_down(addr, KiB(4));
+            aligned_size = align(addr + size, KiB(4)) - aligned_addr;
+        } else {
+            aligned_addr = align(addr, KiB(4));
+            aligned_size = align_down(addr + size - aligned_addr, KiB(4));
+        }
+        add_protect(mem, aligned_addr, aligned_size, MemPerm::ReadOnly, [it](Address addr, bool write) {
+            it->second.dirty = true;
+            return true;
+        });
     }
-    add_protect(mem, aligned_addr, aligned_size, MemPerm::ReadOnly, [it](Address addr, bool write) {
-        it->second.dirty = true;
-        return true;
-    });
 
     // copy back the data as it was non-existent or dirty
     memcpy(it->second.mapped_location, Ptr<void>(addr).get(mem), size);

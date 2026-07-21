@@ -1041,11 +1041,11 @@ CGFloat library_card_label_height() {
 }
 
 - (void)showChangelog {
-    present_alert(@"What's new in 0.19.0",
-        @"• Added an optional live log panel (Settings > Performance overlay > Show live log): a scrolling view of the last ~250 log lines while playing, for reporting bugs without pulling the device off to read tsubomi.log.\n"
+    present_alert(@"What's new in 0.20.0",
+        @"• EXPERIMENTAL: enabled real GPU memory mapping (\"double buffer\" mode) on iOS for the first time — previously hard-disabled on all Apple platforms. This replaces the surface-sync workaround with the same mechanism desktop Vita3K uses, and may fix Gravity Rush's dark environment rendering, but it changes vertex/uniform buffer and render-target handling for every game. Please test Amagami, P4G, VA-11, and GR after this update — if anything regresses, this is a single isolated commit and easy to roll back.\n"
+        @"• 0.19.0: added an optional live log panel (Settings > Performance overlay > Show live log): a scrolling view of the last ~250 log lines while playing, for reporting bugs without pulling the device off to read tsubomi.log.\n"
         @"• App launch now fades/scales the library in instead of popping onto screen instantly.\n"
         @"• Fixed a controller D-pad navigation bug where scrolling the landscape game carousel with a gamepad made covers drift up and down slightly (touch scrolling was never affected).\n"
-        @"• Gravity Rush: added a diagnostic that periodically dumps every render-target surface currently cached on iOS (address/format/size/tiling), to help pin down the remaining dark-scene rendering gap. Keep Graphics > Surface sync ON and High accuracy OFF.\n"
         @"• Onboarding and earlier fixes remain included.");
 }
 

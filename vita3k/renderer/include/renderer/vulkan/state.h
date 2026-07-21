@@ -108,6 +108,15 @@ struct VKState : public renderer::State {
     BufferTrapping buffer_trapping;
     // modify the behavior of trapping on vertex buffers if there are shader stores
     bool has_shader_store = false;
+    // Whether BufferTrapping can rely on mprotect-based fault trapping to
+    // detect writes to double-buffered vertex/uniform/index data. False on
+    // iOS: a debugger stays attached for sideloaded JIT (StikDebug) and
+    // intercepts the access-violation trap before our handler reliably
+    // services it - the same issue that made fault-based surface dirty
+    // tracking unusable there (see can_mprotect_mapped_memory in
+    // surface_cache.h). When false, access_buffer always re-copies instead of
+    // trusting a "clean" flag that a missed fault would never clear.
+    bool can_mprotect_buffer_trapping = true;
 
     // queue where we put requests that need to wait for the GPU
     Queue<WaitThreadRequest> request_queue;
