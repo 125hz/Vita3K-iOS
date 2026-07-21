@@ -115,7 +115,11 @@ struct VKState : public renderer::State {
     // services it - the same issue that made fault-based surface dirty
     // tracking unusable there (see can_mprotect_mapped_memory in
     // surface_cache.h). When false, access_buffer always re-copies instead of
-    // trusting a "clean" flag that a missed fault would never clear.
+    // trusting a "clean" flag that a missed fault would never clear -
+    // EXCEPT for shader-store buffers (access_buffer's always_trap param),
+    // which still need the real fault: those are written by the GPU
+    // directly, and blindly re-copying guest RAM over them every access
+    // clobbers that GPU-written data with the stale CPU-authored original.
     bool can_mprotect_buffer_trapping = true;
 
     // queue where we put requests that need to wait for the GPU

@@ -1856,6 +1856,22 @@ BufferTrapping::BufferTrapping(VKState &state)
 
 TrappedBuffer *BufferTrapping::access_buffer(Address addr, uint32_t size, MemState &mem, bool always_trap, bool cover_everything) {
     const bool is_buffer_small = (size < 3 * KiB(4));
+    // `always_trap` is passed by callers for buffers that "on the PS Vita,
+    // shader stores are used most of the time to write to" (see
+    // bind_vertex_streams): the GPU writes fresh data directly into the
+    // mapped mirror buffer, and the CPU-authored guest RAM copy is only the
+    // initial upload. Unconditionally re-copying guest RAM over the mirror
+    // on every access (the iOS no-mprotect fallback below) would clobber
+    // that GPU-written data with the stale original every single frame -
+    // this is what made Persona 4's character models render as garbled
+    // shards after DoubleBuffer mapping was enabled on iOS. So for these
+    // buffers specifically, still trust the dirty flag/real mprotect fault
+    // even when can_mprotect_buffer_trapping is false: it is a much smaller,
+    // less frequently written subset of memory than every surface, so the
+    // debugger-trap risk that motivated disabling mprotect elsewhere is
+    // more bounded here, and it is the only way to know when the CPU (not
+    // the GPU) has legitimately re-authored the buffer.
+    const bool trust_dirty_tracking = state.can_mprotect_buffer_trapping || always_trap;
 
     if (is_buffer_small && always_trap) {
         // overwise we may end up with trapping nothing
@@ -1882,11 +1898,12 @@ TrappedBuffer *BufferTrapping::access_buffer(Address addr, uint32_t size, MemSta
     if (it != trapped_buffers.end()) {
         // must check if everything match
         TrappedBuffer &buffer = it->second;
-        // Without working mprotect faults (see can_mprotect_buffer_trapping),
-        // `dirty` would never be set by a write we can't detect, so trusting
-        // "not dirty" here would mean never re-syncing this buffer again
-        // after its first upload. Always fall through to the re-copy below.
-        if (state.can_mprotect_buffer_trapping && !buffer.dirty && buffer.size >= size)
+        // Without working mprotect faults and without a shader-store buffer's
+        // stronger guarantee (see trust_dirty_tracking above), `dirty` would
+        // never be set by a write we can't detect, so trusting "not dirty"
+        // here would mean never re-syncing this buffer again after its first
+        // upload. Always fall through to the re-copy below in that case.
+        if (trust_dirty_tracking && !buffer.dirty && buffer.size >= size)
             // nothing to change
             return &it->second;
     } else {
@@ -1921,7 +1938,7 @@ TrappedBuffer *BufferTrapping::access_buffer(Address addr, uint32_t size, MemSta
         it->second.mapped_location += addr - mem_it->first;
     }
 
-    if (state.can_mprotect_buffer_trapping) {
+    if (trust_dirty_tracking) {
         Address aligned_addr;
         uint32_t aligned_size;
         if (cover_everything) {
