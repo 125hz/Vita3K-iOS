@@ -8,8 +8,8 @@ import SwiftUI
 /// row simply is a few hundred covers long and starts in the middle. See
 /// `repeatCount`.
 ///
-/// The dimming compares each cover against the tracked centre item rather than
-/// using `scrollTransition`; see the note on it in `cover(_:side:isFocused:)`.
+/// The dimming is computed from each cover's distance to the viewport centre
+/// with `visualEffect`; see the note in `cover(_:side:)`.
 @MainActor
 struct CoverCarousel<Menu: View>: View {
     let games: [GameEntry]
@@ -67,7 +67,7 @@ struct CoverCarousel<Menu: View>: View {
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 18) {
                     ForEach(items) { item in
-                        cover(item.game, side: side, isFocused: item.id == scrolledID)
+                        cover(item.game, side: side)
                             .id(item.id)
                     }
                 }
@@ -114,7 +114,7 @@ struct CoverCarousel<Menu: View>: View {
         .opacity(dimmed ? 0.55 : 1)
     }
 
-    private func cover(_ game: GameEntry, side: CGFloat, isFocused: Bool) -> some View {
+    private func cover(_ game: GameEntry, side: CGFloat) -> some View {
         VStack(spacing: 10) {
             GameCover(game: game)
                 .frame(width: side, height: side)
@@ -127,25 +127,35 @@ struct CoverCarousel<Menu: View>: View {
                 .lineLimit(1)
         }
         .frame(width: side)
-        // Driven by the tracked centre item rather than scrollTransition.
+        // Measured from real geometry, not from scroll phases or the tracked
+        // centre id.
         //
-        // Three attempts with scrollTransition failed to dim anything: its
-        // phase is decided by threshold semantics measured against the scroll
-        // view's visible region, which yielded identity for every cover here
-        // whatever threshold was used, and gives no diagnostic when it is
-        // wrong. `scrolledID` is already tracked for the haptics and the pad
-        // focus, and comparing against it is unambiguous.
+        // scrollTransition reported identity for every visible cover whatever
+        // threshold was used. Comparing against `scrolledID` then failed in a
+        // way that looked identical on device: if that id never matches, every
+        // cover gets the dimmed branch, and a uniform dim is indistinguishable
+        // from no dim at all, because the effect only reads as contrast.
         //
-        // The trade-off is that this settles per cover rather than tracking
-        // the drag continuously; the animation below covers the transition.
-        .scaleEffect(isFocused ? 1 : 0.86)
-        // Held back slightly, not hidden: the neighbours are still browsable
-        // covers, so this is a hierarchy cue, not a disabled state. Brightness
-        // rather than opacity, so a cover dims instead of going translucent
-        // against the background.
-        .brightness(isFocused ? 0 : -0.18)
-        .saturation(isFocused ? 1 : 0.85)
-        .animation(.snappy(duration: 0.2), value: isFocused)
+        // visualEffect hands over a GeometryProxy at render time, so the
+        // distance from the viewport centre can be computed directly. No
+        // threshold semantics, no dependency on the scroll position binding
+        // writing back, and it tracks the drag continuously instead of
+        // settling per cover.
+        .visualEffect { content, proxy in
+            let frame = proxy.frame(in: .scrollView(axis: .horizontal))
+            let viewport = proxy.bounds(of: .scrollView(axis: .horizontal)) ?? .zero
+            // 0 at the centre, 1 once a full cover away.
+            let stride = max(frame.width + 18, 1)
+            let distance = min(abs(frame.midX - viewport.midX) / stride, 1)
+            return content
+                .scaleEffect(1 - 0.14 * distance)
+                // Held back, not hidden: the neighbours are still browsable
+                // covers, so this is a hierarchy cue rather than a disabled
+                // state. Brightness rather than opacity, so a cover dims
+                // instead of going translucent against the background.
+                .brightness(-0.22 * distance)
+                .saturation(1 - 0.2 * distance)
+        }
         .contentShape(.rect)
         .onTapGesture { onLaunch(game) }
         .contextMenu { menu(game) }

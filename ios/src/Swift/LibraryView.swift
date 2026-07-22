@@ -23,30 +23,38 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            content
-                // Opaque, edge to edge, behind everything.
-                //
-                // The UIKit library painted its own background; the SwiftUI one
-                // relied on the hosting controller's, which does not cover
-                // every region SwiftUI draws into. A just-quit game's Metal
-                // drawable could still be visible through the gap while its
-                // teardown straggled, showing a strip of the last frame.
-                .background(Color(.systemBackground).ignoresSafeArea())
-                .navigationTitle("Tsubomi")
-                .navigationBarTitleDisplayMode(showsCarousel ? .inline : .large)
-                .toolbar { toolbarContent }
-                .safeAreaInset(edge: .top, spacing: 0) { banners }
-                .overlay { busyOverlay }
-                // Keep the state's idea of the presentation in step with what
-                // is actually drawn, so pad D-pad movement matches what the
-                // user sees.
-                .onChange(of: showsCarousel, initial: true) { _, _ in
-                    syncFocusLayout()
-                }
-                .onChange(of: library.isListMode) { _, _ in
-                    syncFocusLayout()
-                }
+        ZStack {
+            // Opaque, edge to edge, behind absolutely everything.
+            //
+            // This is load-bearing, not cosmetic. set_metal_drawables_hidden
+            // deliberately does NOT hide a Metal view the library lives inside
+            // - hiding an ancestor would hide the library with it and black out
+            // the screen - and SDL's drawable is exactly such an ancestor. So
+            // the last frame of a quit game is still being rendered behind the
+            // library, and the only thing stopping it showing through is the
+            // library being fully opaque. The UIKit library painted its own
+            // background for this reason; putting it on `content` inside the
+            // NavigationStack was not enough, because the stack draws into
+            // regions that background does not cover.
+            Color(.systemBackground).ignoresSafeArea()
+
+            NavigationStack {
+                content
+                    .navigationTitle("Tsubomi")
+                    .navigationBarTitleDisplayMode(showsCarousel ? .inline : .large)
+                    .toolbar { toolbarContent }
+                    .safeAreaInset(edge: .top, spacing: 0) { banners }
+                    .overlay { busyOverlay }
+                    // Keep the state's idea of the presentation in step with
+                    // what is actually drawn, so pad D-pad movement matches
+                    // what the user sees.
+                    .onChange(of: showsCarousel, initial: true) { _, _ in
+                        syncFocusLayout()
+                    }
+                    .onChange(of: library.isListMode) { _, _ in
+                        syncFocusLayout()
+                    }
+            }
         }
         // Cross on the focused game routes through the same gating as a tap.
         .onChange(of: library.padLaunchTarget) { _, target in
