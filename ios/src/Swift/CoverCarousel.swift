@@ -74,10 +74,15 @@ struct CoverCarousel<Menu: View>: View {
                     }
                 }
                 .scrollTargetLayout()
-                // Side padding centres the first and last covers, so every
-                // game can reach the focused position.
-                .padding(.horizontal, max(0, (proxy.size.width - side) / 2))
             }
+            // safeAreaPadding on the scroll view, NOT padding inside its
+            // content. Padding applied after scrollTargetLayout() wraps the
+            // target layout in a larger container, which throws off both the
+            // snap positions (one cover took most of a screen-width of drag)
+            // and the scroll transition thresholds (no cover ever left the
+            // identity phase, so nothing dimmed). This insets the content
+            // while leaving the targets and phases measured on the covers.
+            .safeAreaPadding(.horizontal, max(0, (proxy.size.width - side) / 2))
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $scrolledID, anchor: .center)
             .scrollIndicators(.hidden)
@@ -136,8 +141,13 @@ struct CoverCarousel<Menu: View>: View {
         // Centred means only the cover under the middle is in identity.
         .scrollTransition(.interactive.threshold(.centered), axis: .horizontal) { content, phase in
             content
-                .scaleEffect(phase.isIdentity ? 1 : 0.78)
-                .opacity(phase.isIdentity ? 1 : 0.5)
+                .scaleEffect(phase.isIdentity ? 1 : 0.86)
+                // Slightly held back, not hidden: the neighbours are still
+                // browsable covers, so this is a hierarchy cue rather than a
+                // disabled state. Brightness rather than opacity, so a cover
+                // does not go translucent over the background.
+                .brightness(phase.isIdentity ? 0 : -0.18)
+                .saturation(phase.isIdentity ? 1 : 0.85)
         }
         .contentShape(.rect)
         .onTapGesture { onLaunch(game) }
