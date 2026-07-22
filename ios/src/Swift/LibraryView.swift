@@ -45,8 +45,18 @@ struct LibraryView: View {
 
             NavigationStack {
                 content
+                    // Inline, centred title. iOS left-aligns the large title
+                    // and offers no way to centre it; a centred principal item
+                    // is the standard way to get a centred, still-prominent
+                    // wordmark.
                     .navigationTitle("Tsubomi")
-                    .navigationBarTitleDisplayMode(showsCarousel ? .inline : .large)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            Text("Tsubomi")
+                                .font(.title2.weight(.bold))
+                        }
+                    }
                     .toolbar { toolbarContent }
                     .safeAreaInset(edge: .top, spacing: 0) { banners }
                     .overlay { busyOverlay }
@@ -294,9 +304,11 @@ struct LibraryView: View {
     private var banners: some View {
         VStack(spacing: 8) {
             if !library.jitAvailable {
-                // The one surface here that earns a tint: adaptive tinting is
-                // meant to mark a single urgent element, and a warning nobody
-                // can act around is exactly that.
+                // Yellow-tinted glass: adaptive tinting is meant to mark a
+                // single urgent element, and a warning nobody can act around
+                // is exactly that. The tint rides on the glass rather than a
+                // flat fill, so it lenses the content beneath like the rest of
+                // the app's chrome.
                 Label(
                     "JIT is not ready — open StikDebug, enable JIT, and keep it attached until Tsubomi finishes Preparing JIT.",
                     systemImage: "exclamationmark.triangle.fill"
@@ -304,14 +316,14 @@ struct LibraryView: View {
                 .font(.subheadline.weight(.semibold))
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.yellow.opacity(0.3), in: .rect(cornerRadius: 16, style: .continuous))
+                .glassEffect(.regular.tint(.yellow), in: .rect(cornerRadius: 16, style: .continuous))
             }
             if let status = library.statusMessage {
                 Text(status)
                     .font(.subheadline)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(.regularMaterial, in: .capsule)
+                    .glassEffect(.regular, in: .capsule)
                     .transition(.opacity)
             }
         }

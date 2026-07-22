@@ -100,15 +100,14 @@ struct CoverCarousel<Menu: View>: View {
                 padFocusedTitleID = titleID
             }
         }
-        // D-pad input moves the pad focus; scroll the row to match, staying in
-        // whichever repeat is currently on screen so the row does not jump.
-        .onChange(of: padFocusedTitleID) { _, focused in
-            guard let focused,
-                  let current = scrolledID,
-                  Self.titleID(from: current) != focused,
-                  let repeatIndex = Self.repeatIndex(from: current)
-            else { return }
-            withAnimation(.snappy) { scrolledID = "\(repeatIndex)-\(focused)" }
+        // D-pad steps by one cover in the flat, repeated list - crossing a
+        // game boundary continues into the next repeat rather than wrapping
+        // the game index back to the start, so holding a direction keeps
+        // travelling one way. Moving the scroll target directly (not through
+        // the focus id) is also what keeps rapid presses in sync: each press
+        // advances exactly one detent instead of racing a focus round-trip.
+        .onChange(of: library.carouselStepToken) { _, _ in
+            stepCarousel(by: library.carouselStepDirection)
         }
         .sensoryFeedback(.selection, trigger: hapticTrigger)
         .opacity(dimmed ? 0.55 : 1)
@@ -165,9 +164,18 @@ struct CoverCarousel<Menu: View>: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private static func repeatIndex(from id: String) -> Int? {
-        guard let separator = id.firstIndex(of: "-") else { return nil }
-        return Int(id[id.startIndex..<separator])
+    /// Advances the centred cover by `direction` items in the flat repeated
+    /// list. Because the list is one long sequence of repeats, +1 past the
+    /// last game continues into the first game of the next repeat rather than
+    /// jumping backwards.
+    private func stepCarousel(by direction: Int) {
+        guard direction != 0,
+              let current = scrolledID,
+              let index = items.firstIndex(where: { $0.id == current })
+        else { return }
+        let next = index + direction
+        guard items.indices.contains(next) else { return }
+        withAnimation(.snappy(duration: 0.16)) { scrolledID = items[next].id }
     }
 
     private static func titleID(from id: String) -> String? {
@@ -175,9 +183,10 @@ struct CoverCarousel<Menu: View>: View {
         return String(id[id.index(after: separator)...])
     }
 
-    /// Matches the UIKit sizing: as tall as the space under the header allows,
-    /// capped at about a third of the width so several covers stay visible.
+    /// Bigger than before (0.34 → 0.42 of the width, and less vertical
+    /// reserve): the covers are the whole point of this view, so they should
+    /// dominate it.
     private func coverSide(in size: CGSize) -> CGFloat {
-        max(120, min(size.height - 90, size.width * 0.34))
+        max(140, min(size.height - 70, size.width * 0.42))
     }
 }

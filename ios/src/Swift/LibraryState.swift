@@ -71,6 +71,15 @@ final class LibraryState {
     /// through the same gating path a tap uses.
     var padLaunchTarget: GameEntry?
 
+    /// Carousel D-pad stepping. The carousel is an endlessly repeated row and
+    /// owns its own repeat-qualified scroll identity, so it cannot be moved by
+    /// game index without jumping across repeats back to the start (which is
+    /// what made holding a direction snap back instead of continuing). The pad
+    /// instead requests a relative step the carousel applies to whichever cover
+    /// is currently centred.
+    private(set) var carouselStepToken = 0
+    private(set) var carouselStepDirection = 0
+
     private var statusDismissal: Task<Void, Never>?
 
     private init() {
@@ -103,18 +112,18 @@ final class LibraryState {
             step = dx + dy * max(1, gridColumnCount)
         }
         guard step != 0 else { return }
-        let next: Int
         if layout == .carousel {
-            // The carousel is a wheel: it loops for touch, so it must loop for
-            // the D-pad too. Clamping here meant a controller user hit an
-            // invisible wall at the last game and had to scroll all the way
-            // back.
-            next = (current + step % games.count + games.count) % games.count
-        } else {
-            // Grid and list are finite lists, where wrapping from the bottom
-            // back to the top is disorienting.
-            next = min(max(current + step, 0), games.count - 1)
+            // The carousel handles its own motion so the row keeps travelling
+            // in one direction across repeats rather than snapping to the
+            // start when the game index wraps. focusedTitleID is updated by
+            // the carousel from whatever ends up centred.
+            carouselStepDirection = step
+            carouselStepToken &+= 1
+            return
         }
+        // Grid and list are finite lists, where wrapping from the bottom back
+        // to the top is disorienting.
+        let next = min(max(current + step, 0), games.count - 1)
         guard next != current else { return }
         focusedTitleID = games[next].titleID
     }

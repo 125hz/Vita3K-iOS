@@ -75,23 +75,27 @@ private struct GameMetadata: View {
         VStack(alignment: .leading, spacing: 1) {
             if showVersion {
                 Text(game.versionText)
+                    .lineLimit(1)
             }
-            // Baseline-aligned: an HStack centres its children vertically, so
-            // the trophy glyph (whose bounding box is taller than the digits)
-            // sat visibly lower than the text beside it.
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(game.playedTimeText)  ·  \(game.lastPlayedText)")
-                if game.trophiesTotal > 0 {
-                    // Inline in the played line, as in the UIKit cell. Built by
-                    // Text concatenation rather than an HStack of Image + Text
-                    // so the glyph shares the digits' baseline at every Dynamic
-                    // Type size, while keeping its own colour.
-                    Text(Image(systemName: "trophy.fill")).foregroundColor(.yellow)
-                        + Text(" \(game.trophiesUnlocked)/\(game.trophiesTotal)")
-                }
+            // One line, always. This is what made grid cards uneven heights:
+            // "30m · 7/22/26, 04:43" wrapped to two lines on some cards and
+            // one on others, so a row of otherwise-identical cards did not
+            // line up. Trophy count moved to its own line for the same reason
+            // - keeping it inline pushed some cards to a second line.
+            Text("\(game.playedTimeText)  ·  \(game.lastPlayedText)")
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            if game.trophiesTotal > 0 {
+                // Text concatenation rather than an HStack of Image + Text so
+                // the glyph shares the digits' baseline at every Dynamic Type
+                // size, while keeping its own colour.
+                (Text(Image(systemName: "trophy.fill")).foregroundColor(.yellow)
+                    + Text(" \(game.trophiesUnlocked)/\(game.trophiesTotal)"))
+                    .lineLimit(1)
             }
             if showSize {
                 Text(game.sizeText)
+                    .lineLimit(1)
             }
         }
         .font(.caption)
@@ -111,14 +115,18 @@ struct GameCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             GameCover(game: game)
+            // Reserves two lines whether the title needs them or not, so a
+            // one-line title and a two-line title produce the same card height
+            // and the grid rows line up.
             Text(game.displayTitle)
                 .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
+                .lineLimit(2, reservesSpace: true)
                 .multilineTextAlignment(.leading)
             if showTitleIDs {
                 Text(game.titleID)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
             GameMetadata(game: game)
         }
