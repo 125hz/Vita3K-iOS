@@ -20,6 +20,15 @@ final class LibraryState {
     /// A JIT-enabling debugger is attached. Games cannot boot without it.
     private(set) var jitAvailable = true
 
+    /// Bumped whenever cached cover art may be stale.
+    ///
+    /// The art cache is keyed by file path, and installing a license (or an
+    /// update) can make a title's icon appear at a path that was previously
+    /// empty. Nothing about the entry changes, so neither the cache nor the
+    /// view's load task would re-run on their own - the cover stayed blank
+    /// until the app restarted. Cells fold this into their task identity.
+    private(set) var artGeneration = 0
+
     /// Transient toast under the header, cleared automatically.
     private(set) var statusMessage: String?
     /// Blocking progress overlay ("Booting…", "Deleting game…").
@@ -94,9 +103,18 @@ final class LibraryState {
             step = dx + dy * max(1, gridColumnCount)
         }
         guard step != 0 else { return }
-        // Clamped, not wrapping: running off the end of a library and
-        // reappearing at the other end is disorienting with a D-pad.
-        let next = min(max(current + step, 0), games.count - 1)
+        let next: Int
+        if layout == .carousel {
+            // The carousel is a wheel: it loops for touch, so it must loop for
+            // the D-pad too. Clamping here meant a controller user hit an
+            // invisible wall at the last game and had to scroll all the way
+            // back.
+            next = (current + step % games.count + games.count) % games.count
+        } else {
+            // Grid and list are finite lists, where wrapping from the bottom
+            // back to the top is disorienting.
+            next = min(max(current + step, 0), games.count - 1)
+        }
         guard next != current else { return }
         focusedTitleID = games[next].titleID
     }
@@ -113,6 +131,21 @@ final class LibraryState {
 
     /// Drops the ring — the library went off screen, or a sheet took over.
     fileprivate func clearFocus() {
+        focusedTitleID = nil
+    }
+
+    /// Confirms a manual rescan finished. Short, because a rescan that found
+    /// nothing new is the normal case and does not deserve a lingering banner.
+    func showRefreshedToast() {
+        showStatus("Library refreshed", duration: .seconds(2))
+    }
+
+    fileprivate func bumpArtGeneration() {
+        artGeneration &+= 1
+    }
+
+    /// Public counterpart to `clearFocus`, for the view layer.
+    func clearPadFocus() {
         focusedTitleID = nil
     }
 
@@ -215,6 +248,14 @@ final class LibraryStateBridge: NSObject {
     /// changes the core has no new data for (a rename, a new custom cover).
     @objc static func refreshEntries() {
         LibraryState.shared.refreshAfterRename()
+    }
+
+    /// Drops cached cover art and forces every cell to reload it. Called after
+    /// an install or a license import, which can make an icon appear at a path
+    /// that was empty when it was last read.
+    @objc static func invalidateArt() {
+        Bridge.invalidateArt(atPath: nil)
+        LibraryState.shared.bumpArtGeneration()
     }
 
     // MARK: - Game controller

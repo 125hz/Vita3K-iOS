@@ -93,6 +93,15 @@ struct SettingsView: View {
             }
         } header: {
             Text("Graphics")
+        } footer: {
+            // Replaces the library's "?" button: the explanation belongs next
+            // to the switches it is about, not behind a glyph on the home
+            // screen. Kept to the three symptoms people actually report.
+            Text("""
+                Graphics look wrong? Try High accuracy. \
+                Lighting white or missing? Also turn on Surface sync. \
+                Character models shattered? Make sure Double buffer is off.
+                """)
         }
     }
 

@@ -16,6 +16,11 @@ struct LibraryView: View {
     /// Delete confirmation target.
     @State private var deleteTarget: GameEntry?
 
+    /// Drives the refresh button's symbol animation; incremented per tap.
+    @State private var refreshTick = 0
+    /// Blocks repeat taps for the length of the animation.
+    @State private var isRefreshing = false
+
     /// The carousel is the landscape presentation of grid mode. List mode
     /// stays a list in both orientations.
     private var showsCarousel: Bool {
@@ -72,11 +77,16 @@ struct LibraryView: View {
     /// Keeps the state's idea of the presentation in step with what is drawn,
     /// so D-pad movement matches what the user sees.
     private func syncFocusLayout() {
-        if showsCarousel {
-            library.focusLayout = .carousel
-        } else {
-            library.focusLayout = library.isListMode ? .list : .grid
-        }
+        let next: LibraryState.FocusLayout = showsCarousel
+            ? .carousel
+            : (library.isListMode ? .list : .grid)
+        guard next != library.focusLayout else { return }
+        library.focusLayout = next
+        // Drop the focus ring when the presentation changes. Rotating out of
+        // the carousel otherwise left the last-centred game outlined in the
+        // grid, which reads as a selection the user did not make - the ring
+        // means "the controller is here", and after a rotation it is not.
+        library.clearPadFocus()
     }
 
     // MARK: - Content
@@ -215,7 +225,11 @@ struct LibraryView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
+        // Bottom bar rather than the navigation bar: these are the library's
+        // primary actions, and on a phone held one-handed the bottom edge is
+        // the reachable one. The system gives the group its own Liquid Glass
+        // container here.
+        ToolbarItemGroup(placement: .bottomBar) {
             Menu {
                 Button {
                     // Importing a game before firmware exists produces a title
@@ -251,16 +265,18 @@ struct LibraryView: View {
             }
 
             Button {
-                Bridge.refreshLibrary()
+                refresh()
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
+            // The rescan is usually instant, so without feedback the button
+            // looks inert. Spinning the glyph and following with a toast makes
+            // it clear something happened.
+            .symbolEffect(.rotate, value: refreshTick)
+            .disabled(isRefreshing)
 
-            Button {
-                Bridge.presentGraphicsHelp()
-            } label: {
-                Label("Graphics help", systemImage: "questionmark.circle")
-            }
+            // The graphics-help button is gone: the same explanation now lives
+            // in Settings, next to the switches it talks about.
 
             Button {
                 Bridge.presentGlobalSettings()
@@ -385,6 +401,23 @@ struct LibraryView: View {
     }
 
     // MARK: - Actions
+
+    /// Rescans installed titles, with visible feedback.
+    ///
+    /// The core replaces the library wholesale and usually finishes before the
+    /// next frame, so there is nothing to wait on - the delay here exists only
+    /// so the spin is perceptible rather than a single flicker.
+    private func refresh() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        refreshTick += 1
+        Bridge.refreshLibrary()
+        Task {
+            try? await Task.sleep(for: .milliseconds(650))
+            isRefreshing = false
+            library.showRefreshedToast()
+        }
+    }
 
     private func launch(_ game: GameEntry) {
         guard Bridge.firmwareReadyOrPresentAlert() else { return }

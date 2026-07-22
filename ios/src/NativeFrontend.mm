@@ -61,6 +61,8 @@ void reload_library_cells();
 
 // Declared in NativeFrontend.mm's own scope rather than the anonymous
 // namespace: -updateGames:settings: calls it from further down the file.
+static void hide_boot_screen();
+
 static void vita3k_ios_internal_cache_snapshot(const std::vector<Vita3KIOSGameEntry> &games,
     const Vita3KIOSSettings &settings) {
     const std::lock_guard lock(g_settings_mutex);
@@ -1026,11 +1028,24 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         // on the window. UIButton context menus (the + import menu) need a view
         // controller in the responder chain to present from; a view parented
         // straight to the window has none, so taps did nothing.
-        // Host the library under the root view controller's view, not
-        // directly on the window: SwiftUI menus and sheets need a view
-        // controller in the responder chain to present from.
+        // Parent the library to the WINDOW, not to the root view controller's
+        // view.
+        //
+        // SDL's drawable is the root view controller's view, so a library
+        // hosted inside it is a descendant of that CAMetalLayer - and
+        // set_metal_drawables_hidden must then refuse to hide it, or it would
+        // hide the library along with it. The layer therefore kept compositing
+        // the last frame of a quit game behind the library forever. (The
+        // giveaway: the ghost vanished during screen recording, because
+        // capture does not composite a stale Metal drawable.)
+        //
+        // The responder-chain concern that put it here originally does not
+        // apply to a hosting controller: a view that is a view controller's
+        // root view inserts that controller into the chain, so menus and
+        // sheets still present correctly. It stays a child view controller of
+        // the root for appearance and trait callbacks.
         UIViewController *rootController = window.rootViewController;
-        UIView *host = rootController.view ?: window;
+        UIView *host = window;
         BOOL playLaunchIntro = NO;
         if (!g_library_controller) {
             g_library_controller = [TsubomiLibraryHost libraryViewController];
@@ -1092,6 +1107,8 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         }
         [library_view().superview bringSubviewToFront:library_view()];
         set_metal_drawables_hidden(window, YES);
+        // The library is up; the boot screen has nothing left to cover.
+        hide_boot_screen();
         [Vita3KPadNavigator.shared start];
         if (playLaunchIntro) {
             UIView *introTarget = library_view();
@@ -1168,6 +1185,36 @@ std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action() {
     auto action = std::move(g_pending_action);
     g_pending_action.reset();
     return action;
+}
+
+static UIViewController *g_boot_screen_controller = nil;
+
+void vita3k_ios_show_boot_screen() {
+    perform_on_main(^{
+        UIWindow *window = active_window();
+        if (!window || g_boot_screen_controller)
+            return;
+        g_boot_screen_controller = [TsubomiBootScreenHost bootScreenViewController];
+        UIView *boot = g_boot_screen_controller.view;
+        boot.frame = window.bounds;
+        boot.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [window addSubview:boot];
+        [window bringSubviewToFront:boot];
+    });
+}
+
+// Called once the library is on screen. Fades rather than cuts, so a fast
+// start does not flash.
+static void hide_boot_screen() {
+    if (!g_boot_screen_controller)
+        return;
+    UIViewController *controller = g_boot_screen_controller;
+    g_boot_screen_controller = nil;
+    [UIView animateWithDuration:0.35
+                     animations:^{ controller.view.alpha = 0; }
+                     completion:^(__unused BOOL finished) {
+        [controller.view removeFromSuperview];
+    }];
 }
 
 int vita3k_ios_load_fps_limit() {
@@ -1459,6 +1506,11 @@ void vita3k_ios_report_import_result(const std::string &message, const bool succ
         // the alert below - which is the more accurate signal anyway, since a
         // wrong-package import "succeeds" as a file operation.
         if (success) {
+            // An install or license import can make a title's icon appear at a
+            // path that was empty when the art cache last read it. Nothing
+            // about the entry changes, so drop the cache and force the cells
+            // to reload rather than leaving a blank cover until a restart.
+            [TsubomiLibraryStateBridge invalidateArt];
             // The toast owns its own dismissal timer in LibraryState.
             [TsubomiLibraryStateBridge showStatusMessage:text];
             if ([text localizedCaseInsensitiveContainsString:@"license"])

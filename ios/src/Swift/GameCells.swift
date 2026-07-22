@@ -54,9 +54,10 @@ struct GameCover: View {
             // drawn outside the bounds; clipped() bounds it first.
             .clipped()
             .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
-            // Keyed on the path so a cover replaced from the context menu
-            // reloads without the row having to be rebuilt.
-            .task(id: game.iconPath) {
+            // Keyed on the path plus the art generation: the path alone does
+            // not change when an install or license import makes an icon
+            // appear where there was none, so the load would never re-run.
+            .task(id: "\(game.iconPath)#\(LibraryState.shared.artGeneration)") {
                 image = await CoverImageLoader.image(atPath: game.iconPath)
             }
     }
