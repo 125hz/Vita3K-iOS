@@ -68,6 +68,25 @@ static void vita3k_ios_internal_cache_snapshot(const std::vector<Vita3KIOSGameEn
     g_last_games = games;
 }
 
+// Every observable piece of core state the SwiftUI frontend watches, pushed
+// from one place.
+//
+// This exists because it was previously three separate calls spread across
+// -updateGames:settings:, and the firmware push was lost when that method was
+// deleted in the library migration - which left onboarding permanently stuck,
+// since its per-page gating is exactly what FirmwareState feeds. Keeping the
+// three together means a future caller cannot update one and forget another.
+static void publish_core_snapshot(const std::vector<Vita3KIOSGameEntry> &games,
+    const Vita3KIOSSettings &settings) {
+    vita3k_ios_internal_cache_snapshot(games, settings);
+    [TsubomiLibraryStateBridge updateWithGames:vita3k_ios_internal::bridge_games()
+                                      settings:vita3k_ios_internal::bridge_settings()];
+    [TsubomiFirmwareStateBridge updateWithPreinstalledReady:settings.preinstalled_package_ready
+                                                  fontReady:settings.font_package_ready
+                                          mainFirmwareReady:settings.main_firmware_ready
+                                                   allReady:settings.firmware_ready];
+}
+
 static void set_metal_drawables_hidden(UIWindow *window, BOOL hidden);
 
 namespace {
@@ -1040,9 +1059,7 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
             library_view().alpha = 0.0;
             library_view().transform = CGAffineTransformMakeScale(0.96, 0.96);
         }
-        vita3k_ios_internal_cache_snapshot(gamesCopy, settingsCopy);
-        [TsubomiLibraryStateBridge updateWithGames:vita3k_ios_internal::bridge_games()
-                                          settings:vita3k_ios_internal::bridge_settings()];
+        publish_core_snapshot(gamesCopy, settingsCopy);
         [TsubomiLibraryStateBridge setJITAvailable:g_jit_available];
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
         if (settingsCopy.firmware_ready) {
@@ -1127,9 +1144,7 @@ void vita3k_ios_update_library(const std::vector<Vita3KIOSGameEntry> &games,
     const std::vector<Vita3KIOSGameEntry> gamesCopy = games;
     const Vita3KIOSSettings settingsCopy = settings;
     perform_on_main(^{
-        vita3k_ios_internal_cache_snapshot(gamesCopy, settingsCopy);
-        [TsubomiLibraryStateBridge updateWithGames:vita3k_ios_internal::bridge_games()
-                                          settings:vita3k_ios_internal::bridge_settings()];
+        publish_core_snapshot(gamesCopy, settingsCopy);
     });
 }
 

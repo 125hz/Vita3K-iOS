@@ -27,6 +27,12 @@ struct OnboardingView: View {
     /// @Observable tracks the reads either way.
     private var firmware: FirmwareState { FirmwareState.shared }
 
+    /// The install runs on the emulator thread and reports progress through the
+    /// library's busy state. Onboarding covers the library, so that indicator
+    /// is not visible from here - without surfacing it, choosing a firmware
+    /// file looks like it did nothing at all.
+    private var installProgress: String? { LibraryState.shared.busyMessage }
+
     /// Short phones in landscape get tighter metrics so every page still fits.
     private var isCompact: Bool { verticalSizeClass == .compact }
 
@@ -157,7 +163,19 @@ struct OnboardingView: View {
         // the primary and "Next" steps back to plain glass, so exactly one
         // element on screen carries the tint.
         VStack(spacing: 12) {
-            if page.requirement != nil {
+            if let installProgress {
+                // Replaces the button outright rather than sitting beside it:
+                // a second file cannot be chosen while one is installing.
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(installProgress)
+                        .font(.subheadline)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .glassEffect(.regular, in: .capsule)
+                .transition(.opacity)
+            } else if page.requirement != nil {
                 Button("Choose Firmware File") {
                     Bridge.presentFirmwareImportPicker()
                 }
@@ -190,6 +208,7 @@ struct OnboardingView: View {
         .controlSize(.large)
         .frame(maxWidth: .infinity)
         .animation(.snappy(duration: 0.25), value: requirementSatisfied)
+        .animation(.snappy(duration: 0.25), value: installProgress)
     }
 
     /// Page indicator. Forward-only, so the dots are a progress readout rather

@@ -1,19 +1,17 @@
 import SwiftUI
 
-/// The landscape cover carousel: a centred, snapping row of covers where the
-/// focused one is full size and its neighbours are scaled down and dimmed.
+/// The landscape cover carousel: a centred, endlessly looping row where the
+/// focused cover is full size and its neighbours are scaled down and dimmed.
 ///
-/// The UIKit version faked an endless list by repeating the games 400 times
-/// and mapping indices back with modulo. That is not needed here: a
-/// `ScrollView` with `.scrollTargetBehavior(.viewAligned)` and scroll position
-/// tracking gives the snap and the focus for free, and the covers-beside-the-
-/// selection dimming is a `scrollTransition`, which is applied by the system
-/// on the *first* layout — which is what fixes the original bug where the
-/// neighbours only darkened after the first scroll.
+/// Looping works the way the UIKit version's did — the games are repeated many
+/// times and indices map back with modulo — but the seam is handled by silently
+/// recentring the scroll position onto the equivalent cover in the middle
+/// repeat once scrolling settles. The content either side is identical, so the
+/// jump is invisible.
 ///
-/// Losing the infinite loop is deliberate: it existed to make the row feel
-/// endless, but it also meant the list had 400× as many items, and a real
-/// library is small enough that the ends are reachable either way.
+/// The dimming is a `scrollTransition`, which the system evaluates during the
+/// first layout pass. That is what makes the neighbours arrive already dimmed
+/// instead of only after the first scroll.
 @MainActor
 struct CoverCarousel<Menu: View>: View {
     let games: [GameEntry]
@@ -25,20 +23,50 @@ struct CoverCarousel<Menu: View>: View {
     let onLaunch: (GameEntry) -> Void
     @ViewBuilder let menu: (GameEntry) -> Menu
 
-    /// Title ID of the cover nearest the centre, driven by the scroll view.
-    @State private var focusedID: String?
-    /// Feedback fires on change of this; `.selection` is the picker-detent
-    /// feel, not an impact, which would read as a collision.
+    /// Identity of the centred item, as "<repeat>-<titleID>".
+    @State private var scrolledID: String?
     @State private var hapticTrigger = 0
+    /// Suppresses the focus/haptic side effects while recentring the loop.
+    @State private var isRecentring = false
+
+    /// How many times the library is repeated. Odd so there is a true middle,
+    /// and enough that a user cannot reach an end between settles — but capped
+    /// by total item count, since this array is rebuilt on every layout pass
+    /// and a large library would otherwise make it tens of thousands of
+    /// entries.
+    private var repeatCount: Int {
+        guard games.count > 1 else { return 1 }
+        let target = max(3, min(101, 600 / games.count))
+        return target.isMultiple(of: 2) ? target + 1 : target
+    }
+
+    private var middleRepeat: Int { repeatCount / 2 }
+
+    private struct Item: Identifiable {
+        let repeatIndex: Int
+        let game: GameEntry
+        var id: String { "\(repeatIndex)-\(game.titleID)" }
+    }
+
+    private var items: [Item] {
+        // A single-game library has nothing to loop through; repeating it would
+        // just let the user scroll past copies of the same cover.
+        guard games.count > 1 else {
+            return games.map { Item(repeatIndex: middleRepeat, game: $0) }
+        }
+        return (0..<repeatCount).flatMap { repeatIndex in
+            games.map { Item(repeatIndex: repeatIndex, game: $0) }
+        }
+    }
 
     var body: some View {
         GeometryReader { proxy in
             let side = coverSide(in: proxy.size)
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 18) {
-                    ForEach(games) { game in
-                        cover(game, side: side)
-                            .id(game.titleID)
+                    ForEach(items) { item in
+                        cover(item.game, side: side)
+                            .id(item.id)
                     }
                 }
                 .scrollTargetLayout()
@@ -47,24 +75,36 @@ struct CoverCarousel<Menu: View>: View {
                 .padding(.horizontal, max(0, (proxy.size.width - side) / 2))
             }
             .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $focusedID, anchor: .center)
+            .scrollPosition(id: $scrolledID, anchor: .center)
             .scrollIndicators(.hidden)
-        }
-        .onChange(of: focusedID) { oldValue, newValue in
-            // Skip the initial assignment: adopting a focus the user did not
-            // move to should not tick.
-            guard oldValue != nil, newValue != nil else { return }
-            hapticTrigger += 1
-            // Touch scrolling drives the pad focus too, so picking the
-            // controller back up continues from the visible cover.
-            if padFocusedTitleID != nil, padFocusedTitleID != newValue {
-                padFocusedTitleID = newValue
+            .onAppear {
+                if scrolledID == nil, let first = games.first {
+                    scrolledID = "\(middleRepeat)-\(first.titleID)"
+                }
             }
         }
-        // D-pad input moves the pad focus; scroll the row to match.
+        .onChange(of: scrolledID) { oldValue, newValue in
+            guard !isRecentring else { return }
+            guard let newValue, let titleID = Self.titleID(from: newValue) else { return }
+            if oldValue != nil {
+                hapticTrigger += 1
+            }
+            // Touch scrolling drives the pad focus too, so picking the
+            // controller back up continues from the visible cover.
+            if padFocusedTitleID != titleID {
+                padFocusedTitleID = titleID
+            }
+            recentreIfNeeded(newValue)
+        }
+        // D-pad input moves the pad focus; scroll the row to match, staying in
+        // whichever repeat is currently on screen so the row does not jump.
         .onChange(of: padFocusedTitleID) { _, focused in
-            guard let focused, focused != focusedID else { return }
-            withAnimation(.snappy) { focusedID = focused }
+            guard let focused,
+                  let current = scrolledID,
+                  Self.titleID(from: current) != focused,
+                  let repeatIndex = Self.repeatIndex(from: current)
+            else { return }
+            withAnimation(.snappy) { scrolledID = "\(repeatIndex)-\(focused)" }
         }
         .sensoryFeedback(.selection, trigger: hapticTrigger)
         .opacity(dimmed ? 0.55 : 1)
@@ -83,19 +123,46 @@ struct CoverCarousel<Menu: View>: View {
                 .lineLimit(1)
         }
         .frame(width: side)
-        // Applied during the first layout pass, so the covers beside the
-        // initially-centred one are already scaled and dimmed before the user
-        // touches anything.
+        // Continuous falloff rather than a binary identity check: phase.value
+        // runs about -1...1 across the visible span, so a cover dims and
+        // shrinks progressively as it leaves the centre instead of snapping
+        // between two states.
         .scrollTransition(.interactive, axis: .horizontal) { content, phase in
             content
-                .scaleEffect(phase.isIdentity ? 1 : 0.78)
-                .opacity(phase.isIdentity ? 1 : 0.5)
+                .scaleEffect(1 - min(abs(phase.value), 1) * 0.22)
+                .opacity(1 - min(abs(phase.value), 1) * 0.5)
         }
         .contentShape(.rect)
         .onTapGesture { onLaunch(game) }
         .contextMenu { menu(game) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// Jumps back to the middle repeat when the user has drifted towards an
+    /// end. The cover under the centre is identical, so nothing moves visually.
+    private func recentreIfNeeded(_ current: String) {
+        guard games.count > 1,
+              let repeatIndex = Self.repeatIndex(from: current),
+              let titleID = Self.titleID(from: current),
+              abs(repeatIndex - middleRepeat) > repeatCount / 4
+        else { return }
+        isRecentring = true
+        // No animation: this must be an instantaneous swap, not a scroll.
+        scrolledID = "\(middleRepeat)-\(titleID)"
+        // Cleared on the next runloop turn so the assignment above does not
+        // re-enter onChange and fire a haptic for a move the user did not make.
+        Task { @MainActor in isRecentring = false }
+    }
+
+    private static func repeatIndex(from id: String) -> Int? {
+        guard let separator = id.firstIndex(of: "-") else { return nil }
+        return Int(id[id.startIndex..<separator])
+    }
+
+    private static func titleID(from id: String) -> String? {
+        guard let separator = id.firstIndex(of: "-") else { return nil }
+        return String(id[id.index(after: separator)...])
     }
 
     /// Matches the UIKit sizing: as tall as the space under the header allows,
