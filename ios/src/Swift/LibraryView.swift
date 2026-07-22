@@ -168,17 +168,20 @@ struct LibraryView: View {
 
     private var gridContent: some View {
         ScrollViewReader { scroller in
-            GeometryReader { proxy in
-                gridScroll
-                    // The pad needs the column count to move up/down by a row.
-                    // Derived from the same metrics the adaptive GridItem uses.
-                    .onChange(of: proxy.size.width, initial: true) { _, width in
-                        library.gridColumnCount = Self.columnCount(forWidth: width)
-                    }
-            }
-            .onChange(of: library.focusedTitleID) { _, focused in
-                scrollToFocused(focused, using: scroller)
-            }
+            gridScroll
+                // onGeometryChange rather than wrapping in a GeometryReader:
+                // GeometryReader is greedy and ignores the safe area, which
+                // collapsed the large navigation title and pushed the first
+                // row up under the toolbar. This reads the same width without
+                // taking part in layout.
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.width
+                } action: { width in
+                    library.gridColumnCount = Self.columnCount(forWidth: width)
+                }
+                .onChange(of: library.focusedTitleID) { _, focused in
+                    scrollToFocused(focused, using: scroller)
+                }
         }
     }
 

@@ -28,26 +28,37 @@ struct GameCover: View {
     @State private var image: UIImage?
 
     var body: some View {
-        Group {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Image(systemName: "gamecontroller.fill")
-                    .font(.largeTitle)
-                    .foregroundStyle(.pink)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.fill.secondary)
+        // Color.clear defines the square; the art is an overlay on top of it.
+        //
+        // Applying .aspectRatio to the image itself does not work: a
+        // .scaledToFill() image reports its *filled* size as its ideal size,
+        // so the cover grew past the cell and pushed the grid columns and list
+        // rows apart. Sizing an empty shape and overlaying the image means the
+        // layout never sees the image's intrinsic size at all.
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: "gamecontroller.fill")
+                        .font(.largeTitle)
+                        .foregroundStyle(.pink)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.fill.secondary)
+                }
             }
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
-        // Keyed on the path so a cover replaced from the context menu reloads
-        // without the row having to be rebuilt.
-        .task(id: game.iconPath) {
-            image = await CoverImageLoader.image(atPath: game.iconPath)
-        }
+            // clipShape alone does not stop an overflowing overlay from being
+            // drawn outside the bounds; clipped() bounds it first.
+            .clipped()
+            .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
+            // Keyed on the path so a cover replaced from the context menu
+            // reloads without the row having to be rebuilt.
+            .task(id: game.iconPath) {
+                image = await CoverImageLoader.image(atPath: game.iconPath)
+            }
     }
 }
 
@@ -127,9 +138,12 @@ struct GameRow: View {
     @AppStorage(DefaultsKey.showTitleIDs.rawValue) private var showTitleIDs = true
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             GameCover(game: game, cornerRadius: 8)
                 .frame(width: 56, height: 56)
+                // The row's text can be three lines tall; without this the
+                // cover is asked to match that height and stops being square.
+                .fixedSize()
             VStack(alignment: .leading, spacing: 2) {
                 Text(game.displayTitle)
                     .font(.headline)
