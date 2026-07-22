@@ -17,6 +17,13 @@ void vita3k_ios_hide_virtual_controller();
 // the floating in-game menu.
 void vita3k_ios_present_controller_options();
 
+// SDL virtual-joystick writes for the SwiftUI on-screen controls. `button` and
+// `axis` are SDL_GamepadButton / SDL_GamepadAxis raw values. No-ops when the
+// virtual joystick has not been attached.
+void vita3k_ios_virtual_pad_set_button(int button, bool pressed);
+void vita3k_ios_virtual_pad_set_axis(int axis, short value);
+void vita3k_ios_virtual_pad_release_all();
+
 // Re-opens the floating in-game menu (no-op when no game overlay is active).
 // Used by sub-screens (controller options, trophies, performance HUD) so
 // their Back action returns to the menu instead of dropping to the game.

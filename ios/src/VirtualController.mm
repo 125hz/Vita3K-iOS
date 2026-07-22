@@ -1491,6 +1491,34 @@ float vita3k_ios_safe_area_top_pixels() {
     return g_safe_area_top_pixels.load(std::memory_order_acquire);
 }
 
+// SDL writes for the SwiftUI on-screen controls. Called straight from the
+// touch surface's touchesBegan/Moved/Ended, so these stay allocation-free and
+// do no dispatch of their own.
+void vita3k_ios_virtual_pad_set_button(const int button, const bool pressed) {
+    if (!g_virtual_joystick)
+        return;
+    SDL_SetJoystickVirtualButton(g_virtual_joystick, button, pressed);
+}
+
+void vita3k_ios_virtual_pad_set_axis(const int axis, const short value) {
+    if (!g_virtual_joystick)
+        return;
+    SDL_SetJoystickVirtualAxis(g_virtual_joystick, axis, value);
+}
+
+void vita3k_ios_virtual_pad_release_all() {
+    if (!g_virtual_joystick)
+        return;
+    // Every Vita-relevant button and axis, so a control held when a session
+    // pauses cannot stay stuck on.
+    for (int button = 0; button <= SDL_GAMEPAD_BUTTON_DPAD_RIGHT; ++button)
+        SDL_SetJoystickVirtualButton(g_virtual_joystick, button, false);
+    for (int axis = 0; axis <= SDL_GAMEPAD_AXIS_RIGHTY; ++axis)
+        SDL_SetJoystickVirtualAxis(g_virtual_joystick, axis, 0);
+    SDL_SetJoystickVirtualAxis(g_virtual_joystick, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
+    SDL_SetJoystickVirtualAxis(g_virtual_joystick, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
+}
+
 void vita3k_ios_set_physical_controller_connected(bool connected) {
     g_physical_controller_connected.store(connected, std::memory_order_relaxed);
     performOnMainThread(^{ [g_overlay applyConfiguration]; });

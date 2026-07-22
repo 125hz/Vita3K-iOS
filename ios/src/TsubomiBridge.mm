@@ -270,6 +270,22 @@ id bridge_games() {
 
 } // namespace vita3k_ios_internal
 
+@implementation TsubomiVirtualPad
+
++ (void)setButton:(int32_t)button pressed:(BOOL)pressed {
+    vita3k_ios_virtual_pad_set_button(button, pressed);
+}
+
++ (void)setAxis:(int32_t)axis value:(int16_t)value {
+    vita3k_ios_virtual_pad_set_axis(axis, value);
+}
+
++ (void)releaseAllInputs {
+    vita3k_ios_virtual_pad_release_all();
+}
+
+@end
+
 @implementation TsubomiBridge
 
 + (TsubomiSettings *)currentSettings {
