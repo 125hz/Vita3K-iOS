@@ -1,16 +1,25 @@
 // Objective-C++ half of the SwiftUI bridge. Everything C++ stops here; see
 // TsubomiBridge.h for why the boundary is drawn at this file.
 
-#import "vita3k_ios/TsubomiBridge.h"
+#include <vita3k_ios/NativeFrontend.h>
+#include <vita3k_ios/VirtualController.h>
+#include <util/log.h>
 
+// Same MacTypes collision the frontend hits: Apple's MacTypes.h declares
+// `typedef char *Ptr;`, which clashes with the emulator's global Ptr<T>
+// template forward-declared by util/log.h above. util/log.h must come first,
+// then MacTypes is pulled in (fully, and include-guarded) inside this renamed
+// region, so the project headers below - which import UIKit themselves - are
+// no-ops by the time they are reached.
+#define Ptr MacTypesPtr
 #import <UIKit/UIKit.h>
+#undef Ptr
 
 #include <string>
 #include <utility>
 
-#include "vita3k_ios/NativeFrontend.h"
 #include "vita3k_ios/NativeFrontendInternal.h"
-#include "vita3k_ios/VirtualController.h"
+#import "vita3k_ios/TsubomiBridge.h"
 
 namespace {
 
@@ -33,6 +42,68 @@ NSString *trophy_grade_name(int grade) {
 }
 
 } // namespace
+
+@interface TsubomiGameEntry ()
+- (instancetype)initWithEntry:(const Vita3KIOSGameEntry &)entry;
+@end
+
+@implementation TsubomiGameEntry
+
+- (instancetype)initWithEntry:(const Vita3KIOSGameEntry &)entry {
+    self = [super init];
+    if (!self)
+        return nil;
+    NSString *identifier = to_ns(entry.title_id);
+    _titleID = identifier.length ? identifier : @"Unknown title ID";
+
+    // A title from a package with invalid UTF-8 would otherwise arrive as nil
+    // and render as an empty row; name it after its ID instead and log the
+    // bytes so the offending package can be identified.
+    NSString *title = [NSString stringWithUTF8String:entry.title.c_str()];
+    if (!title) {
+        LOG_ERROR("iOS library title is invalid UTF-8: title_id={} bytes={}",
+            entry.title_id, vita3k_ios_internal::hex_bytes_for_log(entry.title));
+        title = [NSString stringWithFormat:@"Unknown title (%@)", _titleID];
+    }
+    _displayTitle = vita3k_ios_internal::display_title_for(_titleID, title);
+
+    _hasCustomCover = vita3k_ios_internal::title_has_custom_cover(_titleID);
+    _iconPath = _hasCustomCover
+        ? vita3k_ios_internal::custom_cover_path(_titleID)
+        : to_ns(entry.icon_path);
+    _hasSettingsOverrides = vita3k_ios_internal::title_has_settings(_titleID);
+
+    NSString *version = to_ns(entry.version);
+    _versionText = version.length ? [@"v" stringByAppendingString:version] : @"Unknown version";
+
+    const long long minutes = MAX(0, entry.time_played_seconds) / 60;
+    if (entry.time_played_seconds > 0 && minutes == 0)
+        _playedTimeText = @"<1m";
+    else if (minutes >= 60)
+        _playedTimeText = [NSString stringWithFormat:@"%lldh %lldm", minutes / 60, minutes % 60];
+    else
+        _playedTimeText = [NSString stringWithFormat:@"%lldm", minutes];
+
+    if (entry.last_played_timestamp <= 0) {
+        _lastPlayedText = @"Never played";
+    } else {
+        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+        formatter.dateStyle = NSDateFormatterShortStyle;
+        formatter.timeStyle = NSDateFormatterShortStyle;
+        _lastPlayedText = [formatter stringFromDate:
+            [NSDate dateWithTimeIntervalSince1970:static_cast<NSTimeInterval>(entry.last_played_timestamp)]];
+    }
+
+    NSByteCountFormatter *bytes = [[NSByteCountFormatter alloc] init];
+    bytes.countStyle = NSByteCountFormatterCountStyleFile;
+    _sizeText = [bytes stringFromByteCount:static_cast<long long>(entry.size_bytes)];
+
+    _trophiesUnlocked = entry.trophies_unlocked;
+    _trophiesTotal = entry.trophies_total;
+    return self;
+}
+
+@end
 
 @interface TsubomiTrophy ()
 - (instancetype)initWithEntry:(const Vita3KIOSTrophyEntry &)entry
@@ -185,6 +256,14 @@ id bridge_trophies(const Vita3KIOSTrophyCollection &collection) {
     return [[TsubomiTrophyCollection alloc] initWithCollection:collection];
 }
 
+id bridge_games() {
+    const auto games = current_games();
+    NSMutableArray<TsubomiGameEntry *> *rows = [NSMutableArray arrayWithCapacity:games.size()];
+    for (const auto &game : games)
+        [rows addObject:[[TsubomiGameEntry alloc] initWithEntry:game]];
+    return rows;
+}
+
 } // namespace vita3k_ios_internal
 
 @implementation TsubomiBridge
@@ -230,6 +309,110 @@ id bridge_trophies(const Vita3KIOSTrophyCollection &collection) {
 
 + (void)markOnboardingComplete {
     [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"tsubomi.onboarded"];
+}
+
++ (void)launchTitle:(NSString *)titleID {
+    const auto game = vita3k_ios_internal::game_for_title(titleID);
+    if (!game) {
+        // The row was stale - the library refreshed the title out from under
+        // the tap. Doing nothing is correct; the list has already updated.
+        LOG_WARN("iOS launch requested for a title that is no longer installed: {}",
+            titleID.UTF8String ? titleID.UTF8String : "");
+        return;
+    }
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::Launch;
+    action.app_path = game->app_path;
+    // Per-game overrides are applied for this session only; see the Launch
+    // handling of has_settings_override in UpstreamMain.cpp.
+    if (vita3k_ios_internal::title_has_settings(titleID)) {
+        action.settings = vita3k_ios_internal::load_title_settings(
+            titleID, vita3k_ios_internal::current_global_settings());
+        action.has_settings_override = true;
+    }
+    vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
++ (void)refreshLibrary {
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::Refresh;
+    vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
++ (NSArray<TsubomiGameEntry *> *)libraryEntries {
+    return vita3k_ios_internal::bridge_games();
+}
+
++ (void)setDisplayTitle:(NSString *)title forTitle:(NSString *)titleID {
+    vita3k_ios_internal::set_display_title(titleID, title);
+}
+
++ (void)deleteTitle:(NSString *)titleID {
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::DeleteGame;
+    action.title_id = to_std(titleID);
+    vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
++ (void)requestTrophiesForTitle:(NSString *)titleID {
+    const auto game = vita3k_ios_internal::game_for_title(titleID);
+    if (!game)
+        return;
+    // The ShowTrophies action carries the display title, the title id, and the
+    // separate trophy id (the NPWR… the trophy data is filed under).
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::ShowTrophies;
+    action.title_id = game->title;
+    action.app_path = game->title_id;
+    action.trophy_id = game->trophy_id;
+    vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
++ (void)presentGameImportPicker {
+    vita3k_ios_internal::present_game_picker();
+}
+
++ (void)presentLicenseImportPicker {
+    vita3k_ios_internal::present_license_import_picker();
+}
+
++ (void)presentSaveImportPickerForTitle:(NSString *)titleID {
+    vita3k_ios_internal::present_save_import_picker(titleID);
+}
+
++ (void)exportSaveForTitle:(NSString *)titleID {
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::ExportSave;
+    action.title_id = to_std(titleID);
+    vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
++ (void)presentCoverPickerForTitle:(NSString *)titleID {
+    vita3k_ios_internal::present_cover_art_picker(titleID);
+}
+
++ (void)presentCoverCropForTitle:(NSString *)titleID {
+    vita3k_ios_internal::present_cover_crop_editor(titleID);
+}
+
++ (void)presentGraphicsHelp {
+    vita3k_ios_internal::show_graphics_help();
+}
+
++ (void)presentJITRequiredAlert {
+    vita3k_ios_internal::show_jit_required_alert();
+}
+
++ (void)presentGlobalSettings {
+    vita3k_ios_internal::present_settings_sheet(@"", @"");
+}
+
++ (void)presentSettingsForTitle:(NSString *)titleID displayName:(NSString *)displayName {
+    vita3k_ios_internal::present_settings_sheet(titleID, displayName);
+}
+
++ (BOOL)firmwareReadyOrPresentAlert {
+    return vita3k_ios_internal::firmware_ready_or_alert();
 }
 
 + (void)presentControllerOptions {

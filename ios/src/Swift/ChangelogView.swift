@@ -43,6 +43,9 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.23.1", notes: [
+            "Build fix for 0.23.0, which did not produce a working build. Everything listed under 0.23.0 arrives here.",
+        ]),
         Release(version: "0.23.0", notes: [
             """
             Fixed Persona 4 Golden's garbled character models properly. The 0.20.0 "double buffer" \

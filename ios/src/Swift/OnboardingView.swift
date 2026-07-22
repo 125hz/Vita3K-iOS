@@ -195,6 +195,9 @@ struct OnboardingView: View {
         case fontPackage
         case mainFirmware
 
+        // A nested type does not inherit the enclosing type's actor
+        // isolation, so this needs @MainActor of its own to read FirmwareState.
+        @MainActor
         func isSatisfied(by state: FirmwareState) -> Bool {
             switch self {
             case .preinstalled: return state.preinstalledReady

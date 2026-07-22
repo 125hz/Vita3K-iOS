@@ -44,10 +44,13 @@ void queue_action(Vita3KIOSFrontendAction action) {
     g_pending_action = std::move(action);
 }
 
-// Last settings snapshot the core reported, kept so the SwiftUI bridge can
-// read them while the library view does not exist (during gameplay).
+// Last snapshot the core reported, kept so the SwiftUI bridge can read it
+// while the library view does not exist (during gameplay). The games vector
+// also lets the bridge resolve a title id back to the fields the UI has no
+// business knowing about - app_path and trophy_id.
 std::mutex g_settings_mutex;
 Vita3KIOSSettings g_last_settings;
+std::vector<Vita3KIOSGameEntry> g_last_games;
 
 void present_import_picker(BOOL firmware);
 void present_license_picker();
@@ -58,9 +61,11 @@ void reload_library_cells();
 
 // Declared in NativeFrontend.mm's own scope rather than the anonymous
 // namespace: -updateGames:settings: calls it from further down the file.
-static void vita3k_ios_internal_cache_global_settings(const Vita3KIOSSettings &settings) {
+static void vita3k_ios_internal_cache_snapshot(const std::vector<Vita3KIOSGameEntry> &games,
+    const Vita3KIOSSettings &settings) {
     const std::lock_guard lock(g_settings_mutex);
     g_last_settings = settings;
+    g_last_games = games;
 }
 
 static void set_metal_drawables_hidden(UIWindow *window, BOOL hidden);
@@ -421,6 +426,13 @@ void store_game_settings(NSString *titleId, const Vita3KIOSSettings &settings) {
 
 } // namespace
 
+namespace {
+// Defined further down the file, past this block.
+std::string hex_bytes(const std::string &value);
+} // namespace
+static void present_cover_crop(NSString *titleId, UIImage *image);
+static void present_cover_picker(NSString *titleId);
+
 // The seam TsubomiBridge.mm uses; see NativeFrontendInternal.h. Thin
 // forwarders so the storage details above stay file-local.
 namespace vita3k_ios_internal {
@@ -456,6 +468,125 @@ void present_firmware_picker() {
 
 void reload_library() {
     reload_library_cells();
+}
+
+NSString *display_title_for(NSString *title_id, NSString *original) {
+    return display_title(title_id, original);
+}
+
+void set_display_title(NSString *title_id, NSString *title) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    // An empty rename clears the override so the packaged title returns.
+    if (title.length)
+        [defaults setObject:title forKey:title_override_key(title_id)];
+    else
+        [defaults removeObjectForKey:title_override_key(title_id)];
+}
+
+bool title_has_custom_cover(NSString *title_id) {
+    return has_custom_cover(title_id);
+}
+
+NSString *custom_cover_path(NSString *title_id) {
+    return cover_render_path(title_id);
+}
+
+bool title_has_settings(NSString *title_id) {
+    return has_game_settings(title_id);
+}
+
+std::string hex_bytes_for_log(const std::string &value) {
+    return hex_bytes(value);
+}
+
+std::vector<Vita3KIOSGameEntry> current_games() {
+    const std::lock_guard lock(g_settings_mutex);
+    return g_last_games;
+}
+
+std::optional<Vita3KIOSGameEntry> game_for_title(NSString *title_id) {
+    const std::string wanted = title_id.UTF8String ? title_id.UTF8String : "";
+    const std::lock_guard lock(g_settings_mutex);
+    for (const auto &game : g_last_games) {
+        if (game.title_id == wanted)
+            return game;
+    }
+    return std::nullopt;
+}
+
+void present_game_picker() {
+    present_import_picker(NO);
+}
+
+void present_license_import_picker() {
+    present_license_picker();
+}
+
+void present_save_import_picker(NSString *title_id) {
+    present_save_picker(title_id);
+}
+
+void present_cover_art_picker(NSString *title_id) {
+    present_cover_picker(title_id);
+}
+
+void present_cover_crop_editor(NSString *title_id) {
+    // Re-crop the previously picked original when there is one, otherwise the
+    // game's packaged art, so the built-in cover can be reframed too.
+    UIImage *source = [UIImage imageWithContentsOfFile:cover_original_path(title_id)];
+    if (!source) {
+        const auto game = game_for_title(title_id);
+        if (game)
+            source = [UIImage imageWithContentsOfFile:
+                [NSString stringWithUTF8String:game->icon_path.c_str()] ?: @""];
+    }
+    present_cover_crop(title_id, source);
+}
+
+bool firmware_ready_or_alert() {
+    const auto settings = current_global_settings();
+    if (settings.firmware_ready)
+        return true;
+    NSString *missing = [NSString stringWithUTF8String:settings.missing_firmware.c_str()]
+        ?: @"required firmware";
+    present_alert(@"Complete firmware setup",
+        [NSString stringWithFormat:
+            @"Install all three firmware packages before importing or playing games.\n\nMissing: %@\n\nUse + > Import firmware (.PUP).",
+            missing]);
+    return false;
+}
+
+void present_settings_sheet(NSString *title_id, NSString *display_name) {
+    UIViewController *root = active_window().rootViewController;
+    if (!root || root.presentedViewController)
+        return;
+    // Belt and braces: a lingering game drawable must never be visible under
+    // the settings sheet.
+    set_metal_drawables_hidden(active_window(), YES);
+    UIViewController *controller = title_id.length
+        ? [TsubomiSettingsHost settingsViewControllerForTitle:title_id
+                                                  displayName:display_name
+                                               dismissHandler:^{}]
+        : [TsubomiSettingsHost globalSettingsViewControllerWithDismissHandler:^{
+              // The core applies the change on its own thread and reports
+              // restart-required fields through the status toast.
+              Vita3KIOSFrontendAction action;
+              action.kind = Vita3KIOSFrontendActionKind::Refresh;
+              queue_action(std::move(action));
+          }];
+    [root presentViewController:controller animated:YES completion:nil];
+}
+
+void show_jit_required_alert() {
+    present_alert(@"JIT required",
+        @"Open StikDebug, enable JIT, and keep it attached until Tsubomi finishes Preparing JIT.");
+}
+
+void show_graphics_help() {
+    present_alert(@"Graphics help",
+        @"If a game's shaders or textures do not look correct, open that game's settings and try Graphics > High accuracy. "
+        @"If lighting appears white or missing, also enable Graphics > Surface sync. "
+        @"If character models look shattered or garbled, make sure Graphics > Double buffer is off.");
 }
 
 void invalidate_cached_art(NSString *path) {
@@ -1501,7 +1632,7 @@ static const NSInteger kCarouselRepeat = 400;
     // cannot read the current settings off it. Both show_library and
     // update_library funnel through here, so this is the one place that sees
     // every settings snapshot the core reports.
-    vita3k_ios_internal_cache_global_settings(settings);
+    vita3k_ios_internal_cache_snapshot(games, settings);
     // Drives the SwiftUI onboarding flow's per-page gating; an import that
     // finishes on the emulator thread lands here on the next library refresh.
     [TsubomiFirmwareStateBridge updateWithPreinstalledReady:settings.preinstalled_package_ready

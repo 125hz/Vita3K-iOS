@@ -11,6 +11,10 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
+#include <optional>
+#include <string>
+#include <vector>
+
 #include "vita3k_ios/NativeFrontend.h"
 
 namespace vita3k_ios_internal {
@@ -48,5 +52,45 @@ void present_firmware_picker();
 
 // Re-reads the library display toggles and redraws the visible cells.
 void reload_library();
+
+// Per-title frontend state that lives in NSUserDefaults / the covers directory
+// rather than in the core's game entry.
+NSString *display_title_for(NSString *title_id, NSString *original);
+void set_display_title(NSString *title_id, NSString *title);
+bool title_has_custom_cover(NSString *title_id);
+NSString *custom_cover_path(NSString *title_id);
+bool title_has_settings(NSString *title_id);
+
+// Hex dump used when a package's title is not valid UTF-8.
+std::string hex_bytes_for_log(const std::string &value);
+
+// The games the core last reported, and a lookup by title id. Returns nullopt
+// when the title is not installed (a stale row the user tapped mid-refresh).
+std::vector<Vita3KIOSGameEntry> current_games();
+std::optional<Vita3KIOSGameEntry> game_for_title(NSString *title_id);
+
+// Bridged library entries, in the order the core reported them. Returns
+// NSArray<TsubomiGameEntry *> *, declared as id to keep this header C++-safe.
+id bridge_games();
+
+// Document/photo pickers owned by NativeFrontend.mm.
+void present_game_picker();
+void present_license_import_picker();
+void present_save_import_picker(NSString *title_id);
+void present_cover_art_picker(NSString *title_id);
+void present_cover_crop_editor(NSString *title_id);
+
+// The library's firmware gate: presents an explanatory alert and returns false
+// when the three official packages are not all installed.
+bool firmware_ready_or_alert();
+
+// The graphics-help explainer from the library header.
+void show_graphics_help();
+
+// Explains that JIT must be attached before a game can boot.
+void show_jit_required_alert();
+
+// Presents a settings sheet over the library. `title_id` empty means global.
+void present_settings_sheet(NSString *title_id, NSString *display_name);
 
 } // namespace vita3k_ios_internal

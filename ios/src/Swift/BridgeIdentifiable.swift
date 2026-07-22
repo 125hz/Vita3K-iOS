@@ -9,3 +9,9 @@ extension Trophy: @retroactive Identifiable {
     /// scope any one list covers.
     public var id: Int { trophyID }
 }
+
+extension GameEntry: @retroactive Identifiable {
+    /// The title ID (e.g. PCSE00120) is the library's natural key: it is what
+    /// per-game settings, saves, and trophy data are all filed under.
+    public var id: String { titleID }
+}

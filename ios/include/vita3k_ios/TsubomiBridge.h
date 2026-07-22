@@ -52,6 +52,40 @@ NS_SWIFT_NAME(EmulatorSettings)
 
 @end
 
+/// One installed title, as the library shows it.
+///
+/// Unlike the trophy rows, the metadata here is exposed as separate formatted
+/// fields rather than one pre-composed string: the library's display toggles
+/// (title IDs, version, size) decide which lines appear, and SwiftUI composes
+/// them so a toggle change re-renders without going back through the core.
+///
+/// Swift's Identifiable conformance is added in BridgeIdentifiable.swift.
+NS_SWIFT_NAME(GameEntry)
+@interface TsubomiGameEntry : NSObject
+/// PCSG00291-style identifier; the library's natural key.
+@property(nonatomic, readonly, copy) NSString *titleID;
+/// The user's rename override when set, otherwise the title from the package.
+@property(nonatomic, readonly, copy) NSString *displayTitle;
+/// Cover art path — the custom cover when one has been set, else the packaged
+/// icon. Empty when neither exists.
+@property(nonatomic, readonly, copy) NSString *iconPath;
+/// "v1.01", or "Unknown version".
+@property(nonatomic, readonly, copy) NSString *versionText;
+/// "3h 12m", "<1m", or "0m".
+@property(nonatomic, readonly, copy) NSString *playedTimeText;
+/// A localized short date, or "Never played".
+@property(nonatomic, readonly, copy) NSString *lastPlayedText;
+/// Formatted with NSByteCountFormatter, e.g. "3.2 GB".
+@property(nonatomic, readonly, copy) NSString *sizeText;
+/// 0 total means the title ships no trophy data.
+@property(nonatomic, readonly) NSInteger trophiesUnlocked;
+@property(nonatomic, readonly) NSInteger trophiesTotal;
+/// True when the user has saved per-game setting overrides for this title.
+@property(nonatomic, readonly) BOOL hasSettingsOverrides;
+/// True when the user has replaced the cover art, which enables re-cropping.
+@property(nonatomic, readonly) BOOL hasCustomCover;
+@end
+
 /// One trophy row, already localized and formatted for display. The grade,
 /// hidden-trophy masking, and unlock-date wording are resolved on the
 /// Objective-C++ side so the SwiftUI layer only lays out strings.
@@ -121,6 +155,64 @@ NS_SWIFT_NAME(Bridge)
 
 /// Records that onboarding has been completed, so it is never shown again.
 + (void)markOnboardingComplete;
+
+#pragma mark - Library actions
+
+/// Boot a title. The caller is responsible for having checked that firmware is
+/// installed and JIT is attached; the library gates on both.
++ (void)launchTitle:(NSString *)titleID NS_SWIFT_NAME(launch(titleID:));
+
+/// Ask the core to rescan installed titles.
++ (void)refreshLibrary;
+
+/// Re-derive the library entries from the core's last snapshot. Used after a
+/// frontend-only change (a rename) that the core has no new data for.
++ (NSArray<TsubomiGameEntry *> *)libraryEntries;
+
+/// Frontend-only rename. An empty string clears the override so the packaged
+/// title comes back.
++ (void)setDisplayTitle:(NSString *)title forTitle:(NSString *)titleID
+    NS_SWIFT_NAME(setDisplayTitle(_:forTitle:));
+
+/// Remove the installed game, its update and DLC. Saves, licenses and trophy
+/// progress are kept so a reinstall picks them back up.
++ (void)deleteTitle:(NSString *)titleID NS_SWIFT_NAME(delete(titleID:));
+
+/// Load and show this title's trophies.
++ (void)requestTrophiesForTitle:(NSString *)titleID NS_SWIFT_NAME(requestTrophies(titleID:));
+
+/// Document pickers. Each returns immediately; results arrive as a status
+/// toast or an alert.
++ (void)presentGameImportPicker;
++ (void)presentLicenseImportPicker;
++ (void)presentSaveImportPickerForTitle:(NSString *)titleID
+    NS_SWIFT_NAME(presentSaveImportPicker(titleID:));
++ (void)exportSaveForTitle:(NSString *)titleID NS_SWIFT_NAME(exportSave(titleID:));
+
+/// Photo picker for replacing a title's cover art, and the crop editor for a
+/// cover that has already been chosen.
++ (void)presentCoverPickerForTitle:(NSString *)titleID
+    NS_SWIFT_NAME(presentCoverPicker(titleID:));
++ (void)presentCoverCropForTitle:(NSString *)titleID
+    NS_SWIFT_NAME(presentCoverCrop(titleID:));
+
+/// Shows the graphics-help explainer from the library header.
++ (void)presentGraphicsHelp;
+
+/// Explains that a JIT-enabling debugger must be attached before a game can
+/// boot. Shown instead of launching when JIT is unavailable.
++ (void)presentJITRequiredAlert;
+
+/// Opens the global settings sheet from the library header.
++ (void)presentGlobalSettings;
+
+/// Opens the per-game settings sheet.
++ (void)presentSettingsForTitle:(NSString *)titleID displayName:(NSString *)displayName
+    NS_SWIFT_NAME(presentSettings(forTitle:displayName:));
+
+/// Shown when the user tries to import a game before firmware is installed.
+/// Returns NO and presents an explanatory alert when firmware is missing.
++ (BOOL)firmwareReadyOrPresentAlert;
 
 /// Opens the virtual on-screen controller editor (opacity, scale, layout,
 /// visibility, physical-pad auto-hide). Still a UIKit screen.
