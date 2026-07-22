@@ -46,27 +46,23 @@ struct OnboardingView: View {
                 """,
             requirement: nil
         ),
+        // Titles name what the user is installing rather than the filename;
+        // the hint still says which file to pick.
         Page(
             symbol: "shippingbox",
-            title: "Install PREINSTALL.PUP",
-            body: """
-                Choose the official PREINSTALL.PUP from your own Vita firmware files. \
-                This installs the preinstalled system content required by games.
-                """,
+            title: "Install Pre-Install Firmware",
+            body: "Choose the official pre-install firmware PUP.",
             requirement: .preinstalled
         ),
         Page(
             symbol: "textformat",
-            title: "Install FONTPKG.PUP",
-            body: """
-                Choose the official FONTPKG.PUP. This installs the Vita system fonts used \
-                by games and the emulator.
-                """,
+            title: "Install Font Firmware",
+            body: "Choose the official font package PUP.",
             requirement: .fontPackage
         ),
         Page(
             symbol: "gearshape.2",
-            title: "Install PSVUPDAT.PUP",
+            title: "Install Firmware",
             body: "Choose the official PSVUPDAT.PUP. This installs the main Vita system firmware.",
             requirement: .mainFirmware
         ),
@@ -91,72 +87,81 @@ struct OnboardingView: View {
     }
 
     var body: some View {
-        ZStack {
-            // Flat adaptive background: black in dark mode, white in light.
-            Color(.systemBackground).ignoresSafeArea()
-
-            card
-                .frame(maxWidth: isCompact ? 400 : 360)
-                .padding(.horizontal, isCompact ? 40 : 24)
+        // No card. Apple's own first-run flows put the content on the plain
+        // background with the actions pinned to the bottom edge; a material
+        // panel over an opaque background is an invisible rectangle that only
+        // costs vertical space, which is what left the screen mostly empty.
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            pageContent
+            Spacer(minLength: 0)
+            actions
         }
+        .padding(.horizontal, isCompact ? 60 : 32)
+        .padding(.bottom, isCompact ? 16 : 32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground).ignoresSafeArea())
         // Forward-only: there is no back affordance, and the flow cannot be
         // dismissed interactively.
         .interactiveDismissDisabled()
     }
 
-    private var card: some View {
-        VStack(spacing: isCompact ? 12 : 18) {
+    private var pageContent: some View {
+        VStack(spacing: isCompact ? 10 : 16) {
             if pageIndex > 0 {
                 Image(systemName: page.symbol)
-                    .font(.system(size: isCompact ? 34 : 44))
-                    .foregroundStyle(.cyan)
+                    .font(.system(size: isCompact ? 44 : 60))
+                    .foregroundStyle(.tint)
+                    // Symbols are how the user perceives the page changing;
+                    // a bounce on arrival reads as the step advancing.
+                    .symbolEffect(.bounce, value: pageIndex)
                     .accessibilityHidden(true)
             }
 
             Text(page.title)
-                .font(isCompact ? .title2 : .title)
+                .font(isCompact ? .title2 : .largeTitle)
                 .fontWeight(.bold)
                 .multilineTextAlignment(.center)
 
             if !page.body.isEmpty {
-                // Scrolls rather than truncating, which is what kept breaking
-                // on short landscape phones at large Dynamic Type sizes.
-                ScrollView {
-                    Text(page.body)
-                        .font(isCompact ? .footnote : .subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                }
-                .scrollBounceBehavior(.basedOnSize)
+                Text(page.body)
+                    .font(isCompact ? .footnote : .body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    // Natural height: no ScrollView, which is greedy and was
+                    // what stretched this down the screen.
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if page.requirement != nil && requirementSatisfied {
                 Label("Installed", systemImage: "checkmark.circle.fill")
-                    .font(.footnote)
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(.green)
-                    .transition(.opacity)
+                    .symbolEffect(.bounce, value: requirementSatisfied)
+                    .transition(.scale.combined(with: .opacity))
             }
-
-            actions
         }
-        .padding(isCompact ? 20 : 28)
-        .frame(maxWidth: .infinity)
-        .background(.regularMaterial, in: .rect(cornerRadius: 28, style: .continuous))
-        // Page changes cross-fade; the UIKit version slid and sprang the stack,
-        // but an animation the user cannot skip on a mandatory flow is friction.
-        .animation(.snappy(duration: 0.25), value: pageIndex)
+        // Pages slide in from the trailing edge, matching a forward-only flow.
+        .id(pageIndex)
+        .transition(.asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .move(edge: .leading).combined(with: .opacity)
+        ))
+        .animation(.snappy(duration: 0.3), value: pageIndex)
         .animation(.snappy(duration: 0.25), value: requirementSatisfied)
     }
 
     @ViewBuilder
     private var actions: some View {
-        VStack(spacing: 10) {
+        // One prominent action per page. Where a page has both, "Choose" is
+        // the primary and "Next" steps back to plain glass, so exactly one
+        // element on screen carries the tint.
+        VStack(spacing: 12) {
             if page.requirement != nil {
-                Button("Choose PUP") {
+                Button("Choose Firmware File") {
                     Bridge.presentFirmwareImportPicker()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
             }
 
             if isLastPage {
@@ -164,20 +169,44 @@ struct OnboardingView: View {
                     Bridge.markOnboardingComplete()
                     onFinish()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 // The last page still gates on all three packages: a user who
                 // somehow reached it without them must not get into the library.
                 .disabled(!firmware.allPackagesReady)
+            } else if page.requirement == nil {
+                // No firmware button on this page, so Next is the primary.
+                Button("Next") { pageIndex += 1 }
+                    .buttonStyle(.glassProminent)
             } else {
-                Button("Next") {
-                    pageIndex += 1
-                }
-                .buttonStyle(.bordered)
-                .disabled(!requirementSatisfied)
+                // Plain glass: "Choose Firmware File" above is the primary,
+                // and only one element per screen should carry the tint.
+                Button("Next") { pageIndex += 1 }
+                    .buttonStyle(.glass)
+                    .disabled(!requirementSatisfied)
+            }
+
+            progressDots
+        }
+        .controlSize(.large)
+        .frame(maxWidth: .infinity)
+        .animation(.snappy(duration: 0.25), value: requirementSatisfied)
+    }
+
+    /// Page indicator. Forward-only, so the dots are a progress readout rather
+    /// than a control - they are not tappable and are hidden from VoiceOver in
+    /// favour of the announcement below.
+    private var progressDots: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<Self.pages.count, id: \.self) { index in
+                Capsule()
+                    .fill(index == pageIndex ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary))
+                    .frame(width: index == pageIndex ? 20 : 6, height: 6)
             }
         }
-        .controlSize(isCompact ? .regular : .large)
-        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
+        .animation(.snappy(duration: 0.3), value: pageIndex)
+        .accessibilityElement()
+        .accessibilityLabel("Step \(pageIndex + 1) of \(Self.pages.count)")
     }
 
     // MARK: - Page model

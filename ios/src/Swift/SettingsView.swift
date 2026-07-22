@@ -93,17 +93,6 @@ struct SettingsView: View {
             }
         } header: {
             Text("Graphics")
-        } footer: {
-            // One footer for the section rather than a caption under every row:
-            // grouped-list footers are where explanatory text belongs, and it
-            // keeps the rows scannable.
-            Text("""
-                Higher resolutions are sharper but increase GPU load. \
-                High accuracy uses slower, more accurate render paths — try it if a game's graphics look broken. \
-                Surface sync helps when lighting appears white or missing. \
-                Double buffer can complete missing effects, but garbles character models in some games, \
-                including Persona 4 Golden; leave it off unless a game needs it.
-                """)
         }
     }
 

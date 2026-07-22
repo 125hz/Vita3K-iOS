@@ -43,6 +43,13 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.25.0", notes: [
+            "The game library is now SwiftUI. Grid, list and the landscape cover carousel are rebuilt on system components, so scrolling, context menus and rotation all behave the way they do elsewhere in iOS.",
+            "Fixed the carousel opening with every cover at full brightness — the games beside the selected one are now dimmed immediately instead of only after the first scroll.",
+            "Game controller navigation is rebuilt: the D-pad moves a focus ring through the library, Cross launches, Triangle opens the game's actions, Circle clears the ring.",
+            "The trophy count in the games list is now aligned with the text beside it.",
+            "The firmware version no longer sits in the top-right of the library — it lives in Settings › About, and the space goes to your games.",
+        ]),
         Release(version: "0.24.0", notes: [
             """
             Tsubomi now requires iOS 26. The interface is built around Liquid Glass, and supporting \

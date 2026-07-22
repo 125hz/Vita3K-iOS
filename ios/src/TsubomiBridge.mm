@@ -256,6 +256,10 @@ id bridge_trophies(const Vita3KIOSTrophyCollection &collection) {
     return [[TsubomiTrophyCollection alloc] initWithCollection:collection];
 }
 
+id bridge_settings() {
+    return [[TsubomiSettings alloc] initWithCoreSettings:current_global_settings()];
+}
+
 id bridge_games() {
     const auto games = current_games();
     NSMutableArray<TsubomiGameEntry *> *rows = [NSMutableArray arrayWithCapacity:games.size()];

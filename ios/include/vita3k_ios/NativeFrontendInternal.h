@@ -73,6 +73,10 @@ std::optional<Vita3KIOSGameEntry> game_for_title(NSString *title_id);
 // NSArray<TsubomiGameEntry *> *, declared as id to keep this header C++-safe.
 id bridge_games();
 
+// Bridged copy of the core's last settings snapshot. Returns
+// TsubomiSettings *, declared as id to keep this header C++-safe.
+id bridge_settings();
+
 // Document/photo pickers owned by NativeFrontend.mm.
 void present_game_picker();
 void present_license_import_picker();

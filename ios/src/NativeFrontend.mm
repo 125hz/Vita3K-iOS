@@ -118,87 +118,10 @@ NSString *display_title(NSString *identifier, NSString *original) {
     return override.length ? override : original;
 }
 
-// Whether library cells show the PCSG00291-style title id. Defaults ON.
-BOOL show_title_ids() {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    return [defaults objectForKey:@"tsubomi.showTitleIds"] ? [defaults boolForKey:@"tsubomi.showTitleIds"] : YES;
-}
-
-// Library metadata visibility toggles; both default ON.
-BOOL show_game_version() {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    return [defaults objectForKey:@"tsubomi.showVersion"] ? [defaults boolForKey:@"tsubomi.showVersion"] : YES;
-}
-
-BOOL show_game_size() {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    return [defaults objectForKey:@"tsubomi.showGameSize"] ? [defaults boolForKey:@"tsubomi.showGameSize"] : YES;
-}
-
-// Extra metadata lines under the played-time line (version and size get their
-// own lines; the trophy badge rides on the played line).
-NSInteger metadata_line_count() {
-    return 1 + (show_game_version() ? 1 : 0) + (show_game_size() ? 1 : 0);
-}
-
-NSString *played_time_text(const Vita3KIOSGameEntry &game) {
-    const long long minutes = MAX(0, game.time_played_seconds) / 60;
-    return game.time_played_seconds > 0 && minutes == 0
-        ? @"<1m"
-        : minutes >= 60
-        ? [NSString stringWithFormat:@"%lldh %lldm", minutes / 60, minutes % 60]
-        : [NSString stringWithFormat:@"%lldm", minutes];
-}
-
-NSString *last_played_text(const Vita3KIOSGameEntry &game) {
-    if (game.last_played_timestamp <= 0)
-        return @"Never played";
-    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-    formatter.dateStyle = NSDateFormatterShortStyle;
-    formatter.timeStyle = NSDateFormatterShortStyle;
-    return [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:game.last_played_timestamp]];
-}
-
-NSString *game_size_text(const Vita3KIOSGameEntry &game) {
-    NSByteCountFormatter *bytes = [[NSByteCountFormatter alloc] init];
-    bytes.countStyle = NSByteCountFormatterCountStyleFile;
-    return [bytes stringFromByteCount:(long long)game.size_bytes];
-}
-
-// Multi-line metadata: optional "v1.01" line, then "played · last [🏆 n/m]",
-// then an optional size line — matching the library settings toggles.
-NSAttributedString *game_metadata(const Vita3KIOSGameEntry &game) {
-    NSMutableAttributedString *text = [[NSMutableAttributedString alloc] init];
-    NSDictionary *plain = @{
-        NSFontAttributeName: [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1],
-        NSForegroundColorAttributeName: UIColor.secondaryLabelColor,
-    };
-    auto append = [&](NSString *line) {
-        if (text.length)
-            [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:plain]];
-        [text appendAttributedString:[[NSAttributedString alloc] initWithString:line attributes:plain]];
-    };
-    if (show_game_version()) {
-        NSString *versionText = [NSString stringWithUTF8String:game.version.c_str()];
-        append(game.version.empty() || !versionText ? @"Unknown version" : [@"v" stringByAppendingString:versionText]);
-    }
-    append([NSString stringWithFormat:@"%@  ·  %@", played_time_text(game), last_played_text(game)]);
-    if (game.trophies_total > 0) {
-        [text appendAttributedString:[[NSAttributedString alloc] initWithString:@"  " attributes:plain]];
-        NSTextAttachment *trophy = [[NSTextAttachment alloc] init];
-        UIFont *font = plain[NSFontAttributeName];
-        trophy.image = [[UIImage systemImageNamed:@"trophy.fill"]
-            imageWithTintColor:UIColor.systemYellowColor renderingMode:UIImageRenderingModeAlwaysOriginal];
-        trophy.bounds = CGRectMake(0, font.descender, font.capHeight * 1.15, font.capHeight * 1.15);
-        [text appendAttributedString:[NSAttributedString attributedStringWithAttachment:trophy]];
-        [text appendAttributedString:[[NSAttributedString alloc]
-            initWithString:[NSString stringWithFormat:@" %d/%d", game.trophies_unlocked, game.trophies_total]
-                attributes:plain]];
-    }
-    if (show_game_size())
-        append(game_size_text(game));
-    return text;
-}
+// The library metadata visibility toggles (title IDs, version, size) are read
+// directly by the SwiftUI cells through @AppStorage - see DefaultsKey in
+// DefaultsToggle.swift, which pins the same keys and the same default-ON
+// behaviour. Nothing on this side reads them any more.
 
 // Untinted Regular glass. Apple's guidance is to tint the *primary action*
 // only — a global wash applied to every surface flattens the hierarchy and
@@ -239,24 +162,6 @@ UIVisualEffect *glass_effect_tinted(UIColor *tint, const BOOL interactive = NO) 
 void round_continuous(UIView *view, const CGFloat radius) {
     view.layer.cornerRadius = radius;
     view.layer.cornerCurve = kCACornerCurveContinuous;
-}
-
-// Plain toolbar glyph, no material behind it: header controls read as system
-// bar buttons and adapt to light/dark through labelColor.
-UIButton *symbol_button(NSString *symbol, NSString *fallback, NSString *accessibility) {
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    button.frame = CGRectMake(0, 0, 40, 40);
-    UIImage *image = [UIImage systemImageNamed:symbol];
-    if (image) {
-        [button setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:19 weight:UIImageSymbolWeightMedium]
-                              forImageInState:UIControlStateNormal];
-        [button setImage:image forState:UIControlStateNormal];
-    } else {
-        [button setTitle:fallback forState:UIControlStateNormal];
-    }
-    button.tintColor = UIColor.labelColor;
-    button.accessibilityLabel = accessibility;
-    return button;
 }
 
 // ---- Cover art cache --------------------------------------------------------
@@ -775,1350 +680,18 @@ static void present_cover_picker(NSString *titleId) {
     [root presentViewController:picker animated:YES completion:nil];
 }
 
-@interface Vita3KGameCell : UICollectionViewCell
-// Content layer, so a fill and not glass: Liquid Glass belongs to the
-// navigation layer (header, HUD, controls, menus). A glass card per cell also
-// meant one live backdrop per visible row, which is what made grid scrolling
-// expensive.
-@property(nonatomic, strong) UIView *card;
-@property(nonatomic, strong) UIImageView *icon;
-@property(nonatomic, strong) UILabel *titleLabel;
-@property(nonatomic, strong) UILabel *identifierLabel;
-@property(nonatomic, strong) UILabel *metadataLabel;
-@property(nonatomic, strong) UIView *separator;
-@property(nonatomic, copy) NSString *iconPath;
-@property(nonatomic) BOOL listMode;
-// Landscape card view: a centered cover-flow item — bare cover art with the
-// title and play info centered beneath it, no glass card.
-@property(nonatomic) BOOL carouselMode;
-- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSAttributedString *)metadata
-              iconPath:(NSString *)iconPath listMode:(BOOL)listMode;
-@end
 
-@implementation Vita3KGameCell
+// The SwiftUI library (TsubomiLibraryHost). Retained here because only its
+// view is installed in the hierarchy; its content comes from LibraryState,
+// which the core pushes into through TsubomiLibraryStateBridge.
+static UIViewController *g_library_controller = nil;
+// Onboarding is added over the library's view, so it is retained alongside it.
+static UIViewController *g_onboarding_controller = nil;
 
-- (instancetype)initWithFrame:(CGRect)frame {
-    self = [super initWithFrame:frame];
-    if (!self)
-        return nil;
-    self.card = [[UIView alloc] initWithFrame:self.contentView.bounds];
-    self.card.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.card.backgroundColor = UIColor.secondarySystemGroupedBackgroundColor;
-    round_continuous(self.card, 26);
-    self.card.clipsToBounds = YES;
-    [self.contentView addSubview:self.card];
-
-    self.icon = [[UIImageView alloc] init];
-    self.icon.contentMode = UIViewContentModeScaleAspectFill;
-    self.icon.clipsToBounds = YES;
-    round_continuous(self.icon, 18);
-    [self.card addSubview:self.icon];
-
-    self.titleLabel = [[UILabel alloc] init];
-    self.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-    self.titleLabel.textColor = UIColor.labelColor;
-    self.titleLabel.numberOfLines = 2;
-    [self.card addSubview:self.titleLabel];
-
-    self.identifierLabel = [[UILabel alloc] init];
-    self.identifierLabel.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightMedium];
-    self.identifierLabel.textColor = UIColor.secondaryLabelColor;
-    [self.card addSubview:self.identifierLabel];
-    self.metadataLabel = [[UILabel alloc] init];
-    self.metadataLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-    self.metadataLabel.textColor = UIColor.secondaryLabelColor;
-    self.metadataLabel.tintColor = UIColor.systemYellowColor;
-    self.metadataLabel.tintAdjustmentMode = UIViewTintAdjustmentModeNormal;
-    self.metadataLabel.numberOfLines = 0;
-    [self.card addSubview:self.metadataLabel];
-    self.separator = [[UIView alloc] init];
-    self.separator.backgroundColor = UIColor.separatorColor;
-    [self.card addSubview:self.separator];
-    return self;
+// Convenience for the many call sites that only want the library's view.
+static UIView *library_view() {
+    return g_library_controller.view;
 }
-
-// Shared with the layout size calculation in Vita3KLibraryView so cells and
-// their flow-layout heights always agree with the metadata toggles.
-CGFloat library_metadata_height() {
-    return metadata_line_count() * 16 + 2;
-}
-
-CGFloat library_list_row_height() {
-    return MAX(64, 6 + 24 + (show_title_ids() ? 17 : 0) + library_metadata_height() + 10);
-}
-
-CGFloat library_card_label_height() {
-    return 7 + 40 + (show_title_ids() ? 17 : 0) + library_metadata_height() + 10;
-}
-
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    const CGFloat inset = 12;
-    if (self.carouselMode) {
-        const CGFloat side = CGRectGetWidth(self.bounds);
-        self.icon.frame = CGRectMake(0, 0, side, side);
-        self.titleLabel.frame = CGRectMake(0, side + 10, side, 24);
-        self.identifierLabel.frame = CGRectZero;
-        self.metadataLabel.frame = CGRectMake(0, CGRectGetMaxY(self.titleLabel.frame) + 2, side, 18);
-        self.separator.frame = CGRectZero;
-        return;
-    }
-    if (self.listMode) {
-        const CGFloat iconSize = MIN(72, MAX(1, CGRectGetHeight(self.bounds) - 20));
-        self.icon.frame = CGRectMake(10, (CGRectGetHeight(self.bounds) - iconSize) / 2, iconSize, iconSize);
-        const CGFloat textX = CGRectGetMaxX(self.icon.frame) + 13;
-        const CGFloat textWidth = MAX(1, CGRectGetWidth(self.bounds) - textX - inset);
-        self.titleLabel.frame = CGRectMake(textX, 6, textWidth, 24);
-        self.identifierLabel.frame = CGRectMake(textX, CGRectGetMaxY(self.titleLabel.frame), textWidth, 17);
-        self.metadataLabel.frame = CGRectMake(textX,
-            (self.identifierLabel.hidden ? CGRectGetMaxY(self.titleLabel.frame) : CGRectGetMaxY(self.identifierLabel.frame)) + 2,
-            textWidth, library_metadata_height());
-        self.separator.frame = CGRectMake(textX, CGRectGetHeight(self.bounds) - 1,
-            MAX(1, CGRectGetWidth(self.bounds) - textX), 1);
-    } else {
-        const CGFloat labelHeight = library_card_label_height();
-        self.icon.frame = CGRectMake(inset, inset, CGRectGetWidth(self.bounds) - inset * 2,
-            MAX(1, CGRectGetHeight(self.bounds) - labelHeight - inset * 2));
-        self.titleLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.icon.frame) + 7,
-            CGRectGetWidth(self.bounds) - inset * 2, 40);
-        self.identifierLabel.frame = CGRectMake(inset, CGRectGetMaxY(self.titleLabel.frame),
-            CGRectGetWidth(self.bounds) - inset * 2, 17);
-        self.metadataLabel.frame = CGRectMake(inset,
-            (self.identifierLabel.hidden ? CGRectGetMaxY(self.titleLabel.frame) : CGRectGetMaxY(self.identifierLabel.frame)) + 2,
-            CGRectGetWidth(self.bounds) - inset * 2, library_metadata_height());
-        self.separator.frame = CGRectZero;
-    }
-}
-
-- (void)setHighlighted:(BOOL)highlighted {
-    [super setHighlighted:highlighted];
-    if (self.carouselMode)
-        return; // the carousel owns transform and alpha
-    // BeginFromCurrentState so a fast tap-tap-tap picks up mid-flight instead
-    // of queueing conflicting animations (which left cells stuck dimmed), and
-    // AllowUserInteraction so the 160ms press animation never eats a tap.
-    [UIView animateWithDuration:0.16
-                          delay:0
-                        options:UIViewAnimationOptionBeginFromCurrentState
-                                | UIViewAnimationOptionAllowUserInteraction
-                                | UIViewAnimationOptionCurveEaseOut
-                     animations:^{
-        self.transform = highlighted ? CGAffineTransformMakeScale(0.96, 0.96) : CGAffineTransformIdentity;
-        self.alpha = highlighted ? 0.78 : 1.0;
-    }
-                     completion:nil];
-}
-
-- (void)configureTitle:(NSString *)title identifier:(NSString *)identifier metadata:(NSAttributedString *)metadata
-              iconPath:(NSString *)iconPath listMode:(BOOL)listMode {
-    self.listMode = listMode;
-    self.titleLabel.text = title;
-    self.identifierLabel.text = identifier;
-    self.metadataLabel.attributedText = metadata;
-    self.identifierLabel.hidden = !show_title_ids() || self.carouselMode;
-    self.separator.hidden = !listMode;
-    // List rows sit directly on the background like a system list: no fill, no
-    // forced palette — every color adapts to light/dark mode. Carousel items
-    // are bare covers. Grid cards get the grouped-content fill.
-    const BOOL bare = listMode || self.carouselMode;
-    self.card.backgroundColor = bare ? UIColor.clearColor : UIColor.secondarySystemGroupedBackgroundColor;
-    round_continuous(self.card, bare ? 0 : 26);
-    round_continuous(self.icon, listMode ? 8 : 18);
-    self.titleLabel.numberOfLines = (listMode || self.carouselMode) ? 1 : 2;
-    self.titleLabel.textAlignment = self.carouselMode ? NSTextAlignmentCenter : NSTextAlignmentLeft;
-    self.metadataLabel.textAlignment = self.carouselMode ? NSTextAlignmentCenter : NSTextAlignmentLeft;
-    if (!self.carouselMode) {
-        self.transform = CGAffineTransformIdentity;
-        self.alpha = 1.0;
-    }
-    self.titleLabel.textColor = UIColor.labelColor;
-    self.identifierLabel.textColor = UIColor.secondaryLabelColor;
-    self.metadataLabel.textColor = UIColor.secondaryLabelColor;
-    self.icon.tintColor = UIColor.systemPinkColor;
-    self.icon.backgroundColor = UIColor.secondarySystemFillColor;
-    // Remember what this cell is showing so an in-flight decode that lands
-    // after the cell has been reused for another game is discarded.
-    self.iconPath = iconPath;
-    __weak Vita3KGameCell *weakSelf = self;
-    NSString *wanted = [iconPath copy];
-    UIImage *image = cover_image(iconPath, ^(UIImage *decoded) {
-        Vita3KGameCell *cell = weakSelf;
-        // A nil `decoded` means the file could not be decoded; keep the
-        // placeholder that was set below rather than blanking the cell.
-        if (!decoded || !cell || ![cell.iconPath isEqualToString:wanted])
-            return;
-        // Crossfade rather than snap: a decode landing a frame or two after the
-        // cell appears should read as the art settling in, not as a flicker.
-        [UIView transitionWithView:cell.icon
-                          duration:0.2
-                           options:UIViewAnimationOptionTransitionCrossDissolve
-                        animations:^{ cell.icon.image = decoded; }
-                        completion:nil];
-    });
-    self.icon.image = image ?: [UIImage systemImageNamed:@"gamecontroller.fill"];
-    [self setNeedsLayout];
-}
-
-@end
-
-
-
-// A pad-navigable stand-in for the cell context menu: real UIButtons in an
-// overlay card, so the controller focus system can drive it (UIAlertController
-// actions cannot be triggered programmatically).
-@interface Vita3KPadMenuView : UIView
-@property(nonatomic, strong) NSArray<NSDictionary *> *items;
-+ (void)presentInView:(UIView *)host title:(NSString *)title items:(NSArray<NSDictionary *> *)items;
-- (void)dismissMenu;
-@end
-
-@implementation Vita3KPadMenuView
-
-+ (void)presentInView:(UIView *)host title:(NSString *)title items:(NSArray<NSDictionary *> *)items {
-    Vita3KPadMenuView *menu = [[Vita3KPadMenuView alloc] initWithFrame:host.bounds];
-    menu.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    menu.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
-    menu.items = items;
-    [menu addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:menu action:@selector(backgroundTapped:)]];
-
-    UIView *card = [[UIView alloc] init];
-    card.translatesAutoresizingMaskIntoConstraints = NO;
-    card.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    round_continuous(card, 24);
-    card.clipsToBounds = YES;
-    [menu addSubview:card];
-
-    UIStackView *stack = [[UIStackView alloc] init];
-    stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 2;
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    [card addSubview:stack];
-
-    UILabel *header = [[UILabel alloc] init];
-    header.text = title;
-    header.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
-    header.textColor = UIColor.labelColor;
-    header.textAlignment = NSTextAlignmentCenter;
-    header.numberOfLines = 2;
-    [stack addArrangedSubview:header];
-    [stack setCustomSpacing:12 afterView:header];
-
-    NSUInteger index = 0;
-    for (NSDictionary *item in items) {
-        UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-        button.tag = (NSInteger)index++;
-        button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
-        button.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-        [button setTitle:[NSString stringWithFormat:@"  %@", item[@"title"]] forState:UIControlStateNormal];
-        NSString *symbol = item[@"symbol"];
-        if (symbol.length)
-            [button setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
-        const BOOL destructive = [item[@"destructive"] boolValue];
-        button.tintColor = destructive ? UIColor.systemRedColor : UIColor.labelColor;
-        [button setTitleColor:destructive ? UIColor.systemRedColor : UIColor.labelColor forState:UIControlStateNormal];
-        [button.heightAnchor constraintEqualToConstant:50].active = YES;
-        [button addTarget:menu action:@selector(itemTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [stack addArrangedSubview:button];
-    }
-    UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
-    cancel.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
-    cancel.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    [cancel setTitle:@"Cancel" forState:UIControlStateNormal];
-    [cancel.heightAnchor constraintEqualToConstant:50].active = YES;
-    [cancel addTarget:menu action:@selector(dismissMenu) forControlEvents:UIControlEventTouchUpInside];
-    [stack addArrangedSubview:cancel];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [card.centerXAnchor constraintEqualToAnchor:menu.centerXAnchor],
-        [card.centerYAnchor constraintEqualToAnchor:menu.centerYAnchor],
-        [card.widthAnchor constraintEqualToConstant:MIN(360, CGRectGetWidth(host.bounds) - 48)],
-        [stack.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:18],
-        [stack.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-18],
-        [stack.topAnchor constraintEqualToAnchor:card.topAnchor constant:18],
-        [stack.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-12],
-    ]];
-
-    menu.alpha = 0;
-    [host addSubview:menu];
-    [UIView animateWithDuration:0.18 animations:^{ menu.alpha = 1; }];
-}
-
-- (void)backgroundTapped:(UITapGestureRecognizer *)recognizer {
-    if (recognizer.state == UIGestureRecognizerStateEnded)
-        [self dismissMenu];
-}
-
-- (void)itemTapped:(UIButton *)sender {
-    if (sender.tag >= 0 && sender.tag < (NSInteger)self.items.count) {
-        dispatch_block_t handler = self.items[(NSUInteger)sender.tag][@"handler"];
-        if (handler)
-            handler();
-    }
-    [self dismissMenu];
-}
-
-- (void)dismissMenu {
-    [UIView animateWithDuration:0.18 animations:^{ self.alpha = 0; } completion:^(__unused BOOL finished) {
-        [self removeFromSuperview];
-    }];
-}
-
-@end
-
-
-
-@interface Vita3KLibraryView : UIView <UICollectionViewDataSource, UICollectionViewDelegateFlowLayout> {
-@public
-    std::vector<Vita3KIOSGameEntry> _games;
-    Vita3KIOSSettings _settings;
-    BOOL _jitAvailable;
-    BOOL _listMode;
-    // Landscape card view is a centered, infinitely-looping cover carousel.
-    BOOL _carouselActive;
-    BOOL _carouselNeedsCentering;
-    // Item index currently nearest the center, so a haptic fires once per
-    // cover the focus crosses. NSNotFound while no cover is focused, which
-    // also suppresses a spurious tick for the initial centering.
-    NSInteger _carouselFocusIndex;
-    CGFloat _lastCollectionWidth;
-}
-@property(nonatomic, strong) UICollectionView *collectionView;
-// Selection feedback is the pattern for a value moving under a detent (it is
-// what UIPickerView uses), rather than an impact, which reads as a collision.
-// Created lazily and released when the carousel goes away so the Taptic Engine
-// is never kept warm while the user is not scrolling covers.
-@property(nonatomic, strong) UISelectionFeedbackGenerator *carouselFeedback;
-@property(nonatomic, strong) UILabel *emptyLabel;
-@property(nonatomic, strong) UILabel *statusLabel;
-@property(nonatomic, strong) UIVisualEffectView *statusGlass;
-@property(nonatomic, strong) UIView *busyOverlay;
-@property(nonatomic, strong) UIVisualEffectView *headerGlass;
-@property(nonatomic, strong) CAGradientLayer *backgroundGradient;
-@property(nonatomic, strong) UIVisualEffectView *firmwareGlass;
-@property(nonatomic, strong) UILabel *firmwareLabel;
-@property(nonatomic, strong) UIVisualEffectView *jitBanner;
-@property(nonatomic, strong) UILabel *jitBannerLabel;
-// SwiftUI onboarding (TsubomiOnboardingHost). The controller is retained here
-// because only its view is in the hierarchy; without this it would deallocate
-// immediately and the flow would stop updating.
-@property(nonatomic, strong) UIViewController *onboardingController;
-- (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings;
-- (void)setJitAvailable:(BOOL)available;
-- (void)presentPadActionsForItem:(NSInteger)item;
-- (BOOL)jitAvailable;
-- (BOOL)firmwareReadyOrPresentAlert;
-@end
-
-@implementation Vita3KLibraryView
-
-- (instancetype)initWithFrame:(CGRect)frame {
-    self = [super initWithFrame:frame];
-    if (!self)
-        return nil;
-    _jitAvailable = YES;
-    _carouselFocusIndex = NSNotFound;
-    // List view is the default presentation (key absent = list).
-    NSUserDefaults *viewDefaults = NSUserDefaults.standardUserDefaults;
-    _listMode = [viewDefaults objectForKey:@"tsubomi.libraryListMode"]
-        ? [viewDefaults boolForKey:@"tsubomi.libraryListMode"]
-        : YES;
-    // Enable battery monitoring once (not per perf-overlay tick).
-    UIDevice.currentDevice.batteryMonitoringEnabled = YES;
-    self.backgroundColor = UIColor.systemBackgroundColor;
-    self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    self.backgroundGradient = [CAGradientLayer layer];
-    self.backgroundGradient.startPoint = CGPointMake(0, 0);
-    self.backgroundGradient.endPoint = CGPointMake(1, 1);
-    [self.layer insertSublayer:self.backgroundGradient atIndex:0];
-    [self updateGradientColors];
-
-    // The library scrolls edge-to-edge underneath the header; this bar blurs
-    // whatever passes below the title/controls, exactly like a system
-    // navigation bar's scroll-edge appearance. It stays invisible while the
-    // content is at rest at the top.
-    // Glass, not a legacy chrome blur: mixing Liquid Glass with UIBlurEffect
-    // materials in one interface reads as two different design systems.
-    self.headerGlass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
-    self.headerGlass.alpha = 0;
-    [self addSubview:self.headerGlass];
-
-    UILabel *title = [[UILabel alloc] init];
-    title.text = @"Tsubomi";
-    title.font = [UIFont systemFontOfSize:32 weight:UIFontWeightBold];
-    title.textColor = UIColor.labelColor;
-    // Buttons share the title row; on narrow phones the title yields first.
-    title.adjustsFontSizeToFitWidth = YES;
-    title.minimumScaleFactor = 0.7;
-    title.tag = 101;
-    [self addSubview:title];
-
-    UIButton *refresh = symbol_button(@"arrow.clockwise", @"Refresh", @"Refresh game library");
-    refresh.tag = 102;
-    [refresh addTarget:self action:@selector(refresh) forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:refresh];
-    UIButton *settings = symbol_button(@"gearshape.fill", @"Settings", @"Settings");
-    settings.tag = 103;
-    [settings addTarget:self action:@selector(settings) forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:settings];
-    UIButton *help = symbol_button(@"questionmark.circle", @"Help", @"Graphics help");
-    help.tag = 106;
-    [help addTarget:self action:@selector(showHelp) forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:help];
-    UIButton *importButton = symbol_button(@"plus", @"Add", @"Import game or firmware");
-    importButton.tag = 104;
-    // Attach the choices directly to the + button so iOS morphs the menu out
-    // of the glass control itself instead of sliding an action sheet up from
-    // the bottom of the screen.
-    __weak Vita3KLibraryView *weakSelf = self;
-    UIAction *importGame = [UIAction actionWithTitle:@"Import game (.vpk / .zip / .pkg)"
-        image:[UIImage systemImageNamed:@"arrow.down.doc"]
-        identifier:nil
-        handler:^(__unused UIAction *action) {
-            if ([weakSelf firmwareReadyOrPresentAlert])
-                present_import_picker(NO);
-        }];
-    UIAction *importFirmware = [UIAction actionWithTitle:@"Import firmware (.PUP)"
-        image:[UIImage systemImageNamed:@"cpu"]
-        identifier:nil
-        handler:^(__unused UIAction *action) { present_import_picker(YES); }];
-    UIAction *importLicense = [UIAction actionWithTitle:@"Import license (work.bin)"
-        image:[UIImage systemImageNamed:@"key.fill"]
-        identifier:nil
-        handler:^(__unused UIAction *action) { present_license_picker(); }];
-    importButton.menu = [UIMenu menuWithChildren:@[importGame, importLicense, importFirmware]];
-    importButton.showsMenuAsPrimaryAction = YES;
-    [self addSubview:importButton];
-    UIButton *viewMode = symbol_button(_listMode ? @"square.grid.2x2" : @"list.bullet", @"View", @"Switch library view");
-    viewMode.tag = 105;
-    [viewMode addTarget:self action:@selector(toggleViewMode:) forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:viewMode];
-
-    // Firmware version indicator: a plain label (no glass material).
-    self.firmwareGlass = [[UIVisualEffectView alloc] initWithEffect:nil];
-    self.firmwareGlass.layer.cornerRadius = 11;
-    self.firmwareGlass.clipsToBounds = YES;
-    self.firmwareGlass.hidden = YES;
-    self.firmwareLabel = [[UILabel alloc] init];
-    self.firmwareLabel.textColor = UIColor.secondaryLabelColor;
-    self.firmwareLabel.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightSemibold];
-    self.firmwareLabel.textAlignment = NSTextAlignmentCenter;
-    [self.firmwareGlass.contentView addSubview:self.firmwareLabel];
-    [self addSubview:self.firmwareGlass];
-
-    // Persistent notice shown when JIT is not enabled; games cannot boot.
-    // This is the one surface on the library screen that earns a tint: adaptive
-    // glass tinting is meant to mark a single urgent element, and a warning
-    // banner nobody can act around is exactly that.
-    self.jitBanner = [[UIVisualEffectView alloc]
-        initWithEffect:glass_effect_tinted([UIColor.systemYellowColor colorWithAlphaComponent:0.30])];
-    round_continuous(self.jitBanner, 16);
-    self.jitBanner.clipsToBounds = YES;
-    self.jitBanner.hidden = YES;
-    self.jitBannerLabel = [[UILabel alloc] init];
-    self.jitBannerLabel.text = @"JIT is not ready — open StikDebug, enable JIT, and keep it attached until Tsubomi finishes Preparing JIT.";
-    self.jitBannerLabel.textColor = UIColor.labelColor;
-    self.jitBannerLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    self.jitBannerLabel.numberOfLines = 0;
-    UIImageView *jitIcon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"exclamationmark.triangle.fill"]];
-    jitIcon.tintColor = UIColor.systemYellowColor;
-    jitIcon.tag = 201;
-    [self.jitBanner.contentView addSubview:jitIcon];
-    [self.jitBanner.contentView addSubview:self.jitBannerLabel];
-    [self addSubview:self.jitBanner];
-
-    UICollectionViewFlowLayout *layout = [[UICollectionViewFlowLayout alloc] init];
-    layout.minimumInteritemSpacing = 14;
-    layout.minimumLineSpacing = 18;
-    self.collectionView = [[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout];
-    self.collectionView.backgroundColor = UIColor.clearColor;
-    self.collectionView.dataSource = self;
-    self.collectionView.delegate = self;
-    self.collectionView.alwaysBounceVertical = YES;
-    // Full-bleed: the collection view covers the whole screen and the header
-    // floats above it; contentInset (set in layoutSubviews) keeps the resting
-    // position below the header while scrolled content slides underneath.
-    self.collectionView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
-    [self.collectionView registerClass:Vita3KGameCell.class forCellWithReuseIdentifier:@"game"];
-    [self.collectionView registerClass:UICollectionReusableView.class
-        forSupplementaryViewOfKind:UICollectionElementKindSectionFooter withReuseIdentifier:@"totals"];
-    [self insertSubview:self.collectionView belowSubview:self.headerGlass];
-
-    self.emptyLabel = [[UILabel alloc] init];
-    self.emptyLabel.text = @"No games yet\n\nTap + to import a game (.vpk/.zip/.pkg), or copy\nPC's Vita3K data into Documents/Tsubomi/vita";
-    self.emptyLabel.textColor = UIColor.secondaryLabelColor;
-    self.emptyLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle3];
-    self.emptyLabel.textAlignment = NSTextAlignmentCenter;
-    self.emptyLabel.numberOfLines = 0;
-    [self addSubview:self.emptyLabel];
-
-    // Transient toast ("Settings saved", "Game imported", …) in a glass
-    // capsule so the orange text stays readable over library content.
-    self.statusGlass = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
-    self.statusGlass.layer.cornerRadius = 14;
-    self.statusGlass.clipsToBounds = YES;
-    self.statusGlass.alpha = 0;
-    self.statusLabel = [[UILabel alloc] init];
-    self.statusLabel.textColor = UIColor.systemOrangeColor;
-    self.statusLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-    self.statusLabel.textAlignment = NSTextAlignmentCenter;
-    self.statusLabel.numberOfLines = 2;
-    [self.statusGlass.contentView addSubview:self.statusLabel];
-    [self addSubview:self.statusGlass];
-    return self;
-}
-
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    self.backgroundGradient.frame = self.bounds;
-    const UIEdgeInsets safe = self.safeAreaInsets;
-    UILabel *title = [self viewWithTag:101];
-    UIButton *refresh = [self viewWithTag:102];
-    UIButton *settings = [self viewWithTag:103];
-    UIButton *importButton = [self viewWithTag:104];
-    UIButton *viewMode = [self viewWithTag:105];
-    UIButton *help = [self viewWithTag:106];
-    const CGFloat usableWidth = CGRectGetWidth(self.bounds) - safe.left - safe.right;
-    const BOOL compactHeader = usableWidth < 600;
-    // Single navigation-bar-style row: large title on the left, plain glyph
-    // controls right-aligned on the same baseline.
-    const CGFloat rowY = safe.top + 8;
-    const CGFloat rowHeight = 44;
-    const CGFloat buttonSize = 40;
-    const CGFloat buttonY = rowY + (rowHeight - buttonSize) / 2;
-    settings.frame = CGRectMake(CGRectGetWidth(self.bounds) - safe.right - 14 - buttonSize, buttonY, buttonSize, buttonSize);
-    help.frame = CGRectMake(CGRectGetMinX(settings.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
-    refresh.frame = CGRectMake(CGRectGetMinX(help.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
-    importButton.frame = CGRectMake(CGRectGetMinX(refresh.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
-    viewMode.frame = CGRectMake(CGRectGetMinX(importButton.frame) - buttonSize - 2, buttonY, buttonSize, buttonSize);
-    title.frame = CGRectMake(safe.left + 20, rowY,
-        MAX(80, CGRectGetMinX(viewMode.frame) - safe.left - 30), rowHeight);
-
-    [self.firmwareLabel sizeToFit];
-    const CGFloat firmwareWidth = MIN(CGRectGetWidth(self.firmwareLabel.bounds) + 22, 200);
-    const CGFloat firmwareHeight = 22;
-    self.firmwareGlass.frame = CGRectMake(CGRectGetMaxX(settings.frame) - firmwareWidth,
-        CGRectGetMaxY(settings.frame) + 4, firmwareWidth, firmwareHeight);
-    self.firmwareLabel.frame = self.firmwareGlass.bounds;
-
-    CGFloat headerBottom = MAX(CGRectGetMaxY(title.frame), CGRectGetMaxY(settings.frame));
-    if (!self.firmwareGlass.hidden)
-        headerBottom = MAX(headerBottom, CGRectGetMaxY(self.firmwareGlass.frame));
-    // The status toast floats over the content edge; it must not reserve
-    // permanent header height. Size the capsule to its text.
-    const CGFloat statusMaxWidth = MAX(1, usableWidth - 40);
-    const CGSize statusText = [self.statusLabel sizeThatFits:CGSizeMake(statusMaxWidth - 28, CGFLOAT_MAX)];
-    const CGFloat statusWidth = MIN(statusMaxWidth, statusText.width + 28);
-    const CGFloat statusHeight = MAX(28, statusText.height + 12);
-    self.statusGlass.frame = CGRectMake(safe.left + (usableWidth - statusWidth) / 2,
-        headerBottom + 5, statusWidth, statusHeight);
-    self.statusLabel.frame = self.statusGlass.bounds;
-    CGFloat contentTop = headerBottom + 14;
-    if (!self.jitBanner.hidden) {
-        const CGFloat bannerX = safe.left + 18;
-        const CGFloat bannerWidth = CGRectGetWidth(self.bounds) - safe.left - safe.right - 36;
-        const CGFloat labelX = 48;
-        const CGFloat labelWidth = MAX(1, bannerWidth - labelX - 16);
-        const CGSize textSize = [self.jitBannerLabel sizeThatFits:CGSizeMake(labelWidth, CGFLOAT_MAX)];
-        const CGFloat bannerHeight = MAX(54, textSize.height + 24);
-        self.jitBanner.frame = CGRectMake(bannerX, contentTop, bannerWidth, bannerHeight);
-        UIImageView *jitIcon = [self.jitBanner.contentView viewWithTag:201];
-        jitIcon.frame = CGRectMake(16, (bannerHeight - 24) / 2, 24, 24);
-        self.jitBannerLabel.frame = CGRectMake(labelX, 12, labelWidth, bannerHeight - 24);
-        contentTop = CGRectGetMaxY(self.jitBanner.frame) + 10;
-    }
-
-    const CGFloat collectionInset = compactHeader ? 10 : 18;
-    // The header bar blurs everything that scrolls beneath the controls; it
-    // reaches just under the firmware badge (the status label floats over
-    // content when it appears).
-    self.headerGlass.frame = CGRectMake(0, 0, CGRectGetWidth(self.bounds), headerBottom + 8);
-    self.collectionView.frame = self.bounds;
-    // In carousel mode syncCarouselMode owns the insets; writing the grid
-    // insets first made every layout pass ping-pong them and stutter touch
-    // scrolling.
-    if (![self carouselShouldBeActive])
-        self.collectionView.contentInset = UIEdgeInsetsMake(contentTop, safe.left + collectionInset,
-            safe.bottom + 12, safe.right + collectionInset);
-    self.collectionView.verticalScrollIndicatorInsets = UIEdgeInsetsMake(headerBottom + 8, 0, safe.bottom, 0);
-    self.emptyLabel.frame = CGRectMake(safe.left + 40, contentTop + 40,
-        MAX(1, usableWidth - 80),
-        MAX(1, CGRectGetHeight(self.bounds) - contentTop - safe.bottom - 80));
-    const CGFloat width = CGRectGetWidth(self.collectionView.bounds)
-        - self.collectionView.contentInset.left - self.collectionView.contentInset.right;
-    if (fabs(width - _lastCollectionWidth) > 0.5) {
-        _lastCollectionWidth = width;
-        [self.collectionView.collectionViewLayout invalidateLayout];
-    }
-    [self syncCarouselMode:contentTop];
-    [self updateHeaderGlassVisibility];
-}
-
-// ---- Landscape cover carousel ----------------------------------------------
-
-// Loop the games list many times so scrolling feels endless in both
-// directions; indexes map back with modulo.
-static const NSInteger kCarouselRepeat = 400;
-
-- (BOOL)carouselShouldBeActive {
-    return !_listMode && !_games.empty()
-        && CGRectGetWidth(self.bounds) > CGRectGetHeight(self.bounds);
-}
-
-- (CGFloat)carouselCoverSide {
-    const UIEdgeInsets safe = self.safeAreaInsets;
-    const CGFloat availableHeight = CGRectGetHeight(self.bounds) - safe.top - safe.bottom - 170;
-    return MAX(120, MIN(availableHeight, CGRectGetWidth(self.bounds) * 0.34));
-}
-
-- (void)syncCarouselMode:(CGFloat)contentTop {
-    const BOOL shouldBeActive = [self carouselShouldBeActive];
-    UICollectionViewFlowLayout *layout = (UICollectionViewFlowLayout *)self.collectionView.collectionViewLayout;
-    if (shouldBeActive != _carouselActive) {
-        _carouselActive = shouldBeActive;
-        layout.scrollDirection = _carouselActive
-            ? UICollectionViewScrollDirectionHorizontal
-            : UICollectionViewScrollDirectionVertical;
-        // The carousel scrolls on one axis only; vertical bounce let the whole
-        // row drag up and down.
-        self.collectionView.alwaysBounceVertical = !_carouselActive;
-        self.collectionView.alwaysBounceHorizontal = _carouselActive;
-        self.collectionView.showsHorizontalScrollIndicator = NO;
-        self.collectionView.decelerationRate = _carouselActive
-            ? UIScrollViewDecelerationRateFast
-            : UIScrollViewDecelerationRateNormal;
-        _carouselNeedsCentering = _carouselActive;
-        // Entering: the centering below adopts the real focus silently.
-        // Leaving: drop the generator so nothing holds the Taptic Engine.
-        _carouselFocusIndex = NSNotFound;
-        if (!_carouselActive)
-            self.carouselFeedback = nil;
-        [layout invalidateLayout];
-        [self.collectionView reloadData];
-    }
-    if (_carouselActive) {
-        const CGFloat side = [self carouselCoverSide];
-        const UIEdgeInsets safe = self.safeAreaInsets;
-        // Center vertically in the space under the header; side insets center
-        // the focused cover horizontally.
-        const CGFloat itemHeight = side + 60;
-        const CGFloat verticalSpace = CGRectGetHeight(self.bounds) - contentTop - safe.bottom;
-        const CGFloat topInset = contentTop + MAX(0, (verticalSpace - itemHeight) / 2);
-        const CGFloat horizontalInset = MAX(0, (CGRectGetWidth(self.bounds) - side) / 2);
-        const UIEdgeInsets desired = UIEdgeInsetsMake(topInset, horizontalInset, safe.bottom, horizontalInset);
-        // Re-setting an identical inset mid-gesture stutters the scroll.
-        if (!UIEdgeInsetsEqualToEdgeInsets(self.collectionView.contentInset, desired))
-            self.collectionView.contentInset = desired;
-        if (_carouselNeedsCentering) {
-            _carouselNeedsCentering = NO;
-            [self.collectionView layoutIfNeeded];
-            const NSInteger middle = (kCarouselRepeat / 2) * static_cast<NSInteger>(_games.size());
-            [self.collectionView scrollToItemAtIndexPath:[NSIndexPath indexPathForItem:middle inSection:0]
-                                        atScrollPosition:UICollectionViewScrollPositionCenteredHorizontally
-                                                animated:NO];
-            // scrollToItem only sets contentOffset; the cells for the new
-            // offset are not dequeued (and -visibleCells does not include
-            // them) until the next layout pass. Without forcing that pass
-            // here, applyCarouselTransforms would scale and dim the cells
-            // from the *old* offset and the newly-arriving neighbours would
-            // stay full-size and undimmed until the first scroll.
-            [self.collectionView layoutIfNeeded];
-            [self applyCarouselTransforms];
-            _carouselFocusIndex = [self carouselCenteredItem];
-        }
-    }
-}
-
-- (CGFloat)carouselStride {
-    UICollectionViewFlowLayout *layout = (UICollectionViewFlowLayout *)self.collectionView.collectionViewLayout;
-    return [self carouselCoverSide] + layout.minimumLineSpacing;
-}
-
-// Which looped item currently sits nearest the horizontal center. Derived from
-// the content offset rather than from visibleCells so it stays correct during
-// deceleration and rubber-banding, when the cell for the incoming item may not
-// be on screen yet.
-- (NSInteger)carouselCenteredItem {
-    const CGFloat stride = [self carouselStride];
-    if (stride <= 0 || _games.empty())
-        return NSNotFound;
-    const CGFloat base = -self.collectionView.contentInset.left;
-    return lround((self.collectionView.contentOffset.x - base) / stride);
-}
-
-// One tick per cover the focus crosses, fired the moment the centered item
-// changes rather than when scrolling settles, so the feedback tracks the
-// covers moving under the thumb.
-- (void)updateCarouselFocusFeedback {
-    const NSInteger centered = [self carouselCenteredItem];
-    if (centered == NSNotFound || centered == _carouselFocusIndex)
-        return;
-    // NSNotFound means "no previous focus" (first layout, or the carousel was
-    // just entered) - adopt it silently instead of ticking for a move the user
-    // did not make.
-    const BOOL hadFocus = _carouselFocusIndex != NSNotFound;
-    _carouselFocusIndex = centered;
-    if (!hadFocus)
-        return;
-    // Usually already created and warm from -scrollViewWillBeginDragging; this
-    // also covers a controller-driven or programmatic scroll, which ticks too.
-    if (!self.carouselFeedback)
-        self.carouselFeedback = [[UISelectionFeedbackGenerator alloc] init];
-    [self.carouselFeedback selectionChanged];
-    // Re-prepare: the generator goes idle shortly after each event, and the
-    // next cover is usually only a few hundred milliseconds away.
-    [self.carouselFeedback prepare];
-}
-
-// Scale and dim covers by their distance from the horizontal center, the way
-// a music-library shuffle presents the focused album.
-- (void)applyCarouselTransforms {
-    if (!_carouselActive)
-        return;
-    const CGFloat centerX = self.collectionView.contentOffset.x + CGRectGetWidth(self.collectionView.bounds) / 2;
-    for (UICollectionViewCell *cell in self.collectionView.visibleCells) {
-        const CGFloat distance = fabs(cell.center.x - centerX) / MAX(1, [self carouselStride]);
-        const CGFloat closeness = MAX(0.0, 1.0 - MIN(distance, 1.0));
-        const CGFloat scale = 0.78 + 0.22 * closeness;
-        cell.transform = CGAffineTransformMakeScale(scale, scale);
-        cell.alpha = 0.5 + 0.5 * closeness;
-    }
-}
-
-// Reused cells enter the screen untransformed for one frame otherwise — the
-// visible "flicker" while swiping the carousel by touch.
-- (void)collectionView:(UICollectionView *)collectionView
-       willDisplayCell:(UICollectionViewCell *)cell
-    forItemAtIndexPath:(NSIndexPath *)indexPath {
-    (void)collectionView;
-    (void)indexPath;
-    if (!_carouselActive)
-        return;
-    const CGFloat centerX = self.collectionView.contentOffset.x + CGRectGetWidth(self.collectionView.bounds) / 2;
-    const CGFloat distance = fabs(cell.center.x - centerX) / MAX(1, [self carouselStride]);
-    const CGFloat closeness = MAX(0.0, 1.0 - MIN(distance, 1.0));
-    const CGFloat scale = 0.78 + 0.22 * closeness;
-    cell.transform = CGAffineTransformMakeScale(scale, scale);
-    cell.alpha = 0.5 + 0.5 * closeness;
-}
-
-- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView
-                     withVelocity:(CGPoint)velocity
-              targetContentOffset:(inout CGPoint *)targetContentOffset {
-    if (!_carouselActive || scrollView != self.collectionView)
-        return;
-    // Snap so a cover always rests centered.
-    const CGFloat stride = [self carouselStride];
-    const CGFloat base = -scrollView.contentInset.left;
-    CGFloat target = targetContentOffset->x;
-    // Nudge in the fling direction so gentle flicks advance one cover.
-    if (fabs(velocity.x) > 0.2)
-        target += stride * 0.5 * (velocity.x > 0 ? 1 : -1);
-    const CGFloat snapped = base + round((target - base) / stride) * stride;
-    targetContentOffset->x = snapped;
-}
-
-// On rotation the safe areas settle after the first layout pass, so insets
-// computed during it are stale (content under the notch one way, centered the
-// other). Re-run layout and re-ask for cell sizes when they change.
-- (void)safeAreaInsetsDidChange {
-    [super safeAreaInsetsDidChange];
-    [self setNeedsLayout];
-    [self.collectionView.collectionViewLayout invalidateLayout];
-}
-
-// Fade the header material in only when content is actually behind it, the
-// way a navigation bar transitions from its scroll-edge appearance.
-- (void)updateHeaderGlassVisibility {
-    const CGFloat scrolled = self.collectionView.contentOffset.y + self.collectionView.contentInset.top;
-    const CGFloat alpha = MAX(0.0, MIN(1.0, scrolled / 24.0));
-    if (fabs(self.headerGlass.alpha - alpha) > 0.01)
-        self.headerGlass.alpha = alpha;
-}
-
-- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
-    if (scrollView != self.collectionView)
-        return;
-    if (_carouselActive) {
-        [self applyCarouselTransforms];
-        [self updateCarouselFocusFeedback];
-    } else {
-        [self updateHeaderGlassVisibility];
-    }
-}
-
-// Warm the Taptic Engine only for the duration of an actual cover scroll.
-- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
-    if (!_carouselActive || scrollView != self.collectionView)
-        return;
-    if (!self.carouselFeedback)
-        self.carouselFeedback = [[UISelectionFeedbackGenerator alloc] init];
-    [self.carouselFeedback prepare];
-}
-
-- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
-    if (scrollView != self.collectionView)
-        return;
-    // Nothing more is coming; let the engine power back down.
-    self.carouselFeedback = nil;
-}
-
-- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
-    if (scrollView != self.collectionView || decelerate)
-        return;
-    self.carouselFeedback = nil;
-}
-
-// Map a (possibly looped) collection item back to its game index.
-- (NSInteger)gameIndexForItem:(NSInteger)item {
-    if (_games.empty())
-        return 0;
-    return item % static_cast<NSInteger>(_games.size());
-}
-
-- (void)toggleViewMode:(UIButton *)sender {
-    _listMode = !_listMode;
-    [NSUserDefaults.standardUserDefaults setBool:_listMode forKey:@"tsubomi.libraryListMode"];
-    [sender setImage:[UIImage systemImageNamed:_listMode ? @"square.grid.2x2" : @"list.bullet"]
-            forState:UIControlStateNormal];
-    [self.collectionView.collectionViewLayout invalidateLayout];
-    [self.collectionView reloadData];
-    [self setNeedsLayout]; // re-evaluate the landscape carousel mode
-}
-
-// The gradient uses CGColors, which do not auto-resolve to the current trait
-// collection; refresh them whenever light/dark mode changes.
-- (void)traitCollectionDidChange:(UITraitCollection *)previous {
-    [super traitCollectionDidChange:previous];
-    if ([self.traitCollection hasDifferentColorAppearanceComparedToTraitCollection:previous])
-        [self updateGradientColors];
-}
-
-- (void)updateGradientColors {
-    const BOOL dark = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
-    // Dark: pure black. Light: near-white with a faint pink/cyan wash so the
-    // brand feel survives without a heavy tint.
-    if (dark) {
-        self.backgroundGradient.colors = @[
-            (id)UIColor.blackColor.CGColor,
-            (id)UIColor.blackColor.CGColor,
-            (id)UIColor.blackColor.CGColor,
-        ];
-    } else {
-        self.backgroundGradient.colors = @[
-            (id)[UIColor colorWithRed:0.99 green:0.97 blue:0.99 alpha:1].CGColor,
-            (id)[UIColor colorWithRed:0.98 green:0.95 blue:0.99 alpha:1].CGColor,
-            (id)[UIColor colorWithRed:0.95 green:0.99 blue:1.00 alpha:1].CGColor,
-        ];
-    }
-}
-
-- (void)updateGames:(const std::vector<Vita3KIOSGameEntry> &)games settings:(const Vita3KIOSSettings &)settings {
-    _games = games;
-    _settings = settings;
-    // The library view is torn down whenever a game is running, so the bridge
-    // cannot read the current settings off it. Both show_library and
-    // update_library funnel through here, so this is the one place that sees
-    // every settings snapshot the core reports.
-    vita3k_ios_internal_cache_snapshot(games, settings);
-    // Drives the SwiftUI onboarding flow's per-page gating; an import that
-    // finishes on the emulator thread lands here on the next library refresh.
-    [TsubomiFirmwareStateBridge updateWithPreinstalledReady:settings.preinstalled_package_ready
-                                                  fontReady:settings.font_package_ready
-                                          mainFirmwareReady:settings.main_firmware_ready
-                                                   allReady:settings.firmware_ready];
-    self.emptyLabel.hidden = !_games.empty();
-    self.collectionView.hidden = _games.empty();
-    NSString *firmware = [NSString stringWithUTF8String:settings.firmware_version.c_str()] ?: @"";
-    self.firmwareLabel.text = settings.firmware_ready
-        ? firmware
-        : [NSString stringWithFormat:@"%@ - setup incomplete", firmware];
-    self.firmwareGlass.hidden = (firmware.length == 0);
-    self.emptyLabel.text = settings.firmware_ready
-        ? @"No games yet\n\nTap + to import a game (.vpk/.zip/.pkg), or copy\nPC's Vita3K data into Documents/Tsubomi/vita"
-        : @"Complete firmware setup first\n\nUse + to install FONTPKG.PUP, PREINSTALL.PUP,\nand PSVUPDAT.PUP before importing games.";
-    [self setNeedsLayout];
-    [self.collectionView reloadData];
-}
-
-- (BOOL)firmwareReadyOrPresentAlert {
-    if (_settings.firmware_ready)
-        return YES;
-    NSString *missing = [NSString stringWithUTF8String:_settings.missing_firmware.c_str()] ?: @"required firmware";
-    present_alert(@"Complete firmware setup",
-        [NSString stringWithFormat:@"Install all three firmware packages before importing or playing games.\n\nMissing: %@\n\nUse + > Import firmware (.PUP).", missing]);
-    return NO;
-}
-
-- (BOOL)jitAvailable {
-    return _jitAvailable;
-}
-
-- (void)setJitAvailable:(BOOL)available {
-    if (_jitAvailable == available && self.jitBanner.hidden == available)
-        return; // No visible change (banner hidden iff JIT available).
-    _jitAvailable = available;
-    self.jitBanner.hidden = available;
-    [self setNeedsLayout];
-}
-
-- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
-    (void)collectionView;
-    (void)section;
-    const auto count = static_cast<NSInteger>(_games.size());
-    return _carouselActive ? count * kCarouselRepeat : count;
-}
-
-- (__kindof UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
-    Vita3KGameCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"game" forIndexPath:indexPath];
-    cell.carouselMode = _carouselActive;
-    const auto &game = _games.at(static_cast<std::size_t>([self gameIndexForItem:indexPath.item]));
-    NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"Unknown title ID";
-    NSString *title = [NSString stringWithUTF8String:game.title.c_str()];
-    if (!title) {
-        LOG_ERROR("iOS library title is invalid UTF-8: title_id={} bytes={}", game.title_id, hex_bytes(game.title));
-        title = [NSString stringWithFormat:@"Unknown title (%@)", identifier];
-    }
-    NSString *iconPath = [NSString stringWithUTF8String:game.icon_path.c_str()];
-    if (has_custom_cover(identifier))
-        iconPath = cover_render_path(identifier);
-    NSAttributedString *metadata;
-    if (_carouselActive) {
-        // Compact one-liner under the focused cover.
-        metadata = [[NSAttributedString alloc]
-            initWithString:[NSString stringWithFormat:@"%@  ·  %@", played_time_text(game), last_played_text(game)]
-                attributes:@{
-                    NSFontAttributeName: [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1],
-                    NSForegroundColorAttributeName: UIColor.secondaryLabelColor,
-                }];
-    } else {
-        metadata = game_metadata(game);
-    }
-    [cell configureTitle:display_title(identifier, title) identifier:identifier metadata:metadata
-                  iconPath:iconPath listMode:_listMode];
-    if (!_carouselActive)
-        cell.alpha = _settings.firmware_ready ? 1.0 : 0.55;
-    return cell;
-}
-
-// Deleting removes the installed content (app/patch/DLC). Saves, licenses,
-// and trophy progress stay so a reinstall picks them back up.
-- (void)confirmDeleteGame:(NSString *)identifier title:(NSString *)title {
-    UIViewController *root = active_window().rootViewController;
-    if (!root)
-        return;
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:[NSString stringWithFormat:@"Delete %@?", title]
-                         message:@"The installed game, its update, and DLC are removed from this device. Saves and trophies are kept."
-                  preferredStyle:UIAlertControllerStyleAlert];
-    __weak Vita3KLibraryView *weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive
-        handler:^(__unused UIAlertAction *action) {
-            [weakSelf showBusyOverlay:@"Deleting game…" blockInteraction:YES];
-            Vita3KIOSFrontendAction request;
-            request.kind = Vita3KIOSFrontendActionKind::DeleteGame;
-            request.title_id = identifier.UTF8String;
-            queue_action(std::move(request));
-        }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [root presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)promptRename:(NSString *)identifier original:(NSString *)original {
-    UIViewController *root = active_window().rootViewController;
-    if (!root)
-        return;
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Rename game"
-                                                                  message:original
-                                                           preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.text = display_title(identifier, original);
-        field.clearButtonMode = UITextFieldViewModeWhileEditing;
-        field.autocapitalizationType = UITextAutocapitalizationTypeWords;
-    }];
-    __weak Vita3KLibraryView *weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault
-        handler:^(__unused UIAlertAction *action) {
-            NSString *entered = [alert.textFields.firstObject.text
-                stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-            // An empty name clears the override (restores the SFO title).
-            if (entered.length && ![entered isEqualToString:original])
-                [defaults setObject:entered forKey:title_override_key(identifier)];
-            else
-                [defaults removeObjectForKey:title_override_key(identifier)];
-            [weakSelf.collectionView reloadData];
-        }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [root presentViewController:alert animated:YES completion:nil];
-}
-
-- (UIContextMenuConfiguration *)collectionView:(UICollectionView *)collectionView
-    contextMenuConfigurationForItemAtIndexPath:(NSIndexPath *)indexPath
-                                         point:(CGPoint)point {
-    (void)collectionView;
-    (void)point;
-    if ([self gameIndexForItem:indexPath.item] >= static_cast<NSInteger>(_games.size()))
-        return nil;
-    const auto &game = _games.at(static_cast<std::size_t>([self gameIndexForItem:indexPath.item]));
-    NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
-    NSString *original = [NSString stringWithUTF8String:game.title.c_str()] ?: identifier;
-    NSString *trophyId = [NSString stringWithUTF8String:game.trophy_id.c_str()] ?: @"";
-    __weak Vita3KLibraryView *weakSelf = self;
-    return [UIContextMenuConfiguration configurationWithIdentifier:nil
-        previewProvider:nil
-         actionProvider:^UIMenu *(__unused NSArray<UIMenuElement *> *suggested) {
-            UIAction *rename = [UIAction actionWithTitle:@"Rename title"
-                image:[UIImage systemImageNamed:@"pencil"]
-                identifier:nil
-                handler:^(__unused UIAction *action) { [weakSelf promptRename:identifier original:original]; }];
-            NSString *overrideName = [NSUserDefaults.standardUserDefaults stringForKey:title_override_key(identifier)];
-            UIAction *importSave = [UIAction actionWithTitle:@"Import save"
-                image:[UIImage systemImageNamed:@"square.and.arrow.down"]
-                identifier:nil handler:^(__unused UIAction *action) { present_save_picker(identifier); }];
-            UIAction *exportSave = [UIAction actionWithTitle:@"Export save"
-                image:[UIImage systemImageNamed:@"square.and.arrow.up"]
-                identifier:nil handler:^(__unused UIAction *action) {
-                    [weakSelf showBusyOverlay:@"Exporting save…" blockInteraction:YES];
-                    Vita3KIOSFrontendAction request;
-                    request.kind = Vita3KIOSFrontendActionKind::ExportSave;
-                    request.title_id = identifier.UTF8String;
-                    queue_action(std::move(request));
-                }];
-            UIAction *trophies = [UIAction actionWithTitle:@"View trophies"
-                image:[UIImage systemImageNamed:@"trophy.fill"]
-                identifier:nil handler:^(__unused UIAction *action) {
-                    Vita3KIOSFrontendAction request;
-                    request.kind = Vita3KIOSFrontendActionKind::ShowTrophies;
-                    request.title_id = original.UTF8String;
-                    request.app_path = identifier.UTF8String;
-                    request.trophy_id = trophyId.UTF8String;
-                    queue_action(std::move(request));
-                }];
-            UIAction *gameSettings = [UIAction actionWithTitle:@"Game settings"
-                image:[UIImage systemImageNamed:@"slider.horizontal.3"]
-                identifier:nil handler:^(__unused UIAction *action) { [weakSelf presentGameSettings:identifier]; }];
-            UIAction *coverArt = [UIAction actionWithTitle:@"Custom cover art"
-                image:[UIImage systemImageNamed:@"photo"]
-                identifier:nil handler:^(__unused UIAction *action) { present_cover_picker(identifier); }];
-            NSMutableArray<UIMenuElement *> *children = [NSMutableArray arrayWithObjects:
-                importSave, exportSave, rename, trophies, gameSettings, coverArt, nil];
-            if (has_game_settings(identifier)) {
-                UIAction *globalSettings = [UIAction actionWithTitle:@"Use global settings"
-                    image:[UIImage systemImageNamed:@"arrow.uturn.backward.circle"]
-                    identifier:nil
-                    handler:^(__unused UIAction *action) {
-                        [NSUserDefaults.standardUserDefaults removeObjectForKey:game_settings_key(identifier)];
-                    }];
-                [children addObject:globalSettings];
-            }
-            // Crop works on the picked photo when one exists, otherwise on the
-            // game's default art — so the built-in cover can be reframed too.
-            NSString *defaultArtPath = [NSString stringWithUTF8String:game.icon_path.c_str()] ?: @"";
-            UIAction *adjustCrop = [UIAction actionWithTitle:@"Adjust cover crop"
-                image:[UIImage systemImageNamed:@"crop"]
-                identifier:nil
-                handler:^(__unused UIAction *action) {
-                    UIImage *source = [UIImage imageWithContentsOfFile:cover_original_path(identifier)]
-                        ?: [UIImage imageWithContentsOfFile:defaultArtPath];
-                    present_cover_crop(identifier, source);
-                }];
-            [children addObject:adjustCrop];
-            UIAction *deleteGame = [UIAction actionWithTitle:@"Delete game"
-                image:[UIImage systemImageNamed:@"trash"]
-                identifier:nil
-                handler:^(__unused UIAction *action) { [weakSelf confirmDeleteGame:identifier title:original]; }];
-            deleteGame.attributes = UIMenuElementAttributesDestructive;
-            [children addObject:deleteGame];
-            if (has_custom_cover(identifier)) {
-                UIAction *resetCover = [UIAction actionWithTitle:@"Reset cover art"
-                    image:[UIImage systemImageNamed:@"photo.badge.arrow.down"]
-                    identifier:nil
-                    handler:^(__unused UIAction *action) {
-                        [NSFileManager.defaultManager removeItemAtPath:cover_render_path(identifier) error:nil];
-                        [NSFileManager.defaultManager removeItemAtPath:cover_original_path(identifier) error:nil];
-                        invalidate_cover_cache(cover_render_path(identifier));
-                        invalidate_cover_cache(cover_original_path(identifier));
-                        [weakSelf.collectionView reloadData];
-                    }];
-                resetCover.attributes = UIMenuElementAttributesDestructive;
-                [children addObject:resetCover];
-            }
-            if (overrideName.length) {
-                UIAction *reset = [UIAction actionWithTitle:@"Reset name"
-                    image:[UIImage systemImageNamed:@"arrow.uturn.backward"]
-                    identifier:nil
-                    handler:^(__unused UIAction *action) {
-                        [NSUserDefaults.standardUserDefaults removeObjectForKey:title_override_key(identifier)];
-                        [weakSelf.collectionView reloadData];
-                    }];
-                reset.attributes = UIMenuElementAttributesDestructive;
-                [children addObject:reset];
-            }
-            return [UIMenu menuWithTitle:original children:children];
-        }];
-}
-
-- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)layout sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
-    (void)layout;
-    (void)indexPath;
-    // Derive the usable width from the CURRENT safe areas rather than the
-    // collection view's contentInset: during rotation this method can run
-    // before layoutSubviews has pushed the new insets, and stale insets are
-    // exactly the too-wide/too-narrow cell bugs seen on orientation change.
-    const UIEdgeInsets safe = self.safeAreaInsets;
-    const CGFloat usable = CGRectGetWidth(self.bounds) - safe.left - safe.right;
-    const CGFloat collectionInset = usable < 600 ? 10 : 18;
-    const CGFloat width = usable - collectionInset * 2;
-    if (_carouselActive) {
-        const CGFloat side = [self carouselCoverSide];
-        return CGSizeMake(side, side + 60);
-    }
-    if (_listMode)
-        return CGSizeMake(floor(width), library_list_row_height());
-    const CGFloat spacing = 14;
-    // Choose the column count from a larger target cell width (~220pt) rather than a
-    // couple of fixed width thresholds. Phone landscape (~750-800pt of grid)
-    // then packs 4 sensible cells instead of 3 ballooned ones, while portrait
-    // still lands on 2 columns.
-    const CGFloat targetItemWidth = 220;
-    const NSInteger columns = MAX(2, static_cast<NSInteger>(floor((width + spacing) / (targetItemWidth + spacing))));
-    const CGFloat itemWidth = floor((width - (columns - 1) * spacing) / columns);
-    return CGSizeMake(itemWidth, itemWidth + library_card_label_height() + 4);
-}
-
-// List view ends with the library's total footprint.
-- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)layout
-    referenceSizeForFooterInSection:(NSInteger)section {
-    (void)collectionView;
-    (void)layout;
-    (void)section;
-    return _listMode && !_games.empty() ? CGSizeMake(1, 44) : CGSizeZero;
-}
-
-- (UICollectionReusableView *)collectionView:(UICollectionView *)collectionView
-    viewForSupplementaryElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)indexPath {
-    UICollectionReusableView *footer = [collectionView dequeueReusableSupplementaryViewOfKind:kind
-        withReuseIdentifier:@"totals" forIndexPath:indexPath];
-    UILabel *label = [footer viewWithTag:301];
-    if (!label) {
-        label = [[UILabel alloc] init];
-        label.tag = 301;
-        label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-        label.textColor = UIColor.secondaryLabelColor;
-        label.textAlignment = NSTextAlignmentCenter;
-        label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        label.frame = footer.bounds;
-        [footer addSubview:label];
-    }
-    std::uint64_t total_bytes = 0;
-    for (const auto &game : _games)
-        total_bytes += game.size_bytes;
-    NSByteCountFormatter *bytes = [[NSByteCountFormatter alloc] init];
-    bytes.countStyle = NSByteCountFormatterCountStyleFile;
-    label.text = [NSString stringWithFormat:@"%zu game%s · %@ total",
-        _games.size(), _games.size() == 1 ? "" : "s",
-        [bytes stringFromByteCount:(long long)total_bytes]];
-    return footer;
-}
-
-- (void)collectionView:(UICollectionView *)collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath {
-    (void)collectionView;
-    if (![self firmwareReadyOrPresentAlert]) {
-        [collectionView deselectItemAtIndexPath:indexPath animated:YES];
-        return;
-    }
-    if (!_jitAvailable) {
-        // Guest execution needs JIT; refuse the boot and explain why instead of
-        // letting the launch path hit the missing-debugger crash boundary.
-        [collectionView deselectItemAtIndexPath:indexPath animated:YES];
-        present_alert(@"JIT required",
-            @"Open StikDebug, enable JIT, and keep it attached until Tsubomi finishes Preparing JIT.");
-        return;
-    }
-    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-    [feedback impactOccurred];
-    const auto &game = _games.at(static_cast<std::size_t>([self gameIndexForItem:indexPath.item]));
-    [self showBootingOverlay:[NSString stringWithUTF8String:game.title.c_str()] ?: @"game"];
-    Vita3KIOSFrontendAction action;
-    action.kind = Vita3KIOSFrontendActionKind::Launch;
-    action.app_path = game.app_path;
-    NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
-    if (has_game_settings(identifier)) {
-        action.settings = game_settings_or(identifier, _settings);
-        action.has_settings_override = true;
-    }
-    queue_action(std::move(action));
-}
-
-- (void)showBootingOverlay:(NSString *)title {
-    [self showBusyOverlay:[NSString stringWithFormat:@"Preparing JIT and booting %@…\nKeep StikDebug attached", title]
-           blockInteraction:YES];
-}
-
-- (void)hideBusyOverlay {
-    self.userInteractionEnabled = YES;
-    [self.busyOverlay removeFromSuperview];
-    self.busyOverlay = nil;
-}
-
-- (void)showBusyOverlay:(NSString *)text blockInteraction:(BOOL)block {
-    [self hideBusyOverlay];
-    // Block further taps and make the work visibly in progress; for boots the
-    // whole library view is removed once the emulator takes over the screen.
-    self.userInteractionEnabled = !block;
-    UIView *dim = [[UIView alloc] initWithFrame:self.bounds];
-    dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    dim.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
-        return traits.userInterfaceStyle == UIUserInterfaceStyleDark
-            ? [UIColor colorWithWhite:0 alpha:0.55]
-            : [UIColor colorWithWhite:1 alpha:0.58];
-    }];
-    dim.alpha = 0;
-
-    UIVisualEffectView *panel = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
-    panel.frame = CGRectMake(0, 0, 260, 130);
-    panel.center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
-    panel.autoresizingMask = UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin
-        | UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
-    round_continuous(panel, 26);
-    panel.clipsToBounds = YES;
-
-    UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc]
-        initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
-    spinner.color = UIColor.labelColor;
-    spinner.center = CGPointMake(130, 48);
-    [spinner startAnimating];
-    [panel.contentView addSubview:spinner];
-
-    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(14, 82, 232, 36)];
-    label.text = text;
-    label.textColor = UIColor.labelColor;
-    label.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
-    label.textAlignment = NSTextAlignmentCenter;
-    label.numberOfLines = 2;
-    label.adjustsFontSizeToFitWidth = YES;
-    [panel.contentView addSubview:label];
-
-    [dim addSubview:panel];
-    [self addSubview:dim];
-    self.busyOverlay = dim;
-    [UIView animateWithDuration:0.2 animations:^{ dim.alpha = 1; }];
-}
-
-- (void)refresh {
-    Vita3KIOSFrontendAction action;
-    action.kind = Vita3KIOSFrontendActionKind::Refresh;
-    queue_action(std::move(action));
-}
-
-- (void)showHelp {
-    present_alert(@"Graphics help",
-        @"If a game's shaders or textures do not look correct, open that game's settings and try Graphics > High accuracy. If lighting appears white or missing, also enable Graphics > Surface sync.");
-}
-
-// Settings is the first screen migrated to SwiftUI (TsubomiSettingsHost). It
-// is presented rather than added as a subview like the UIKit screen was, so
-// the system owns the sheet's Liquid Glass chrome and its dismissal.
-- (void)presentSettingsController:(UIViewController *)controller {
-    UIViewController *root = self.window.rootViewController;
-    if (!root || root.presentedViewController)
-        return;
-    // Belt and braces: a lingering game drawable must never be visible under
-    // the settings sheet.
-    set_metal_drawables_hidden(self.window, YES);
-    [root presentViewController:controller animated:YES completion:nil];
-}
-
-- (void)settings {
-    __weak Vita3KLibraryView *weakSelf = self;
-    [self presentSettingsController:
-        [TsubomiSettingsHost globalSettingsViewControllerWithDismissHandler:^{
-            // The core applies the change on its own thread and reports
-            // restart-required fields back through the existing status toast.
-            [weakSelf refresh];
-        }]];
-}
-
-// Per-game settings: the same emulator controls, saved as an override for one
-// title and applied only when that title boots.
-- (void)presentGameSettings:(NSString *)identifier {
-    NSString *displayName = identifier;
-    for (const auto &game : _games) {
-        NSString *candidate = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
-        if ([candidate isEqualToString:identifier]) {
-            displayName = [NSString stringWithUTF8String:game.title.c_str()] ?: identifier;
-            break;
-        }
-    }
-    [self presentSettingsController:
-        [TsubomiSettingsHost settingsViewControllerForTitle:identifier
-                                                displayName:displayName
-                                             dismissHandler:^{}]];
-}
-
-// Triangle on a focused cell: the same actions as the long-press context menu,
-// in a pad-navigable overlay.
-- (void)presentPadActionsForItem:(NSInteger)item {
-    if (item < 0)
-        return;
-    item = [self gameIndexForItem:item];
-    if (item >= static_cast<NSInteger>(_games.size()))
-        return;
-    const auto &game = _games.at(static_cast<std::size_t>(item));
-    NSString *identifier = [NSString stringWithUTF8String:game.title_id.c_str()] ?: @"";
-    NSString *original = [NSString stringWithUTF8String:game.title.c_str()] ?: identifier;
-    NSString *trophyId = [NSString stringWithUTF8String:game.trophy_id.c_str()] ?: @"";
-    __weak Vita3KLibraryView *weakSelf = self;
-    NSMutableArray<NSDictionary *> *items = [NSMutableArray array];
-    [items addObject:@{ @"title": @"Import save", @"symbol": @"square.and.arrow.down",
-        @"handler": [^{ present_save_picker(identifier); } copy] }];
-    [items addObject:@{ @"title": @"Export save", @"symbol": @"square.and.arrow.up",
-        @"handler": [^{
-            [weakSelf showBusyOverlay:@"Exporting save…" blockInteraction:YES];
-            Vita3KIOSFrontendAction request;
-            request.kind = Vita3KIOSFrontendActionKind::ExportSave;
-            request.title_id = identifier.UTF8String;
-            queue_action(std::move(request));
-        } copy] }];
-    [items addObject:@{ @"title": @"Rename title", @"symbol": @"pencil",
-        @"handler": [^{ [weakSelf promptRename:identifier original:original]; } copy] }];
-    [items addObject:@{ @"title": @"Game settings", @"symbol": @"slider.horizontal.3",
-        @"handler": [^{ [weakSelf presentGameSettings:identifier]; } copy] }];
-    [items addObject:@{ @"title": @"Custom cover art", @"symbol": @"photo",
-        @"handler": [^{ present_cover_picker(identifier); } copy] }];
-    [items addObject:@{ @"title": @"View trophies", @"symbol": @"trophy.fill",
-        @"handler": [^{
-            Vita3KIOSFrontendAction request;
-            request.kind = Vita3KIOSFrontendActionKind::ShowTrophies;
-            request.title_id = original.UTF8String;
-            request.app_path = identifier.UTF8String;
-            request.trophy_id = trophyId.UTF8String;
-            queue_action(std::move(request));
-        } copy] }];
-    if ([NSUserDefaults.standardUserDefaults stringForKey:title_override_key(identifier)].length) {
-        [items addObject:@{ @"title": @"Reset name", @"symbol": @"arrow.uturn.backward", @"destructive": @YES,
-            @"handler": [^{
-                [NSUserDefaults.standardUserDefaults removeObjectForKey:title_override_key(identifier)];
-                [weakSelf.collectionView reloadData];
-            } copy] }];
-    }
-    [Vita3KPadMenuView presentInView:self title:display_title(identifier, original) items:items];
-}
-
-- (void)reportRestartRequired:(NSArray<NSString *> *)settings {
-    self.statusLabel.text = settings.count
-        ? [NSString stringWithFormat:@"Saved · restart required: %@", [settings componentsJoinedByString:@", "]]
-        : @"Settings saved and applied";
-    [self setNeedsLayout];
-    [self layoutIfNeeded];
-    self.statusGlass.alpha = 1;
-    [UIView animateWithDuration:0.3 delay:4 options:0 animations:^{ self.statusGlass.alpha = 0; } completion:nil];
-}
-
-@end
-
-
-static Vita3KLibraryView *g_library = nil;
 // Last-known JIT availability, applied whenever the library is (re)shown so the
 // banner is correct even across library rebuilds between game sessions.
 static BOOL g_jit_available = YES;
@@ -2131,28 +704,34 @@ static BOOL g_jit_available = YES;
 // is on screen instead of relying on a single reassertion.
 static NSTimer *g_library_metal_hide_timer = nil;
 // Set once the very first library presentation of this process has played its
-// launch intro. Returning to the library after quitting a game recreates
-// g_library too (vita3k_ios_hide_library nils it out), so this can't just be
-// "!g_library" or every game-to-library transition would replay the intro.
+// launch intro. Returning to the library after quitting a game recreates the
+// controller too (vita3k_ios_hide_library nils it out), so this can't just be
+// a null check or every game-to-library transition would replay the intro.
 static BOOL g_app_launch_intro_shown = NO;
 
 namespace {
 void reload_library_cells() {
-    [g_library.collectionView.collectionViewLayout invalidateLayout];
-    [g_library.collectionView reloadData];
+    // The library display toggles (title IDs, version, size) are read straight
+    // from NSUserDefaults by the SwiftUI cells via @AppStorage, so those
+    // re-render themselves. This re-derives the entries for the changes that
+    // are not observable that way - a new custom cover, or a rename.
+    [TsubomiLibraryStateBridge refreshEntries];
 }
 } // namespace
 
 
-// Spatial controller navigation for the native UI (library, settings, pad
-// menus): DPAD moves a focus ring, Cross activates, Circle goes back, Triangle
-// opens the focused game's actions, L1/R1 switch settings categories. Handlers
-// no-op whenever the library UI is not on screen, so in-game input is never
+// Game-controller navigation for the native UI.
+//
+// This used to walk g_library's UIView subtree, collect focusable views, and
+// move a focus ring spatially. The library is SwiftUI now and has no such
+// subtree, so the navigator is reduced to what it should always have been: it
+// reads the controller and forwards intent. LibraryState owns which game is
+// focused and maps D-pad movement onto whichever presentation is showing (see
+// LibraryState.FocusLayout); the view draws the ring and scrolls it into view.
+//
+// Handlers no-op whenever the library is off screen, so in-game input is never
 // intercepted.
 @interface Vita3KPadNavigator : NSObject
-@property(nonatomic, weak) UIView *focused;
-@property(nonatomic) CGFloat savedBorderWidth;
-@property(nonatomic, strong) UIColor *savedBorderColor;
 @property(nonatomic) BOOL active;
 + (instancetype)shared;
 - (void)start;
@@ -2184,8 +763,7 @@ void reload_library_cells() {
 
 - (void)stop {
     self.active = NO;
-    [self clearFocusRing];
-    self.focused = nil;
+    [TsubomiLibraryStateBridge clearFocus];
 }
 
 - (void)wireController:(GCController *)controller {
@@ -2194,16 +772,16 @@ void reload_library_cells() {
         return;
     __weak Vita3KPadNavigator *weakSelf = self;
     pad.dpad.up.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
-        if (pressed) [weakSelf move:0 dy:-1];
+        if (pressed) [weakSelf moveX:0 y:-1];
     };
     pad.dpad.down.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
-        if (pressed) [weakSelf move:0 dy:1];
+        if (pressed) [weakSelf moveX:0 y:1];
     };
     pad.dpad.left.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
-        if (pressed) [weakSelf horizontal:-1];
+        if (pressed) [weakSelf moveX:-1 y:0];
     };
     pad.dpad.right.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
-        if (pressed) [weakSelf horizontal:1];
+        if (pressed) [weakSelf moveX:1 y:0];
     };
     pad.buttonA.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
         if (pressed) [weakSelf activate];
@@ -2214,254 +792,51 @@ void reload_library_cells() {
     pad.buttonY.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
         if (pressed) [weakSelf gameActions];
     };
-    pad.leftShoulder.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
-        if (pressed) [weakSelf switchTab:-1];
-    };
-    pad.rightShoulder.pressedChangedHandler = ^(__unused GCControllerButtonInput *b, __unused float v, BOOL pressed) {
-        if (pressed) [weakSelf switchTab:1];
-    };
+    // L1/R1 cycled the old settings screen's categories. The SwiftUI settings
+    // screen is one scrolling Form, so there is nothing to cycle; the handlers
+    // are cleared rather than left pointing at a removed method.
+    pad.leftShoulder.pressedChangedHandler = nil;
+    pad.rightShoulder.pressedChangedHandler = nil;
 }
 
+// The library is driveable only while it is on screen and nothing is presented
+// over it. A presented sheet (settings, trophies) is SwiftUI's to handle.
 - (BOOL)navigationAllowed {
-    return self.active && g_library.window != nil
-        && g_library.window.rootViewController.presentedViewController == nil;
+    UIWindow *window = library_view().window;
+    return self.active && window != nil
+        && window.rootViewController.presentedViewController == nil;
 }
 
-// Topmost interactive surface: pad menu > library.
-//
-// Settings used to appear here as an in-hierarchy subview. It is now a
-// presented SwiftUI sheet, and -navigationAllowed already returns NO whenever
-// anything is presented, so the pad navigator stands down while it is open.
-// See the note in navigationAllowed about restoring pad control there.
-- (UIView *)navigationRoot {
-    for (UIView *subview in g_library.subviews.reverseObjectEnumerator) {
-        if (subview.hidden)
-            continue;
-        if ([subview isKindOfClass:Vita3KPadMenuView.class])
-            return subview;
-    }
-    return g_library;
-}
-
-static void collect_candidates(UIView *view, NSMutableArray<UIView *> *out) {
-    if (view.hidden || view.alpha < 0.02)
-        return;
-    BOOL focusable = NO;
-    if ([view isKindOfClass:UIControl.class])
-        focusable = ((UIControl *)view).enabled && view.userInteractionEnabled;
-    else if ([view isKindOfClass:UICollectionViewCell.class])
-        focusable = YES;
-    if (focusable) {
-        if (view.bounds.size.width >= 20 && view.bounds.size.height >= 20)
-            [out addObject:view];
-        return; // don't descend into a control's internals
-    }
-    for (UIView *subview in view.subviews)
-        collect_candidates(subview, out);
-}
-
-- (NSArray<UIView *> *)candidatesIn:(UIView *)root {
-    NSMutableArray<UIView *> *out = [NSMutableArray array];
-    collect_candidates(root, out);
-    return out;
-}
-
-static CGPoint center_in(UIView *view, UIView *root) {
-    return [view convertPoint:CGPointMake(CGRectGetMidX(view.bounds), CGRectGetMidY(view.bounds)) toView:root];
-}
-
-- (void)clearFocusRing {
-    UIView *old = self.focused;
-    if (old) {
-        old.layer.borderWidth = self.savedBorderWidth;
-        old.layer.borderColor = self.savedBorderColor.CGColor;
-    }
-}
-
-- (void)setFocus:(UIView *)view {
-    if (!view || view == self.focused)
-        return;
-    [self clearFocusRing];
-    self.savedBorderWidth = view.layer.borderWidth;
-    self.savedBorderColor = view.layer.borderColor ? [UIColor colorWithCGColor:view.layer.borderColor] : UIColor.clearColor;
-    view.layer.borderWidth = 3;
-    view.layer.borderColor = UIColor.systemCyanColor.CGColor;
-    if (view.layer.cornerRadius == 0)
-        round_continuous(view, 10);
-    self.focused = view;
-
-    UIView *scroller = view.superview;
-    while (scroller && ![scroller isKindOfClass:UIScrollView.class])
-        scroller = scroller.superview;
-    if (scroller) {
-        UIScrollView *scrollView = (UIScrollView *)scroller;
-        CGRect rect = CGRectInset([view convertRect:view.bounds toView:scroller], -24, -24);
-        // The landscape carousel scrolls horizontally only, but its cells are
-        // scaled down by distance-from-center (applyCarouselTransforms), so
-        // an off-center cell's transformed frame is a few points shorter than
-        // the row. scrollRectToVisible fits both axes, so it was nudging
-        // contentOffset.y by that difference on every D-pad move — the
-        // "games move up and down slightly" jitter (touch scrolling never
-        // goes through here, which is why it stayed steady). A horizontally
-        // scrolling collection view only needs the X axis fit; clamp the
-        // rect's vertical span to the current viewport so Y never moves.
-        if ([scrollView isKindOfClass:UICollectionView.class]) {
-            UICollectionViewLayout *layout = ((UICollectionView *)scrollView).collectionViewLayout;
-            if ([layout isKindOfClass:UICollectionViewFlowLayout.class]
-                && ((UICollectionViewFlowLayout *)layout).scrollDirection == UICollectionViewScrollDirectionHorizontal) {
-                rect.origin.y = scrollView.bounds.origin.y;
-                rect.size.height = scrollView.bounds.size.height;
-            }
-        }
-        [scrollView scrollRectToVisible:rect animated:YES];
-    }
-}
-
-- (UIView *)validFocusIn:(UIView *)root {
-    UIView *view = self.focused;
-    if (view && view.window && !view.hidden && [view isDescendantOfView:root])
-        return view;
-    return nil;
-}
-
-- (void)focusDefaultIn:(UIView *)root {
-    NSArray<UIView *> *candidates = [self candidatesIn:root];
-    UIView *best = nil;
-    CGFloat bestScore = CGFLOAT_MAX;
-    for (UIView *candidate in candidates) {
-        const CGPoint center = center_in(candidate, root);
-        // Prefer visible candidates, ordered top-left first.
-        const BOOL visible = CGRectIntersectsRect([candidate convertRect:candidate.bounds toView:root], root.bounds);
-        const CGFloat score = (visible ? 0 : 1000000) + center.y * 1000 + center.x;
-        if (score < bestScore) {
-            bestScore = score;
-            best = candidate;
-        }
-    }
-    [self setFocus:best];
-}
-
-- (void)move:(NSInteger)dx dy:(NSInteger)dy {
+- (void)moveX:(NSInteger)dx y:(NSInteger)dy {
     if (![self navigationAllowed])
         return;
-    UIView *root = [self navigationRoot];
-    UIView *current = [self validFocusIn:root];
-    if (!current) {
-        [self focusDefaultIn:root];
-        return;
-    }
-    const CGPoint from = center_in(current, root);
-    NSArray<UIView *> *candidates = [self candidatesIn:root];
-    UIView *best = nil;
-    CGFloat bestScore = CGFLOAT_MAX;
-    for (UIView *candidate in candidates) {
-        if (candidate == current)
-            continue;
-        const CGPoint center = center_in(candidate, root);
-        const CGFloat forward = (center.x - from.x) * dx + (center.y - from.y) * dy;
-        if (forward < 8)
-            continue;
-        const CGFloat sideways = dx != 0 ? fabs(center.y - from.y) : fabs(center.x - from.x);
-        const CGFloat score = forward + sideways * 2.5;
-        if (score < bestScore) {
-            bestScore = score;
-            best = candidate;
-        }
-    }
-    if (best)
-        [self setFocus:best];
-}
-
-- (void)horizontal:(NSInteger)delta {
-    if (![self navigationAllowed])
-        return;
-    UIView *root = [self navigationRoot];
-    UIView *current = [self validFocusIn:root];
-    if ([current isKindOfClass:UISlider.class]) {
-        UISlider *slider = (UISlider *)current;
-        const float step = (slider.maximumValue - slider.minimumValue) / 20.0f;
-        slider.value = std::clamp(slider.value + step * (float)delta, slider.minimumValue, slider.maximumValue);
-        [slider sendActionsForControlEvents:UIControlEventValueChanged];
-        return;
-    }
-    if ([current isKindOfClass:UISegmentedControl.class]) {
-        UISegmentedControl *segmented = (UISegmentedControl *)current;
-        const NSInteger next = segmented.selectedSegmentIndex + delta;
-        if (next >= 0 && next < segmented.numberOfSegments) {
-            segmented.selectedSegmentIndex = next;
-            [segmented sendActionsForControlEvents:UIControlEventValueChanged];
-        }
-        return;
-    }
-    [self move:delta dy:0];
+    [TsubomiLibraryStateBridge moveFocusByX:dx y:dy];
 }
 
 - (void)activate {
     if (![self navigationAllowed])
         return;
-    UIView *root = [self navigationRoot];
-    UIView *current = [self validFocusIn:root];
-    if (!current) {
-        [self focusDefaultIn:root];
-        return;
-    }
-    if ([current isKindOfClass:UICollectionViewCell.class]) {
-        UIView *scroller = current.superview;
-        while (scroller && ![scroller isKindOfClass:UICollectionView.class])
-            scroller = scroller.superview;
-        UICollectionView *collection = (UICollectionView *)scroller;
-        NSIndexPath *indexPath = [collection indexPathForCell:(UICollectionViewCell *)current];
-        if (indexPath && [collection.delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)])
-            [collection.delegate collectionView:collection didSelectItemAtIndexPath:indexPath];
-        return;
-    }
-    if ([current isKindOfClass:UISwitch.class]) {
-        UISwitch *toggle = (UISwitch *)current;
-        [toggle setOn:!toggle.on animated:YES];
-        [toggle sendActionsForControlEvents:UIControlEventValueChanged];
-        return;
-    }
-    if ([current isKindOfClass:UIControl.class])
-        [(UIControl *)current sendActionsForControlEvents:UIControlEventTouchUpInside];
-}
-
-- (void)back {
-    if (!self.active || g_library.window == nil)
-        return;
-    UIViewController *presented = g_library.window.rootViewController.presentedViewController;
-    if (presented) {
-        [presented dismissViewControllerAnimated:YES completion:nil];
-        return;
-    }
-    UIView *root = [self navigationRoot];
-    if ([root isKindOfClass:Vita3KPadMenuView.class]) {
-        [(Vita3KPadMenuView *)root dismissMenu];
-        self.focused = nil;
-        return;
-    }
+    [TsubomiLibraryStateBridge activateFocused];
 }
 
 - (void)gameActions {
     if (![self navigationAllowed])
         return;
-    UIView *root = [self navigationRoot];
-    if (root != g_library)
-        return;
-    UIView *current = [self validFocusIn:root];
-    if (![current isKindOfClass:UICollectionViewCell.class])
-        return;
-    NSIndexPath *indexPath = [g_library.collectionView indexPathForCell:(UICollectionViewCell *)current];
-    if (indexPath)
-        [g_library presentPadActionsForItem:indexPath.item];
+    [TsubomiLibraryStateBridge showActionsForFocused];
 }
 
-- (void)switchTab:(NSInteger)delta {
-    // L1/R1 used to cycle the UIKit settings screen's categories. The SwiftUI
-    // settings screen is a single scrolling Form with no categories to cycle,
-    // and it is presented rather than in-hierarchy, so there is nothing here
-    // to drive. Kept as a no-op so the shoulder-button bindings in
-    // -handleButton: do not need a special case.
-    (void)delta;
+- (void)back {
+    if (!self.active)
+        return;
+    UIWindow *window = library_view().window;
+    UIViewController *presented = window.rootViewController.presentedViewController;
+    if (presented) {
+        [presented dismissViewControllerAnimated:YES completion:nil];
+        return;
+    }
+    // Nothing presented: drop the focus ring so the library returns to its
+    // touch-driven appearance.
+    [TsubomiLibraryStateBridge clearFocus];
 }
 
 @end
@@ -2511,7 +886,7 @@ static CGPoint center_in(UIView *view, UIView *root) {
         busy = @"Installing license…";
     else if (self.kind == Vita3KIOSFrontendActionKind::ImportSave)
         busy = @"Importing save…";
-    [g_library showBusyOverlay:busy blockInteraction:YES];
+    [TsubomiLibraryStateBridge setBusyMessage:busy];
     Vita3KIOSFrontendAction action;
     action.kind = self.kind;
     action.app_path = destination.UTF8String;
@@ -2609,7 +984,7 @@ static void set_metal_drawables_hidden(UIWindow *window, BOOL hidden) {
         if ([view.layer isKindOfClass:CAMetalLayer.class]) {
             // Never hide a view the library lives inside: hiding an ancestor
             // hides the library with it and the whole screen goes black.
-            if (hidden && g_library && [g_library isDescendantOfView:view]) {
+            if (hidden && library_view() && [library_view() isDescendantOfView:view]) {
                 [pending addObjectsFromArray:view.subviews];
                 continue;
             }
@@ -2632,60 +1007,77 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         // on the window. UIButton context menus (the + import menu) need a view
         // controller in the responder chain to present from; a view parented
         // straight to the window has none, so taps did nothing.
-        UIView *host = window.rootViewController.view ?: window;
+        // Host the library under the root view controller's view, not
+        // directly on the window: SwiftUI menus and sheets need a view
+        // controller in the responder chain to present from.
+        UIViewController *rootController = window.rootViewController;
+        UIView *host = rootController.view ?: window;
         BOOL playLaunchIntro = NO;
-        if (!g_library) {
-            g_library = [[Vita3KLibraryView alloc] initWithFrame:host.bounds];
-            [host addSubview:g_library];
+        if (!g_library_controller) {
+            g_library_controller = [TsubomiLibraryHost libraryViewController];
+            // Proper containment, so the hosting controller receives
+            // appearance and trait callbacks and can present sheets itself.
+            if (rootController)
+                [rootController addChildViewController:g_library_controller];
+            [host addSubview:library_view()];
+            if (rootController)
+                [g_library_controller didMoveToParentViewController:rootController];
             if (!g_app_launch_intro_shown) {
                 playLaunchIntro = YES;
                 g_app_launch_intro_shown = YES;
             }
-        } else if (g_library.superview != host) {
-            [host addSubview:g_library];
+        } else if (library_view().superview != host) {
+            [host addSubview:library_view()];
         }
-        g_library.frame = host.bounds;
-        g_library.hidden = NO;
+        library_view().frame = host.bounds;
+        library_view().autoresizingMask =
+            UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        library_view().hidden = NO;
         if (playLaunchIntro) {
             // Cold app launch dropped the library on screen with no
             // transition at all. A short fade + gentle scale-up reads as an
             // intentional entrance instead of the UI just appearing.
-            g_library.alpha = 0.0;
-            g_library.transform = CGAffineTransformMakeScale(0.96, 0.96);
+            library_view().alpha = 0.0;
+            library_view().transform = CGAffineTransformMakeScale(0.96, 0.96);
         }
-        [g_library updateGames:gamesCopy settings:settingsCopy];
-        [g_library setJitAvailable:g_jit_available];
+        vita3k_ios_internal_cache_snapshot(gamesCopy, settingsCopy);
+        [TsubomiLibraryStateBridge updateWithGames:vita3k_ios_internal::bridge_games()
+                                          settings:vita3k_ios_internal::bridge_settings()];
+        [TsubomiLibraryStateBridge setJITAvailable:g_jit_available];
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
         if (settingsCopy.firmware_ready) {
             // Existing installs that already contain all three packages never
             // see onboarding, even when upgrading from a build predating it.
             [defaults setBool:YES forKey:@"tsubomi.onboarded"];
-            [g_library.onboardingController.view removeFromSuperview];
-            g_library.onboardingController = nil;
+            [g_onboarding_controller.view removeFromSuperview];
+            g_onboarding_controller = nil;
         } else if (![defaults boolForKey:@"tsubomi.onboarded"] || !settingsCopy.firmware_ready) {
-            if (!g_library.onboardingController) {
-                // Firmware progress reaches the flow through FirmwareState
-                // (pushed in -updateGames:settings:), so there is no
+            if (!g_onboarding_controller) {
+                // Firmware progress reaches the flow through FirmwareState,
+                // pushed from the same snapshot above, so there is no
                 // equivalent of the old updateFirmwareSettings: call here.
-                Vita3KLibraryView *host = g_library;
-                g_library.onboardingController =
+                g_onboarding_controller =
                     [TsubomiOnboardingHost onboardingViewControllerWithFinishHandler:^{
-                        [host.onboardingController.view removeFromSuperview];
-                        host.onboardingController = nil;
+                        [UIView animateWithDuration:0.3 animations:^{
+                            g_onboarding_controller.view.alpha = 0;
+                        } completion:^(__unused BOOL finished) {
+                            [g_onboarding_controller.view removeFromSuperview];
+                            g_onboarding_controller = nil;
+                        }];
                     }];
-                UIView *onboarding = g_library.onboardingController.view;
-                onboarding.frame = g_library.bounds;
+                UIView *onboarding = g_onboarding_controller.view;
+                onboarding.frame = library_view().bounds;
                 onboarding.autoresizingMask =
                     UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-                [g_library addSubview:onboarding];
+                [library_view() addSubview:onboarding];
             }
-            [g_library bringSubviewToFront:g_library.onboardingController.view];
+            [library_view() bringSubviewToFront:g_onboarding_controller.view];
         }
-        [g_library.superview bringSubviewToFront:g_library];
+        [library_view().superview bringSubviewToFront:library_view()];
         set_metal_drawables_hidden(window, YES);
         [Vita3KPadNavigator.shared start];
         if (playLaunchIntro) {
-            Vita3KLibraryView *introTarget = g_library;
+            UIView *introTarget = library_view();
             [UIView animateWithDuration:0.5
                                   delay:0.05
                  usingSpringWithDamping:0.86
@@ -2701,32 +1093,30 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         // block (SDL drawable churn); reassert visibility one tick later so a
         // late-added game drawable can't cover or hide the library.
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (!g_library)
+            if (!g_library_controller)
                 return;
-            g_library.hidden = NO;
-            [g_library.superview bringSubviewToFront:g_library];
-            set_metal_drawables_hidden(g_library.window ?: active_window(), YES);
+            library_view().hidden = NO;
+            [library_view().superview bringSubviewToFront:library_view()];
+            set_metal_drawables_hidden(library_view().window ?: active_window(), YES);
         });
-        // Teardown can still straggle past that one tick (see
-        // g_library_metal_hide_timer above), so keep re-hiding on a short
-        // timer for as long as the library stays on screen.
-        // Bounded, not forever: teardown straggles for a few hundred ms at
-        // most, but the library is the screen the app idles on, so a permanent
-        // 4 Hz hierarchy walk was burning wake-ups for the entire time the
-        // user sits browsing. Sweep for two seconds, then stop.
+        // Teardown can still straggle past that one tick, so keep re-hiding on
+        // a short timer. Bounded, not forever: teardown straggles for a few
+        // hundred ms at most, but the library is the screen the app idles on,
+        // so a permanent 4 Hz hierarchy walk was burning wake-ups for the
+        // entire time the user sits browsing. Sweep for two seconds, then stop.
         if (!g_library_metal_hide_timer) {
             __block NSInteger sweeps = 8;
             g_library_metal_hide_timer = [NSTimer scheduledTimerWithTimeInterval:0.25
                                                                           repeats:YES
                                                                             block:^(NSTimer *timer) {
-                if (!g_library || --sweeps <= 0) {
+                if (!g_library_controller || --sweeps <= 0) {
                     [timer invalidate];
                     g_library_metal_hide_timer = nil;
-                    if (g_library)
-                        set_metal_drawables_hidden(g_library.window ?: active_window(), YES);
+                    if (g_library_controller)
+                        set_metal_drawables_hidden(library_view().window ?: active_window(), YES);
                     return;
                 }
-                set_metal_drawables_hidden(g_library.window ?: active_window(), YES);
+                set_metal_drawables_hidden(library_view().window ?: active_window(), YES);
             }];
         }
     });
@@ -2737,16 +1127,22 @@ void vita3k_ios_update_library(const std::vector<Vita3KIOSGameEntry> &games,
     const std::vector<Vita3KIOSGameEntry> gamesCopy = games;
     const Vita3KIOSSettings settingsCopy = settings;
     perform_on_main(^{
-        [g_library updateGames:gamesCopy settings:settingsCopy];
+        vita3k_ios_internal_cache_snapshot(gamesCopy, settingsCopy);
+        [TsubomiLibraryStateBridge updateWithGames:vita3k_ios_internal::bridge_games()
+                                          settings:vita3k_ios_internal::bridge_settings()];
     });
 }
 
 void vita3k_ios_hide_library() {
     perform_on_main(^{
         [Vita3KPadNavigator.shared stop];
-        set_metal_drawables_hidden(g_library.window ?: active_window(), NO);
-        [g_library removeFromSuperview];
-        g_library = nil;
+        set_metal_drawables_hidden(library_view().window ?: active_window(), NO);
+        [g_library_controller willMoveToParentViewController:nil];
+        [library_view() removeFromSuperview];
+        [g_library_controller removeFromParentViewController];
+        g_library_controller = nil;
+        [g_onboarding_controller.view removeFromSuperview];
+        g_onboarding_controller = nil;
         [g_library_metal_hide_timer invalidate];
         g_library_metal_hide_timer = nil;
     });
@@ -3032,18 +1428,15 @@ void vita3k_ios_hide_perf_overlay() {
 void vita3k_ios_report_import_result(const std::string &message, const bool success) {
     NSString *text = [NSString stringWithUTF8String:message.c_str()] ?: @"Import finished";
     perform_on_main(^{
-        [g_library hideBusyOverlay];
+        [TsubomiLibraryStateBridge setBusyMessage:nil];
         // Onboarding used to render its own inline status for this. The
         // SwiftUI flow instead shows "Installed" from FirmwareState once the
         // package actually lands, and failures still reach the user through
         // the alert below - which is the more accurate signal anyway, since a
         // wrong-package import "succeeds" as a file operation.
         if (success) {
-            g_library.statusLabel.text = text;
-            [g_library setNeedsLayout];
-            [g_library layoutIfNeeded];
-            g_library.statusGlass.alpha = 1;
-            [UIView animateWithDuration:0.3 delay:6 options:0 animations:^{ g_library.statusGlass.alpha = 0; } completion:nil];
+            // The toast owns its own dismissal timer in LibraryState.
+            [TsubomiLibraryStateBridge showStatusMessage:text];
             if ([text localizedCaseInsensitiveContainsString:@"license"])
                 present_alert(@"License installed", text);
         } else {
@@ -3059,7 +1452,7 @@ void vita3k_ios_report_import_result(const std::string &message, const bool succ
 void vita3k_ios_show_boot_error(const std::string &message) {
     NSString *text = [NSString stringWithUTF8String:message.c_str()] ?: @"The game could not start.";
     perform_on_main(^{
-        [g_library hideBusyOverlay];
+        [TsubomiLibraryStateBridge setBusyMessage:nil];
         present_alert(@"Couldn’t start game", text);
     });
 }
@@ -3067,7 +1460,7 @@ void vita3k_ios_show_boot_error(const std::string &message) {
 void vita3k_ios_set_jit_available(const bool available) {
     perform_on_main(^{
         g_jit_available = available;
-        [g_library setJitAvailable:available];
+        [TsubomiLibraryStateBridge setJITAvailable:available];
     });
 }
 
@@ -3141,6 +1534,14 @@ void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_r
     for (const auto &label : restart_required)
         [labels addObject:[NSString stringWithUTF8String:label.c_str()]];
     perform_on_main(^{
-        [g_library reportRestartRequired:labels];
+        if (labels.count == 0)
+            return;
+        // Restart-required settings are reported through the same toast the
+        // library uses for import results, rather than a modal alert: the
+        // change has already been applied and saved, so this is information,
+        // not a decision.
+        [TsubomiLibraryStateBridge showStatusMessage:
+            [NSString stringWithFormat:@"Restart Tsubomi to apply: %@",
+                [labels componentsJoinedByString:@", "]]];
     });
 }

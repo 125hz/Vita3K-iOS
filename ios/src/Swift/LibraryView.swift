@@ -71,7 +71,7 @@ struct LibraryView: View {
             ContentUnavailableView {
                 Label("No Games", systemImage: "gamecontroller")
             } description: {
-                Text("Use + to import a game you legally own (.vpk, .zip or .pkg).")
+                Text("Tap + to import a game")
             }
         } else if showsCarousel {
             carouselContent
@@ -250,13 +250,9 @@ struct LibraryView: View {
             }
         }
 
-        ToolbarItem(placement: .status) {
-            if !library.firmwareVersion.isEmpty {
-                Text(library.firmwareVersion)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-        }
+        // The firmware version indicator that used to sit here is gone: it is
+        // shown in Settings > About, and the library header is worth more as
+        // space for covers.
     }
 
     @ViewBuilder

@@ -211,6 +211,12 @@ final class LibraryStateBridge: NSObject {
         LibraryState.shared.setBusy(message)
     }
 
+    /// Re-derive the entries from the core's last snapshot, for frontend-only
+    /// changes the core has no new data for (a rename, a new custom cover).
+    @objc static func refreshEntries() {
+        LibraryState.shared.refreshAfterRename()
+    }
+
     // MARK: - Game controller
 
     /// D-pad. `dx`/`dy` are -1, 0 or 1; the state maps them onto whichever

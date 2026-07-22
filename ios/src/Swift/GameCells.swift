@@ -64,14 +64,18 @@ private struct GameMetadata: View {
             if showVersion {
                 Text(game.versionText)
             }
-            HStack(spacing: 4) {
+            // Baseline-aligned: an HStack centres its children vertically, so
+            // the trophy glyph (whose bounding box is taller than the digits)
+            // sat visibly lower than the text beside it.
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("\(game.playedTimeText)  ·  \(game.lastPlayedText)")
                 if game.trophiesTotal > 0 {
-                    // Inline in the played line, as in the UIKit cell, rather
-                    // than on a line of its own.
-                    Image(systemName: "trophy.fill")
-                        .foregroundStyle(.yellow)
-                    Text("\(game.trophiesUnlocked)/\(game.trophiesTotal)")
+                    // Inline in the played line, as in the UIKit cell. Built by
+                    // Text concatenation rather than an HStack of Image + Text
+                    // so the glyph shares the digits' baseline at every Dynamic
+                    // Type size, while keeping its own colour.
+                    Text(Image(systemName: "trophy.fill")).foregroundColor(.yellow)
+                        + Text(" \(game.trophiesUnlocked)/\(game.trophiesTotal)")
                 }
             }
             if showSize {
