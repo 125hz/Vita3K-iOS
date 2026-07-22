@@ -421,6 +421,18 @@ fs::path ios_storage_path() {
 // wrong physical position (a real MFi/third-party quirk - some report
 // Xbox-style positions where Vita3K expects PlayStation-style) be corrected
 // from Settings instead of needing Vita3K's full desktop rebinding UI.
+// Upstream selects the Vulkan memory-mapping method from a config string, and
+// any unrecognized value parses to MappingMethod::Disabled (see the mapping
+// parse in vulkan/renderer.cpp). "disabled" therefore restores exactly the
+// pre-double-buffer iOS path: no memory mapping, so features.enable_memory_mapping
+// is false and support_unmapped_surface_sync turns the staging-buffer readback
+// back on. Only "double-buffer" is offered as the enabled value - PageTable and
+// ExternalHost import host pointers as GPU memory, which MoltenVK does not do
+// reliably, and both stay masked off for iOS in VKState::create.
+const char *ios_memory_mapping_for(const Vita3KIOSSettings &settings) {
+    return settings.double_buffer ? "double-buffer" : "disabled";
+}
+
 int face_button_slot_for_physical(short physical_button) {
     switch (physical_button) {
     case SDL_GAMEPAD_BUTTON_EAST: return 1;
@@ -496,6 +508,16 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
 
         // MoltenVK-backed Vulkan is the only renderer on iOS.
         cfg.backend_renderer = "Vulkan";
+
+        // Graphics > Double buffer defaults off on iOS (see the setting's
+        // comment in NativeFrontend.h). Upstream's default for this field is
+        // "double-buffer", and 0.20.0-0.22.0 persisted it, so flip it once on
+        // the first launch of a build that exposes the switch. After that the
+        // user's own choice is what round-trips through config.yml.
+        if (vita3k_ios_consume_double_buffer_default_migration()) {
+            LOG_INFO("iOS: migrating memory-mapping default to disabled (was '{}')", cfg.memory_mapping);
+            cfg.memory_mapping = "disabled";
+        }
 
         // iOS assigns the app container a new absolute path on every
         // reinstall while keeping Documents' contents, so an absolute path
@@ -658,6 +680,7 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
         .anisotropic_filtering = current.anisotropic_filtering,
         .high_accuracy = current.high_accuracy,
         .surface_sync = !current.disable_surface_sync,
+        .double_buffer = (current.memory_mapping == "double-buffer"),
         .bind_cross = binds_sized ? face_button_slot_for_physical(binds[SDL_GAMEPAD_BUTTON_SOUTH]) : 0,
         .bind_circle = binds_sized ? face_button_slot_for_physical(binds[SDL_GAMEPAD_BUTTON_EAST]) : 1,
         .bind_square = binds_sized ? face_button_slot_for_physical(binds[SDL_GAMEPAD_BUTTON_WEST]) : 2,
@@ -1184,6 +1207,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
         current.anisotropic_filtering = settings.anisotropic_filtering;
         current.high_accuracy = settings.high_accuracy;
         current.disable_surface_sync = !settings.surface_sync;
+        current.memory_mapping = ios_memory_mapping_for(settings);
         current.audio_backend = "SDL";
     };
     apply(desired.current_config);
@@ -1196,6 +1220,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     desired.anisotropic_filtering = settings.anisotropic_filtering;
     desired.high_accuracy = settings.high_accuracy;
     desired.disable_surface_sync = !settings.surface_sync;
+    desired.memory_mapping = ios_memory_mapping_for(settings);
     desired.audio_backend = "SDL";
     // See face_button_slot_for_physical/face_button_physical_for_slot above
     // and the reset_controller_binding call at boot.
@@ -1231,11 +1256,12 @@ void apply_game_session_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &s
     current.anisotropic_filtering = settings.anisotropic_filtering;
     current.high_accuracy = settings.high_accuracy;
     current.disable_surface_sync = !settings.surface_sync;
+    current.memory_mapping = ios_memory_mapping_for(settings);
     emuenv.display.fps_limit.store(60, std::memory_order_relaxed);
-    LOG_INFO("Per-game settings override active: res x{} vsync={} fps=60 cpu_opt={} ngs={} async={} aniso={} high_accuracy={} surface_sync={}",
+    LOG_INFO("Per-game settings override active: res x{} vsync={} fps=60 cpu_opt={} ngs={} async={} aniso={} high_accuracy={} surface_sync={} double_buffer={}",
         settings.resolution_multiplier, settings.v_sync, settings.cpu_opt,
         settings.ngs_enable, settings.async_pipeline_compilation, settings.anisotropic_filtering,
-        settings.high_accuracy, settings.surface_sync);
+        settings.high_accuracy, settings.surface_sync, settings.double_buffer);
 }
 
 std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {

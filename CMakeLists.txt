@@ -59,6 +59,14 @@ if(APPLE)
     enable_language(OBJC)
     if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
         enable_language(OBJCXX)
+        # The iOS frontend's UI is SwiftUI. Swift is enabled only for this
+        # configuration: every other platform (and the bootstrap iOS build)
+        # must keep configuring without a Swift toolchain present.
+        enable_language(Swift)
+        if(CMAKE_Swift_COMPILER_VERSION VERSION_LESS 5.9)
+            message(FATAL_ERROR
+                "The iOS frontend needs Swift 5.9 or newer (found ${CMAKE_Swift_COMPILER_VERSION}).")
+        endif()
     endif()
 endif()
 

@@ -1865,12 +1865,19 @@ TrappedBuffer *BufferTrapping::access_buffer(Address addr, uint32_t size, MemSta
     // that GPU-written data with the stale original every single frame -
     // this is what made Persona 4's character models render as garbled
     // shards after DoubleBuffer mapping was enabled on iOS. So for these
-    // buffers specifically, still trust the dirty flag/real mprotect fault
-    // even when can_mprotect_buffer_trapping is false: it is a much smaller,
-    // less frequently written subset of memory than every surface, so the
-    // debugger-trap risk that motivated disabling mprotect elsewhere is
-    // more bounded here, and it is the only way to know when the CPU (not
-    // the GPU) has legitimately re-authored the buffer.
+    // buffers specifically, do not re-copy: treat the mirror as GPU-owned
+    // after its initial upload.
+    //
+    // Where faults DO work, the dirty flag distinguishes "the GPU wrote this"
+    // from "the CPU legitimately re-authored this", and add_protect below
+    // installs the fault that sets it. Where they do not (iOS: a debugger
+    // stays attached for sideloaded JIT and intercepts the access-violation
+    // trap - a device log confirms access_violation_traps=0 for a whole
+    // session), the flag can never be set, so this degrades to permanent
+    // GPU ownership. That is the correct approximation of the two available
+    // behaviours, but the mprotect call itself must then be skipped: marking
+    // guest pages read-only when nothing will ever service the resulting
+    // fault only risks losing the guest's write.
     const bool trust_dirty_tracking = state.can_mprotect_buffer_trapping || always_trap;
 
     if (is_buffer_small && always_trap) {
@@ -1938,7 +1945,9 @@ TrappedBuffer *BufferTrapping::access_buffer(Address addr, uint32_t size, MemSta
         it->second.mapped_location += addr - mem_it->first;
     }
 
-    if (trust_dirty_tracking) {
+    // Only where the fault can actually be delivered - see trust_dirty_tracking
+    // above for why a shader-store buffer does not opt into this on iOS.
+    if (state.can_mprotect_buffer_trapping) {
         Address aligned_addr;
         uint32_t aligned_size;
         if (cover_everything) {

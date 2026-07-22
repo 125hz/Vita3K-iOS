@@ -60,6 +60,15 @@ struct Vita3KIOSSettings {
     // Keep GPU render targets synchronized with guest-visible surface data.
     // Some titles, including Gravity Rush, need this for correct lighting.
     bool surface_sync = false;
+    // Real Vulkan memory mapping ("double buffer"): guest vertex/uniform/index
+    // data and render targets are mirrored into a host-visible buffer instead
+    // of going through the iOS staging-buffer surface-sync approximation.
+    // Off by default: it fixes at least one Gravity Rush surface that never
+    // gets populated, but it also routes shader-store vertex buffers through
+    // dirty tracking that needs mprotect faults iOS cannot deliver reliably
+    // (see can_mprotect_buffer_trapping), which garbles Persona 4 Golden's
+    // character models. Leave off unless a title demonstrably needs it.
+    bool double_buffer = false;
     // Physical face-button remap: which physical face-button position
     // (0=Bottom, 1=Right, 2=Left, 3=Top) triggers each Vita face button.
     // Global only (not a per-game override) - a controller's button layout
@@ -118,6 +127,14 @@ void vita3k_ios_hide_library();
 std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action();
 void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_required);
 int vita3k_ios_load_fps_limit();
+
+// Returns true exactly once, on the first launch of a build that knows about
+// the Graphics > Double buffer switch. Versions 0.20.0-0.22.0 enabled memory
+// mapping unconditionally and persisted "double-buffer" into config.yml, so
+// without this those users would keep the setting (and Persona 4 Golden's
+// garbled models) even though it now defaults off. A one-shot migration rather
+// than a permanent override: once it has run, the user's own choice sticks.
+bool vita3k_ios_consume_double_buffer_default_migration();
 void vita3k_ios_present_trophies(const Vita3KIOSTrophyCollection &collection);
 void vita3k_ios_share_file(const std::string &path);
 void vita3k_ios_request_current_trophies();

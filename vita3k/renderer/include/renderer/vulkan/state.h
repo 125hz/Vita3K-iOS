@@ -117,9 +117,11 @@ struct VKState : public renderer::State {
     // surface_cache.h). When false, access_buffer always re-copies instead of
     // trusting a "clean" flag that a missed fault would never clear -
     // EXCEPT for shader-store buffers (access_buffer's always_trap param),
-    // which still need the real fault: those are written by the GPU
+    // which are never re-copied at all: those are written by the GPU
     // directly, and blindly re-copying guest RAM over them every access
     // clobbers that GPU-written data with the stale CPU-authored original.
+    // No mprotect is installed for them either when this is false, since
+    // nothing would service the resulting fault.
     bool can_mprotect_buffer_trapping = true;
 
     // queue where we put requests that need to wait for the GPU

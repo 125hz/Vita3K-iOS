@@ -12,10 +12,17 @@ endif()
 if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
     # Stage-2 upstream-core application: SDL3 owns the UIKit application
     # lifecycle and the frontend boots titles through the real emulator.
+    # src/Swift/*.swift is the SwiftUI frontend; TsubomiBridge.mm is the only
+    # thing it talks to (a plain Objective-C facade - see the bridging header
+    # below for why Swift never sees the C++ core directly).
+    file(GLOB VITA3K_IOS_SWIFT_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Swift/*.swift")
     add_executable(Vita3KiOS MACOSX_BUNDLE
         src/NativeFrontend.mm
+        src/TsubomiBridge.mm
         src/UpstreamMain.cpp
         src/VirtualController.mm
+        ${VITA3K_IOS_SWIFT_SOURCES}
         ${CMAKE_CURRENT_SOURCE_DIR}/Assets.xcassets
     )
     # Compile the app-icon asset catalog (Xcode generator runs actool) so the
@@ -24,8 +31,31 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
         PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     target_include_directories(Vita3KiOS PRIVATE include)
     target_compile_features(Vita3KiOS PRIVATE cxx_std_23)
-    target_compile_options(Vita3KiOS PRIVATE -Wall -Wextra)
+    # -Wall/-Wextra are C-family flags; passing them to swiftc is an error, so
+    # scope them to the languages that understand them.
+    target_compile_options(Vita3KiOS PRIVATE
+        $<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Wall>
+        $<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Wextra>)
     target_compile_definitions(Vita3KiOS PRIVATE VITA3K_IOS_UPSTREAM_CORE=1)
+    # Swift <-> Objective-C bridging.
+    #   * The bridging header is what Swift sees: it exposes ONLY
+    #     TsubomiBridge.h, a pure Objective-C facade. Swift deliberately does
+    #     not get C++ interop here - the core's headers are heavy C++23 and
+    #     importing them into every Swift file is both slow and fragile.
+    #   * PRODUCT_MODULE_NAME is pinned so the generated header the
+    #     Objective-C++ side imports has a stable name ("Tsubomi-Swift.h").
+    #     Left to default it would be derived from OUTPUT_NAME ("Vita3K-iOS")
+    #     with the hyphen mangled to an underscore.
+    set_target_properties(Vita3KiOS PROPERTIES
+        XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
+        XCODE_ATTRIBUTE_PRODUCT_MODULE_NAME "Tsubomi"
+        XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Swift/Tsubomi-Bridging-Header.h"
+        XCODE_ATTRIBUTE_SWIFT_OPTIMIZATION_LEVEL[variant=Release] "-O"
+        XCODE_ATTRIBUTE_SWIFT_OPTIMIZATION_LEVEL[variant=Debug] "-Onone"
+        # Whole-module in Release lets the optimizer specialize across files,
+        # which matters for SwiftUI view bodies.
+        XCODE_ATTRIBUTE_SWIFT_COMPILATION_MODE[variant=Release] "wholemodule")
     target_link_libraries(Vita3KiOS PRIVATE
         vita3k
         audio
@@ -34,6 +64,7 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
         np
         packages
         SDL3::SDL3
+        "-framework SwiftUI"
         "-framework AVFoundation"
         "-framework CoreGraphics"
         "-framework Foundation"
