@@ -50,24 +50,16 @@ static UIWindow *activeWindow() {
 // every surface, which Apple's guidance reserves for the primary action;
 // pressed-state feedback below uses a real glass tint instead.
 static UIVisualEffect *glassEffect(const BOOL interactive = YES) {
-    if (@available(iOS 26.0, *)) {
-        static UIGlassEffect *live = nil;
-        static UIGlassEffect *stat = nil;
-        static dispatch_once_t once;
-        dispatch_once(&once, ^{
-            live = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-            live.interactive = YES;
-            stat = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-            stat.interactive = NO;
-        });
-        return interactive ? live : stat;
-    }
-    static UIBlurEffect *fallback = nil;
-    static dispatch_once_t fallbackOnce;
-    dispatch_once(&fallbackOnce, ^{
-        fallback = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+    static UIGlassEffect *live = nil;
+    static UIGlassEffect *stat = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        live = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+        live.interactive = YES;
+        stat = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+        stat.interactive = NO;
     });
-    return fallback;
+    return interactive ? live : stat;
 }
 
 static constexpr NSInteger glassBackgroundTag = 0x3301;
@@ -536,14 +528,8 @@ static UITapGestureRecognizer *g_three_finger_tap = nil;
     button.exclusiveTouch = NO;
     button.backgroundColor = UIColor.clearColor;
     // Liquid Glass draws its own edge highlight; a hard 1.25pt white hairline
-    // on top of it reads as a sticker border and fights the material. Keep the
-    // stroke only on the pre-iOS 26 blur fallback, which has no edge of its own.
-    if (@available(iOS 26.0, *)) {
-        button.layer.borderWidth = 0;
-    } else {
-        button.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.62].CGColor;
-        button.layer.borderWidth = 1.25;
-    }
+    // on top of it reads as a sticker border and fights the material.
+    button.layer.borderWidth = 0;
     // SELECT/START carry a whole word inside a small capsule; use a smaller
     // font so the label fits instead of hugging the edges.
     const BOOL wordLabel = [key isEqualToString:@"select"] || [key isEqualToString:@"start"];

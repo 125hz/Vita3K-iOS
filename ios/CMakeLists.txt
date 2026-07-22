@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(VITA3K_IOS_DEPLOYMENT_TARGET "17.0" CACHE STRING "Minimum supported iOS version")
+# iOS 26 minimum. The frontend is SwiftUI built around Liquid Glass, which is
+# iOS 26 and later; supporting anything earlier meant carrying a parallel
+# UIBlurEffect presentation of every surface and availability-guarding each
+# API, for devices that cannot run the design the app is built around.
+set(VITA3K_IOS_DEPLOYMENT_TARGET "26.0" CACHE STRING "Minimum supported iOS version")
 set(VITA3K_IOS_BUNDLE_ID "org.vita3k.experimental.ios" CACHE STRING "Application bundle identifier")
 option(VITA3K_IOS_LINK_CORE "Link the first upstream Vita3K core slice" ON)
 

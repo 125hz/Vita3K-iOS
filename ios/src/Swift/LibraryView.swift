@@ -359,8 +359,9 @@ struct LibraryView: View {
                 Label("Adjust cover crop", systemImage: "crop")
             }
         }
-        // Spelled out rather than Button(_:systemImage:role:action:), which is
-        // newer than this app's iOS 17 deployment target.
+        // Spelled out rather than Button(_:systemImage:role:action:) so the
+        // destructive button matches the label-closure form used by the rest
+        // of this menu.
         Button(role: .destructive) {
             deleteTarget = game
         } label: {

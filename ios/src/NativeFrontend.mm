@@ -210,26 +210,16 @@ NSAttributedString *game_metadata(const Vita3KIOSGameEntry &game) {
 // is assigned, so handing out a fresh object per call made cell reuse pay for
 // a full effect teardown on every dequeue.
 UIVisualEffect *glass_effect(const BOOL interactive = YES) {
-    if (@available(iOS 26.0, *)) {
-        static UIGlassEffect *live = nil;
-        static UIGlassEffect *stat = nil;
-        static dispatch_once_t once;
-        dispatch_once(&once, ^{
-            live = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-            live.interactive = YES;
-            stat = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-            stat.interactive = NO;
-        });
-        return interactive ? live : stat;
-    }
-    // Adaptive material (not the ...Dark variant) so the pre-iOS 26 fallback
-    // also tracks light/dark mode.
-    static UIBlurEffect *fallback = nil;
-    static dispatch_once_t fallback_once;
-    dispatch_once(&fallback_once, ^{
-        fallback = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+    static UIGlassEffect *live = nil;
+    static UIGlassEffect *stat = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        live = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+        live.interactive = YES;
+        stat = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+        stat.interactive = NO;
     });
-    return fallback;
+    return interactive ? live : stat;
 }
 
 // Tinted glass for the one element per screen that should stand out. Callers
@@ -237,13 +227,10 @@ UIVisualEffect *glass_effect(const BOOL interactive = YES) {
 // banners leave it off so they cost a single composite instead of a live
 // refraction pass.
 UIVisualEffect *glass_effect_tinted(UIColor *tint, const BOOL interactive = NO) {
-    if (@available(iOS 26.0, *)) {
-        UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-        effect.interactive = interactive;
-        effect.tintColor = tint;
-        return effect;
-    }
-    return glass_effect(interactive);
+    UIGlassEffect *effect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+    effect.interactive = interactive;
+    effect.tintColor = tint;
+    return effect;
 }
 
 // Liquid Glass shapes use continuous ("squircle") corners, not circular arcs.

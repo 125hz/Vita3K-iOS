@@ -43,6 +43,14 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.24.0", notes: [
+            """
+            Tsubomi now requires iOS 26. The interface is built around Liquid Glass, and supporting \
+            earlier versions meant shipping a second, non-glass presentation of every surface for \
+            devices that cannot run the design anyway.
+            """,
+            "On-screen controls lose the hard white outline around each button — it only ever existed to give the older blur effect an edge that Liquid Glass draws for itself.",
+        ]),
         Release(version: "0.23.2", notes: [
             "Second build fix. Everything listed under 0.23.0 arrives here; 0.23.0 and 0.23.1 never produced a working build.",
         ]),
