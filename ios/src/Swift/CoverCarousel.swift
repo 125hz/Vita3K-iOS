@@ -146,9 +146,11 @@ struct CoverCarousel<Menu: View>: View {
             let viewport = proxy.bounds(of: .scrollView(axis: .horizontal)) ?? .zero
             // 0 at the centre, 1 once a full cover away.
             let stride = max(frame.width + 18, 1)
-            let distance = min(abs(frame.midX - viewport.midX) / stride, 1)
+            // Double, not CGFloat: brightness and saturation take Double, and
+            // mixing the two makes the arithmetic ambiguous.
+            let distance = Double(min(abs(frame.midX - viewport.midX) / stride, 1))
             return content
-                .scaleEffect(1 - 0.14 * distance)
+                .scaleEffect(CGFloat(1 - 0.14 * distance))
                 // Held back, not hidden: the neighbours are still browsable
                 // covers, so this is a hierarchy cue rather than a disabled
                 // state. Brightness rather than opacity, so a cover dims
