@@ -4,14 +4,12 @@ import SwiftUI
 /// focused cover is full size and its neighbours are scaled down and dimmed.
 ///
 /// Looping works the way the UIKit version's did — the games are repeated many
-/// times and indices map back with modulo — but the seam is handled by silently
-/// recentring the scroll position onto the equivalent cover in the middle
-/// repeat once scrolling settles. The content either side is identical, so the
-/// jump is invisible.
+/// times and indices map back with modulo — but there is no seam handling: the
+/// row simply is a few hundred covers long and starts in the middle. See
+/// `repeatCount`.
 ///
-/// The dimming is a `scrollTransition`, which the system evaluates during the
-/// first layout pass. That is what makes the neighbours arrive already dimmed
-/// instead of only after the first scroll.
+/// The dimming compares each cover against the tracked centre item rather than
+/// using `scrollTransition`; see the note on it in `cover(_:side:isFocused:)`.
 @MainActor
 struct CoverCarousel<Menu: View>: View {
     let games: [GameEntry]
@@ -69,7 +67,7 @@ struct CoverCarousel<Menu: View>: View {
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 18) {
                     ForEach(items) { item in
-                        cover(item.game, side: side)
+                        cover(item.game, side: side, isFocused: item.id == scrolledID)
                             .id(item.id)
                     }
                 }
@@ -77,11 +75,10 @@ struct CoverCarousel<Menu: View>: View {
             }
             // safeAreaPadding on the scroll view, NOT padding inside its
             // content. Padding applied after scrollTargetLayout() wraps the
-            // target layout in a larger container, which throws off both the
-            // snap positions (one cover took most of a screen-width of drag)
-            // and the scroll transition thresholds (no cover ever left the
-            // identity phase, so nothing dimmed). This insets the content
-            // while leaving the targets and phases measured on the covers.
+            // target layout in a larger container, so the snap positions were
+            // measured on that container instead of the covers - advancing one
+            // game took most of a screen-width of drag. This insets the content
+            // while leaving the scroll targets measured on the covers.
             .safeAreaPadding(.horizontal, max(0, (proxy.size.width - side) / 2))
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $scrolledID, anchor: .center)
@@ -117,7 +114,7 @@ struct CoverCarousel<Menu: View>: View {
         .opacity(dimmed ? 0.55 : 1)
     }
 
-    private func cover(_ game: GameEntry, side: CGFloat) -> some View {
+    private func cover(_ game: GameEntry, side: CGFloat, isFocused: Bool) -> some View {
         VStack(spacing: 10) {
             GameCover(game: game)
                 .frame(width: side, height: side)
@@ -130,25 +127,25 @@ struct CoverCarousel<Menu: View>: View {
                 .lineLimit(1)
         }
         .frame(width: side)
-        // Continuous falloff rather than a binary identity check: phase.value
-        // runs about -1...1 across the visible span, so a cover dims and
-        // shrinks progressively as it leaves the centre instead of snapping
-        // between two states.
-        // .threshold(.centered) is the whole point here. By default a view is
-        // in the identity phase whenever it is *fully visible*, and the side
-        // padding that centres the row leaves several covers fully visible at
-        // once - so every one of them stayed at full size and brightness.
-        // Centred means only the cover under the middle is in identity.
-        .scrollTransition(.interactive.threshold(.centered), axis: .horizontal) { content, phase in
-            content
-                .scaleEffect(phase.isIdentity ? 1 : 0.86)
-                // Slightly held back, not hidden: the neighbours are still
-                // browsable covers, so this is a hierarchy cue rather than a
-                // disabled state. Brightness rather than opacity, so a cover
-                // does not go translucent over the background.
-                .brightness(phase.isIdentity ? 0 : -0.18)
-                .saturation(phase.isIdentity ? 1 : 0.85)
-        }
+        // Driven by the tracked centre item rather than scrollTransition.
+        //
+        // Three attempts with scrollTransition failed to dim anything: its
+        // phase is decided by threshold semantics measured against the scroll
+        // view's visible region, which yielded identity for every cover here
+        // whatever threshold was used, and gives no diagnostic when it is
+        // wrong. `scrolledID` is already tracked for the haptics and the pad
+        // focus, and comparing against it is unambiguous.
+        //
+        // The trade-off is that this settles per cover rather than tracking
+        // the drag continuously; the animation below covers the transition.
+        .scaleEffect(isFocused ? 1 : 0.86)
+        // Held back slightly, not hidden: the neighbours are still browsable
+        // covers, so this is a hierarchy cue, not a disabled state. Brightness
+        // rather than opacity, so a cover dims instead of going translucent
+        // against the background.
+        .brightness(isFocused ? 0 : -0.18)
+        .saturation(isFocused ? 1 : 0.85)
+        .animation(.snappy(duration: 0.2), value: isFocused)
         .contentShape(.rect)
         .onTapGesture { onLaunch(game) }
         .contextMenu { menu(game) }
