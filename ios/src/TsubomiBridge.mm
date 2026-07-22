@@ -284,6 +284,10 @@ id bridge_games() {
     vita3k_ios_virtual_pad_release_all();
 }
 
++ (void)reportSafeAreaTopPixels:(float)pixels {
+    vita3k_ios_report_safe_area_top_pixels(pixels);
+}
+
 @end
 
 @implementation TsubomiBridge
@@ -433,6 +437,10 @@ id bridge_games() {
 
 + (BOOL)firmwareReadyOrPresentAlert {
     return vita3k_ios_internal::firmware_ready_or_alert();
+}
+
++ (void)finishLayoutEditing {
+    vita3k_ios_finish_layout_editing();
 }
 
 + (void)presentControllerOptions {

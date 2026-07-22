@@ -45,6 +45,20 @@ struct ControlsOverlayView: View {
             }
         }
         .ignoresSafeArea()
+        // The core letterboxes the guest image below the notch and reads this
+        // through vita3k_ios_safe_area_top_pixels; it cannot ask SwiftUI.
+        .background {
+            GeometryReader { proxy in
+                Color.clear.onChange(of: proxy.safeAreaInsets.top, initial: true) { _, top in
+                    let scale = UIScreen.main.nativeScale
+                    SafeAreaReporter.topPixels = Float(top * scale)
+                }
+            }
+        }
+        // The three-finger tap that restores a hidden menu button stays a
+        // UIGestureRecognizer on the window (see vita3k_ios_show_virtual_controller):
+        // SwiftUI has no multi-finger tap gesture, and it has to fire even
+        // where this view passes touches through to the game.
         .onAppear { ControllerHaptics.prepare() }
         .onDisappear { ControllerHaptics.end() }
     }
@@ -106,9 +120,12 @@ struct ControlsOverlayView: View {
         }
 
         VStack {
-            Button("Done Editing") {
+            Button("Done") {
                 model.endDrag()
-                model.isEditing = false
+                // Through the host, not by clearing isEditing directly: when
+                // editing was started from the library with no game running,
+                // the overlay is a preview that has to be torn down too.
+                ControlsHost.finishLayoutEditing()
             }
             .buttonStyle(.glassProminent)
             .controlSize(.large)

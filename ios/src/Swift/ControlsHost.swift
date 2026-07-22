@@ -29,6 +29,13 @@ final class ControlsHost: NSObject {
         ControlsModel.shared.isEditing = editing
     }
 
+    /// Called by the editor's Done button. Routed through the C side because a
+    /// session started from the library has a preview overlay to tear down,
+    /// which only that side knows about.
+    static func finishLayoutEditing() {
+        Bridge.finishLayoutEditing()
+    }
+
     @objc static var isLayoutEditing: Bool {
         ControlsModel.shared.isEditing
     }
@@ -49,5 +56,41 @@ final class ControlsHost: NSObject {
     /// Restores the built-in control layout.
     @objc static func resetLayout() {
         ControlsModel.shared.resetLayout()
+    }
+
+    /// Hides the floating menu button, from the in-game menu's own action.
+    @objc(setMenuButtonVisible:)
+    static func setMenuButtonVisible(_ visible: Bool) {
+        let model = ControlsModel.shared
+        // Written to both layouts: the button is chrome, and hiding it in
+        // landscape only to have it reappear on rotation would read as a bug.
+        for orientation in ["landscape", "portrait"] {
+            model.setMenuVisible(visible, in: orientation)
+        }
+    }
+
+    /// Whether the menu button is currently hidden, so the three-finger tap
+    /// knows if it has anything to restore.
+    @objc static var isMenuButtonHidden: Bool {
+        !ControlsModel.shared.isMenuVisibleInAnyLayout
+    }
+
+    /// Reports the window's top safe-area inset in pixels. The core reads this
+    /// to letterbox the guest image below the notch.
+    @objc(setSafeAreaTopPixels:)
+    static func setSafeAreaTopPixels(_ pixels: Float) {
+        SafeAreaReporter.topPixels = pixels
+    }
+}
+
+/// Bridges the overlay's measured safe area to the C++ side, which cannot ask
+/// SwiftUI for it.
+@MainActor
+enum SafeAreaReporter {
+    static var topPixels: Float = 0 {
+        didSet {
+            guard topPixels != oldValue else { return }
+            VirtualPad.reportSafeAreaTopPixels(topPixels)
+        }
     }
 }

@@ -214,6 +214,12 @@ NS_SWIFT_NAME(Bridge)
 /// Returns NO and presents an explanatory alert when firmware is missing.
 + (BOOL)firmwareReadyOrPresentAlert;
 
+/// Leaves the drag-to-reposition editor. Routed through here rather than
+/// flipping the model's flag directly: an editing session started from the
+/// library has a preview overlay to tear down, which only the presenting side
+/// knows about.
++ (void)finishLayoutEditing;
+
 /// Opens the virtual on-screen controller editor (opacity, scale, layout,
 /// visibility, physical-pad auto-hide). Still a UIKit screen.
 + (void)presentControllerOptions;
@@ -271,6 +277,11 @@ NS_SWIFT_NAME(VirtualPad)
 /// Clears every button and axis. Used when a session pauses with controls held
 /// down, so nothing stays stuck on.
 + (void)releaseAllInputs;
+
+/// The overlay's measured top safe-area inset, in pixels. The core reads this
+/// to letterbox the guest image below the notch, and cannot ask SwiftUI for it.
++ (void)reportSafeAreaTopPixels:(float)pixels
+    NS_SWIFT_NAME(reportSafeAreaTopPixels(_:));
 
 @end
 

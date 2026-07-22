@@ -17,6 +17,15 @@ void vita3k_ios_hide_virtual_controller();
 // the floating in-game menu.
 void vita3k_ios_present_controller_options();
 
+// Drag-to-reposition editor for the on-screen controls. Spins up a preview
+// overlay when no game is running, which finish tears back down.
+void vita3k_ios_begin_layout_editing();
+void vita3k_ios_finish_layout_editing();
+
+// The overlay reports the window's top safe-area inset here; the core reads it
+// back through vita3k_ios_safe_area_top_pixels to letterbox the guest image.
+void vita3k_ios_report_safe_area_top_pixels(float pixels);
+
 // SDL virtual-joystick writes for the SwiftUI on-screen controls. `button` and
 // `axis` are SDL_GamepadButton / SDL_GamepadAxis raw values. No-ops when the
 // virtual joystick has not been attached.

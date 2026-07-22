@@ -217,6 +217,18 @@ final class ControlsModel {
         placement(id, in: size)?.visible ?? false
     }
 
+    /// The menu button is written per orientation like everything else, but is
+    /// set for both at once - it is chrome, and hiding it in one orientation
+    /// only to have it reappear on rotation would read as a bug.
+    func setMenuVisible(_ visible: Bool, in orientation: String) {
+        layouts[orientation]?["menu"]?.visible = visible
+        scheduleSave()
+    }
+
+    var isMenuVisibleInAnyLayout: Bool {
+        layouts.values.contains { $0["menu"]?.visible == true }
+    }
+
     /// Restores the built-in layout for both orientations.
     func resetLayout() {
         layouts = Self.defaultLayouts()
