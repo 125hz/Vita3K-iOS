@@ -156,29 +156,6 @@ NS_SWIFT_NAME(Bridge)
 /// Records that onboarding has been completed, so it is never shown again.
 + (void)markOnboardingComplete;
 
-#pragma mark - Virtual gamepad
-
-/// The SDL virtual joystick behind the on-screen controls.
-///
-/// Called from the touch surface on every touch event, so these are kept as
-/// thin as possible: no allocation, no dispatch, straight through to SDL.
-NS_SWIFT_NAME(VirtualPad)
-@interface TsubomiVirtualPad : NSObject
-
-/// `button` is an SDL_GamepadButton raw value.
-+ (void)setButton:(int32_t)button pressed:(BOOL)pressed
-    NS_SWIFT_NAME(setButton(_:pressed:));
-
-/// `axis` is an SDL_GamepadAxis raw value; `value` is the SDL axis range.
-+ (void)setAxis:(int32_t)axis value:(int16_t)value
-    NS_SWIFT_NAME(setAxis(_:value:));
-
-/// Clears every button and axis. Used when a session pauses with controls held
-/// down, so nothing stays stuck on.
-+ (void)releaseAllInputs;
-
-@end
-
 #pragma mark - Library actions
 
 /// Boot a title. The caller is responsible for having checked that firmware is
@@ -271,6 +248,29 @@ NS_SWIFT_NAME(VirtualPad)
 
 /// Display string for the installed firmware, or nil when none is installed.
 @property(class, nonatomic, readonly, nullable) NSString *firmwareVersionDisplay;
+
+@end
+
+#pragma mark - Virtual gamepad
+
+/// The SDL virtual joystick behind the on-screen controls.
+///
+/// Called from the touch surface on every touch event, so these are kept as
+/// thin as possible: no allocation, no dispatch, straight through to SDL.
+NS_SWIFT_NAME(VirtualPad)
+@interface TsubomiVirtualPad : NSObject
+
+/// `button` is an SDL_GamepadButton raw value.
++ (void)setButton:(int32_t)button pressed:(BOOL)pressed
+    NS_SWIFT_NAME(setButton(_:pressed:));
+
+/// `axis` is an SDL_GamepadAxis raw value; `value` is the SDL axis range.
++ (void)setAxis:(int32_t)axis value:(int16_t)value
+    NS_SWIFT_NAME(setAxis(_:value:));
+
+/// Clears every button and axis. Used when a session pauses with controls held
+/// down, so nothing stays stuck on.
++ (void)releaseAllInputs;
 
 @end
 
