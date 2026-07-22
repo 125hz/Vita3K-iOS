@@ -61,6 +61,8 @@ void reload_library_cells();
 
 // Declared in NativeFrontend.mm's own scope rather than the anonymous
 // namespace: -updateGames:settings: calls it from further down the file.
+static void hide_boot_screen();
+
 static void vita3k_ios_internal_cache_snapshot(const std::vector<Vita3KIOSGameEntry> &games,
     const Vita3KIOSSettings &settings) {
     const std::lock_guard lock(g_settings_mutex);
@@ -1022,38 +1024,31 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         UIWindow *window = active_window();
         if (!window)
             return;
-        // Host the library under the root view controller's view, not directly
-        // on the window. UIButton context menus (the + import menu) need a view
-        // controller in the responder chain to present from; a view parented
-        // straight to the window has none, so taps did nothing.
-        // Parent the library to the WINDOW, not to the root view controller's
-        // view.
+        // The library's view goes on the WINDOW, and the controller has NO
+        // parent view controller. Both halves of that matter.
         //
-        // SDL's drawable is the root view controller's view, so a library
-        // hosted inside it is a descendant of that CAMetalLayer - and
-        // set_metal_drawables_hidden must then refuse to hide it, or it would
-        // hide the library along with it. The layer therefore kept compositing
-        // the last frame of a quit game behind the library forever. (The
-        // giveaway: the ghost vanished during screen recording, because
-        // capture does not composite a stale Metal drawable.)
+        // On the window, because SDL's drawable is the root view controller's
+        // view: a library hosted inside it is a descendant of that
+        // CAMetalLayer, and set_metal_drawables_hidden must then refuse to
+        // hide the layer or it would hide the library too. That layer kept
+        // compositing the last frame of a quit game behind the library
+        // forever. (The giveaway was that the ghost disappeared during screen
+        // recording - capture does not composite a stale Metal drawable.)
         //
-        // The responder-chain concern that put it here originally does not
-        // apply to a hosting controller: a view that is a view controller's
-        // root view inserts that controller into the chain, so menus and
-        // sheets still present correctly. It stays a child view controller of
-        // the root for appearance and trait callbacks.
-        UIViewController *rootController = window.rootViewController;
+        // Without containment, because a child view controller whose view is
+        // moved into a window its parent does not own trips UIKit's hierarchy
+        // check in _associatedViewControllerForwardsAppearanceCallbacks and
+        // raises. Doing both - child of the root controller, view on the
+        // window - crashed every launch in 0.27.0. Appearance callbacks are
+        // driven manually below instead, which is what SwiftUI's onAppear and
+        // task modifiers need.
         UIView *host = window;
         BOOL playLaunchIntro = NO;
         if (!g_library_controller) {
             g_library_controller = [TsubomiLibraryHost libraryViewController];
-            // Proper containment, so the hosting controller receives
-            // appearance and trait callbacks and can present sheets itself.
-            if (rootController)
-                [rootController addChildViewController:g_library_controller];
+            [g_library_controller beginAppearanceTransition:YES animated:NO];
             [host addSubview:library_view()];
-            if (rootController)
-                [g_library_controller didMoveToParentViewController:rootController];
+            [g_library_controller endAppearanceTransition];
             if (!g_app_launch_intro_shown) {
                 playLaunchIntro = YES;
                 g_app_launch_intro_shown = YES;
@@ -1105,6 +1100,8 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         }
         [library_view().superview bringSubviewToFront:library_view()];
         set_metal_drawables_hidden(window, YES);
+        // The library is up; the boot screen has nothing left to cover.
+        hide_boot_screen();
         [Vita3KPadNavigator.shared start];
         if (playLaunchIntro) {
             UIView *introTarget = library_view();
@@ -1165,9 +1162,11 @@ void vita3k_ios_hide_library() {
     perform_on_main(^{
         [Vita3KPadNavigator.shared stop];
         set_metal_drawables_hidden(library_view().window ?: active_window(), NO);
-        [g_library_controller willMoveToParentViewController:nil];
+        // Matches the manual appearance transition in show_library; there is
+        // no containment to unwind.
+        [g_library_controller beginAppearanceTransition:NO animated:NO];
         [library_view() removeFromSuperview];
-        [g_library_controller removeFromParentViewController];
+        [g_library_controller endAppearanceTransition];
         g_library_controller = nil;
         [g_onboarding_controller.view removeFromSuperview];
         g_onboarding_controller = nil;
@@ -1181,6 +1180,43 @@ std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action() {
     auto action = std::move(g_pending_action);
     g_pending_action.reset();
     return action;
+}
+
+static UIViewController *g_boot_screen_controller = nil;
+
+void vita3k_ios_show_boot_screen() {
+    perform_on_main(^{
+        UIWindow *window = active_window();
+        if (!window || g_boot_screen_controller)
+            return;
+        // No containment, and its view goes on the window - the same rule the
+        // library follows. See the note in vita3k_ios_show_library about why
+        // mixing the two crashes.
+        g_boot_screen_controller = [TsubomiBootScreenHost bootScreenViewController];
+        UIView *boot = g_boot_screen_controller.view;
+        boot.frame = window.bounds;
+        boot.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [g_boot_screen_controller beginAppearanceTransition:YES animated:NO];
+        [window addSubview:boot];
+        [g_boot_screen_controller endAppearanceTransition];
+        [window bringSubviewToFront:boot];
+    });
+}
+
+// Called once the library is on screen. Fades rather than cuts, so a fast
+// start does not flash.
+static void hide_boot_screen() {
+    if (!g_boot_screen_controller)
+        return;
+    UIViewController *controller = g_boot_screen_controller;
+    g_boot_screen_controller = nil;
+    [UIView animateWithDuration:0.35
+                     animations:^{ controller.view.alpha = 0; }
+                     completion:^(__unused BOOL finished) {
+        [controller beginAppearanceTransition:NO animated:NO];
+        [controller.view removeFromSuperview];
+        [controller endAppearanceTransition];
+    }];
 }
 
 int vita3k_ios_load_fps_limit() {
