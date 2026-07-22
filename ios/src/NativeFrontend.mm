@@ -1368,10 +1368,19 @@ void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime
                 [parts addObject:[NSString stringWithFormat:@"%.0f MB", vm_info.phys_footprint / (1024.0 * 1024.0)]];
         }
         if (show_battery) {
-            // batteryMonitoringEnabled is set once at library init, not here.
-            // With monitoring enabled, modern iOS reports batteryLevel in 1%
-            // steps, so show the plain percentage.
-            const float level = UIDevice.currentDevice.batteryLevel;
+            // Monitoring has to be on before batteryLevel returns anything but
+            // -1, and it used to be enabled in the UIKit library view's
+            // initialiser. That view is gone, so own it here: this is the only
+            // place that reads the level, and enabling it is idempotent.
+            //
+            // Granularity is the OS's to decide. UIDevice is documented as
+            // accurate to within 5%, and there is no public API that reports
+            // finer, so round to whole percent and show what the system gives
+            // rather than inventing precision.
+            UIDevice *device = UIDevice.currentDevice;
+            if (!device.batteryMonitoringEnabled)
+                device.batteryMonitoringEnabled = YES;
+            const float level = device.batteryLevel;
             if (level >= 0)
                 [parts addObject:[NSString stringWithFormat:@"%.0f%%", level * 100.0f]];
         }
