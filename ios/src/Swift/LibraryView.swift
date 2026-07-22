@@ -131,6 +131,8 @@ struct LibraryView: View {
             games: library.games,
             dimmed: !library.firmwareReady,
             padFocusedTitleID: carouselFocus,
+            stepToken: library.carouselStepToken,
+            stepDirection: library.carouselStepDirection,
             onLaunch: launch,
             menu: gameMenu(for:)
         )

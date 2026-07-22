@@ -18,6 +18,11 @@ struct CoverCarousel<Menu: View>: View {
     /// Pad focus. Two-way: scrolling by touch moves the pad's focus so the two
     /// never disagree, and D-pad input scrolls the row.
     @Binding var padFocusedTitleID: String?
+    /// D-pad stepping from LibraryState. The token changes on each press; the
+    /// direction says which way. Passed in rather than read from a shared
+    /// object because the carousel otherwise has no reference to it.
+    let stepToken: Int
+    let stepDirection: Int
     let onLaunch: (GameEntry) -> Void
     @ViewBuilder let menu: (GameEntry) -> Menu
 
@@ -106,8 +111,8 @@ struct CoverCarousel<Menu: View>: View {
         // travelling one way. Moving the scroll target directly (not through
         // the focus id) is also what keeps rapid presses in sync: each press
         // advances exactly one detent instead of racing a focus round-trip.
-        .onChange(of: library.carouselStepToken) { _, _ in
-            stepCarousel(by: library.carouselStepDirection)
+        .onChange(of: stepToken) { _, _ in
+            stepCarousel(by: stepDirection)
         }
         .sensoryFeedback(.selection, trigger: hapticTrigger)
         .opacity(dimmed ? 0.55 : 1)
