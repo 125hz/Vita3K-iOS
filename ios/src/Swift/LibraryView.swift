@@ -33,12 +33,11 @@ struct LibraryView: View {
                 // Keep the state's idea of the presentation in step with what
                 // is actually drawn, so pad D-pad movement matches what the
                 // user sees.
-                .onChange(of: showsCarousel, initial: true) { _, carousel in
-                    library.focusLayout = carousel ? .carousel
-                        : library.isListMode ? .list : .grid
+                .onChange(of: showsCarousel, initial: true) { _, _ in
+                    syncFocusLayout()
                 }
-                .onChange(of: library.isListMode) { _, list in
-                    library.focusLayout = showsCarousel ? .carousel : (list ? .list : .grid)
+                .onChange(of: library.isListMode) { _, _ in
+                    syncFocusLayout()
                 }
         }
         // Cross on the focused game routes through the same gating as a tap.
@@ -47,38 +46,20 @@ struct LibraryView: View {
             library.padLaunchTarget = nil
             launch(target)
         }
-        // Triangle opens the same actions as the long-press menu.
-        .confirmationDialog(
-            library.padActionsTarget?.displayTitle ?? "",
-            isPresented: Binding(
-                get: { library.padActionsTarget != nil },
-                set: { if !$0 { library.padActionsTarget = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let game = library.padActionsTarget {
-                gameMenu(for: game)
-            }
-        }
+        .modifier(PadActionsDialog(target: $library.padActionsTarget, menu: gameMenu(for:)))
         .sheet(item: $renameTarget) { game in
             RenameSheet(game: game) { library.refreshAfterRename() }
         }
-        .confirmationDialog(
-            deleteTarget.map { "Delete \($0.displayTitle)?" } ?? "",
-            isPresented: Binding(
-                get: { deleteTarget != nil },
-                set: { if !$0 { deleteTarget = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                if let game = deleteTarget {
-                    Bridge.delete(titleID: game.titleID)
-                }
-                deleteTarget = nil
-            }
-        } message: {
-            Text("The installed game, its update, and DLC are removed from this device. Saves and trophies are kept.")
+        .modifier(DeleteConfirmationDialog(target: $deleteTarget))
+    }
+
+    /// Keeps the state's idea of the presentation in step with what is drawn,
+    /// so D-pad movement matches what the user sees.
+    private func syncFocusLayout() {
+        if showsCarousel {
+            library.focusLayout = .carousel
+        } else {
+            library.focusLayout = library.isListMode ? .list : .grid
         }
     }
 
@@ -93,18 +74,7 @@ struct LibraryView: View {
                 Text("Use + to import a game you legally own (.vpk, .zip or .pkg).")
             }
         } else if showsCarousel {
-            CoverCarousel(
-                games: library.games,
-                dimmed: !library.firmwareReady,
-                padFocusedTitleID: Binding(
-                    get: { library.focusedTitleID },
-                    set: { library.setFocusedTitleID($0) }
-                )
-            ) { game in
-                launch(game)
-            } menu: { game in
-                gameMenu(for: game)
-            }
+            carouselContent
         } else if library.isListMode {
             listContent
         } else {
@@ -112,63 +82,114 @@ struct LibraryView: View {
         }
     }
 
+    /// Two-way with LibraryState so touch scrolling and D-pad focus agree.
+    private var carouselFocus: Binding<String?> {
+        Binding(
+            get: { library.focusedTitleID },
+            set: { library.setFocusedTitleID($0) }
+        )
+    }
+
+    private var carouselContent: some View {
+        CoverCarousel(
+            games: library.games,
+            dimmed: !library.firmwareReady,
+            padFocusedTitleID: carouselFocus,
+            onLaunch: launch,
+            menu: gameMenu(for:)
+        )
+    }
+
+    /// Split out for the same type-checking reason as `gridCell`.
+    private func listRow(_ game: GameEntry) -> some View {
+        Button {
+            launch(game)
+        } label: {
+            GameRow(game: game)
+        }
+        .buttonStyle(.plain)
+        .opacity(library.firmwareReady ? 1 : 0.55)
+        .contextMenu { gameMenu(for: game) }
+        .padFocusRing(isFocused: library.focusedTitleID == game.titleID)
+        .id(game.titleID)
+    }
+
     private var listContent: some View {
         // ScrollViewReader so the pad can bring its focused row into view;
         // List's own scrolling has no other way to be driven programmatically.
         ScrollViewReader { scroller in
             List(library.games) { game in
-                Button {
-                    launch(game)
-                } label: {
-                    GameRow(game: game)
-                }
-                .buttonStyle(.plain)
-                .opacity(library.firmwareReady ? 1 : 0.55)
-                .contextMenu { gameMenu(for: game) }
-                .padFocusRing(isFocused: library.focusedTitleID == game.titleID)
-                .id(game.titleID)
+                listRow(game)
             }
             .listStyle(.plain)
             .onChange(of: library.focusedTitleID) { _, focused in
-                guard let focused else { return }
-                withAnimation(.snappy) { scroller.scrollTo(focused, anchor: .center) }
+                scrollToFocused(focused, using: scroller)
             }
+        }
+    }
+
+    // Grid metrics, named so the layout and the pad's column arithmetic below
+    // cannot drift apart.
+    private static let gridMinimumWidth: CGFloat = 148
+    private static let gridSpacing: CGFloat = 14
+    private static let gridHorizontalPadding: CGFloat = 16
+
+    private static let gridColumns = [
+        GridItem(.adaptive(minimum: gridMinimumWidth), spacing: gridSpacing)
+    ]
+
+    /// Split out of `gridContent`, and annotated, because inferring the type of
+    /// the whole ScrollViewReader/GeometryReader/ScrollView/LazyVGrid/ForEach
+    /// nest in one expression defeats the type checker.
+    private func gridCell(_ game: GameEntry) -> some View {
+        Button {
+            launch(game)
+        } label: {
+            GameCard(game: game)
+        }
+        .buttonStyle(.plain)
+        .opacity(library.firmwareReady ? 1 : 0.55)
+        .contextMenu { gameMenu(for: game) }
+        .padFocusRing(isFocused: library.focusedTitleID == game.titleID)
+        .id(game.titleID)
+    }
+
+    private var gridScroll: some View {
+        ScrollView {
+            LazyVGrid(columns: Self.gridColumns, spacing: 18) {
+                ForEach(library.games) { game in
+                    gridCell(game)
+                }
+            }
+            .padding(.horizontal, Self.gridHorizontalPadding)
+            .padding(.vertical, 12)
         }
     }
 
     private var gridContent: some View {
         ScrollViewReader { scroller in
             GeometryReader { proxy in
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 148), spacing: 14)], spacing: 18) {
-                        ForEach(library.games) { game in
-                            Button {
-                                launch(game)
-                            } label: {
-                                GameCard(game: game)
-                            }
-                            .buttonStyle(.plain)
-                            .opacity(library.firmwareReady ? 1 : 0.55)
-                            .contextMenu { gameMenu(for: game) }
-                            .padFocusRing(isFocused: library.focusedTitleID == game.titleID)
-                            .id(game.titleID)
-                        }
+                gridScroll
+                    // The pad needs the column count to move up/down by a row.
+                    // Derived from the same metrics the adaptive GridItem uses.
+                    .onChange(of: proxy.size.width, initial: true) { _, width in
+                        library.gridColumnCount = Self.columnCount(forWidth: width)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                }
-                // The pad needs the column count to move up/down by a row.
-                // Derived from the same minimum and spacing the adaptive
-                // GridItem uses, so the two cannot disagree.
-                .onChange(of: proxy.size.width, initial: true) { _, width in
-                    library.gridColumnCount = max(1, Int((width - 32 + 14) / (148 + 14)))
-                }
             }
             .onChange(of: library.focusedTitleID) { _, focused in
-                guard let focused else { return }
-                withAnimation(.snappy) { scroller.scrollTo(focused, anchor: .center) }
+                scrollToFocused(focused, using: scroller)
             }
         }
+    }
+
+    private static func columnCount(forWidth width: CGFloat) -> Int {
+        let usable = width - gridHorizontalPadding * 2 + gridSpacing
+        return max(1, Int(usable / (gridMinimumWidth + gridSpacing)))
+    }
+
+    private func scrollToFocused(_ focused: String?, using scroller: ScrollViewProxy) {
+        guard let focused else { return }
+        withAnimation(.snappy) { scroller.scrollTo(focused, anchor: .center) }
     }
 
     // MARK: - Chrome
@@ -177,19 +198,25 @@ struct LibraryView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
             Menu {
-                Button("Import game (.vpk / .zip / .pkg)", systemImage: "arrow.down.doc") {
+                Button {
                     // Importing a game before firmware exists produces a title
                     // that cannot boot, so the gate lives here rather than at
                     // launch time only.
                     if Bridge.firmwareReadyOrPresentAlert() {
                         Bridge.presentGameImportPicker()
                     }
+                } label: {
+                    Label("Import game (.vpk / .zip / .pkg)", systemImage: "arrow.down.doc")
                 }
-                Button("Import license (work.bin)", systemImage: "key.fill") {
+                Button {
                     Bridge.presentLicenseImportPicker()
+                } label: {
+                    Label("Import license (work.bin)", systemImage: "key.fill")
                 }
-                Button("Import firmware (.PUP)", systemImage: "cpu") {
+                Button {
                     Bridge.presentFirmwareImportPicker()
+                } label: {
+                    Label("Import firmware (.PUP)", systemImage: "cpu")
                 }
             } label: {
                 Label("Add", systemImage: "plus")
@@ -204,16 +231,22 @@ struct LibraryView: View {
                 )
             }
 
-            Button("Refresh", systemImage: "arrow.clockwise") {
+            Button {
                 Bridge.refreshLibrary()
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
             }
 
-            Button("Graphics help", systemImage: "questionmark.circle") {
+            Button {
                 Bridge.presentGraphicsHelp()
+            } label: {
+                Label("Graphics help", systemImage: "questionmark.circle")
             }
 
-            Button("Settings", systemImage: "gearshape.fill") {
+            Button {
                 Bridge.presentGlobalSettings()
+            } label: {
+                Label("Settings", systemImage: "gearshape.fill")
             }
         }
 
@@ -281,33 +314,49 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func gameMenu(for game: GameEntry) -> some View {
-        Button("Import save", systemImage: "square.and.arrow.down") {
+        Button {
             Bridge.presentSaveImportPicker(titleID: game.titleID)
+        } label: {
+            Label("Import save", systemImage: "square.and.arrow.down")
         }
-        Button("Export save", systemImage: "square.and.arrow.up") {
+        Button {
             Bridge.exportSave(titleID: game.titleID)
+        } label: {
+            Label("Export save", systemImage: "square.and.arrow.up")
         }
-        Button("Rename title", systemImage: "pencil") {
+        Button {
             renameTarget = game
+        } label: {
+            Label("Rename title", systemImage: "pencil")
         }
-        Button("View trophies", systemImage: "trophy.fill") {
+        Button {
             Bridge.requestTrophies(titleID: game.titleID)
+        } label: {
+            Label("View trophies", systemImage: "trophy.fill")
         }
-        Button("Game settings", systemImage: "slider.horizontal.3") {
+        Button {
             Bridge.presentSettings(forTitle: game.titleID, displayName: game.displayTitle)
+        } label: {
+            Label("Game settings", systemImage: "slider.horizontal.3")
         }
-        Button("Custom cover art", systemImage: "photo") {
+        Button {
             Bridge.presentCoverPicker(titleID: game.titleID)
+        } label: {
+            Label("Custom cover art", systemImage: "photo")
         }
         if game.hasSettingsOverrides {
-            Button("Use global settings", systemImage: "arrow.uturn.backward.circle") {
+            Button {
                 Bridge.resetSettings(forTitle: game.titleID)
                 Bridge.refreshLibrary()
+            } label: {
+                Label("Use global settings", systemImage: "arrow.uturn.backward.circle")
             }
         }
         if game.hasCustomCover {
-            Button("Adjust cover crop", systemImage: "crop") {
+            Button {
                 Bridge.presentCoverCrop(titleID: game.titleID)
+            } label: {
+                Label("Adjust cover crop", systemImage: "crop")
             }
         }
         // Spelled out rather than Button(_:systemImage:role:action:), which is
@@ -330,5 +379,56 @@ struct LibraryView: View {
             return
         }
         Bridge.launch(titleID: game.titleID)
+    }
+}
+
+// The two item-driven dialogs are modifiers rather than inline calls on `body`.
+// Each needs a Binding<Bool> synthesised from an optional plus a ViewBuilder,
+// and inlining both pushed `body` past what the type checker will solve.
+
+/// Triangle on the focused game: the same actions as the long-press menu.
+private struct PadActionsDialog<Menu: View>: ViewModifier {
+    @Binding var target: GameEntry?
+    @ViewBuilder let menu: (GameEntry) -> Menu
+
+    private var isPresented: Binding<Bool> {
+        Binding(get: { target != nil }, set: { if !$0 { target = nil } })
+    }
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            target?.displayTitle ?? "",
+            isPresented: isPresented,
+            titleVisibility: .visible
+        ) {
+            if let target {
+                menu(target)
+            }
+        }
+    }
+}
+
+private struct DeleteConfirmationDialog: ViewModifier {
+    @Binding var target: GameEntry?
+
+    private var isPresented: Binding<Bool> {
+        Binding(get: { target != nil }, set: { if !$0 { target = nil } })
+    }
+
+    private var title: String {
+        target.map { "Delete \($0.displayTitle)?" } ?? ""
+    }
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(title, isPresented: isPresented, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                if let target {
+                    Bridge.delete(titleID: target.titleID)
+                }
+                target = nil
+            }
+        } message: {
+            Text("The installed game, its update, and DLC are removed from this device. Saves and trophies are kept.")
+        }
     }
 }
