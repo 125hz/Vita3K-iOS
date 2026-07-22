@@ -26,14 +26,18 @@ struct CoverCarousel<Menu: View>: View {
     /// Identity of the centred item, as "<repeat>-<titleID>".
     @State private var scrolledID: String?
     @State private var hapticTrigger = 0
-    /// Suppresses the focus/haptic side effects while recentring the loop.
-    @State private var isRecentring = false
 
-    /// How many times the library is repeated. Odd so there is a true middle,
-    /// and enough that a user cannot reach an end between settles — but capped
-    /// by total item count, since this array is rebuilt on every layout pass
-    /// and a large library would otherwise make it tens of thousands of
-    /// entries.
+    /// How many times the library is repeated. Odd so there is a true middle.
+    ///
+    /// The row simply *is* this long - there is no seam-jumping. An earlier
+    /// version recentred the scroll position onto the middle repeat once the
+    /// user drifted far enough, which fought `scrollPosition` and made the row
+    /// snap backwards mid-scroll. Starting in the middle of a few hundred
+    /// covers is indistinguishable from infinite in practice, and needs no
+    /// mechanism that can misfire.
+    ///
+    /// Capped by total item count: this array is rebuilt on every layout pass,
+    /// so a large library must not turn it into tens of thousands of entries.
     private var repeatCount: Int {
         guard games.count > 1 else { return 1 }
         let target = max(3, min(101, 600 / games.count))
@@ -84,7 +88,6 @@ struct CoverCarousel<Menu: View>: View {
             }
         }
         .onChange(of: scrolledID) { oldValue, newValue in
-            guard !isRecentring else { return }
             guard let newValue, let titleID = Self.titleID(from: newValue) else { return }
             if oldValue != nil {
                 hapticTrigger += 1
@@ -94,7 +97,6 @@ struct CoverCarousel<Menu: View>: View {
             if padFocusedTitleID != titleID {
                 padFocusedTitleID = titleID
             }
-            recentreIfNeeded(newValue)
         }
         // D-pad input moves the pad focus; scroll the row to match, staying in
         // whichever repeat is currently on screen so the row does not jump.
@@ -127,32 +129,21 @@ struct CoverCarousel<Menu: View>: View {
         // runs about -1...1 across the visible span, so a cover dims and
         // shrinks progressively as it leaves the centre instead of snapping
         // between two states.
-        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+        // .threshold(.centered) is the whole point here. By default a view is
+        // in the identity phase whenever it is *fully visible*, and the side
+        // padding that centres the row leaves several covers fully visible at
+        // once - so every one of them stayed at full size and brightness.
+        // Centred means only the cover under the middle is in identity.
+        .scrollTransition(.interactive.threshold(.centered), axis: .horizontal) { content, phase in
             content
-                .scaleEffect(1 - min(abs(phase.value), 1) * 0.22)
-                .opacity(1 - min(abs(phase.value), 1) * 0.5)
+                .scaleEffect(phase.isIdentity ? 1 : 0.78)
+                .opacity(phase.isIdentity ? 1 : 0.5)
         }
         .contentShape(.rect)
         .onTapGesture { onLaunch(game) }
         .contextMenu { menu(game) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-    }
-
-    /// Jumps back to the middle repeat when the user has drifted towards an
-    /// end. The cover under the centre is identical, so nothing moves visually.
-    private func recentreIfNeeded(_ current: String) {
-        guard games.count > 1,
-              let repeatIndex = Self.repeatIndex(from: current),
-              let titleID = Self.titleID(from: current),
-              abs(repeatIndex - middleRepeat) > repeatCount / 4
-        else { return }
-        isRecentring = true
-        // No animation: this must be an instantaneous swap, not a scroll.
-        scrolledID = "\(middleRepeat)-\(titleID)"
-        // Cleared on the next runloop turn so the assignment above does not
-        // re-enter onChange and fire a haptic for a move the user did not make.
-        Task { @MainActor in isRecentring = false }
     }
 
     private static func repeatIndex(from id: String) -> Int? {

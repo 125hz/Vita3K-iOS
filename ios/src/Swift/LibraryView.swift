@@ -25,6 +25,14 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack {
             content
+                // Opaque, edge to edge, behind everything.
+                //
+                // The UIKit library painted its own background; the SwiftUI one
+                // relied on the hosting controller's, which does not cover
+                // every region SwiftUI draws into. A just-quit game's Metal
+                // drawable could still be visible through the gap while its
+                // teardown straggled, showing a strip of the last frame.
+                .background(Color(.systemBackground).ignoresSafeArea())
                 .navigationTitle("Tsubomi")
                 .navigationBarTitleDisplayMode(showsCarousel ? .inline : .large)
                 .toolbar { toolbarContent }

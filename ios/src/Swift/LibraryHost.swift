@@ -12,9 +12,11 @@ final class LibraryHost: NSObject {
 
     @objc static func libraryViewController() -> UIViewController {
         let controller = UIHostingController(rootView: LibraryView())
-        // The onboarding flow is added over this controller's view and draws
-        // its own full-bleed background.
+        // Opaque: this view sits over the game's Metal drawable, and anything
+        // it does not paint is a window onto the last frame the game rendered.
+        // LibraryView paints its own background too; both are deliberate.
         controller.view.backgroundColor = .systemBackground
+        controller.view.isOpaque = true
         return controller
     }
 }
