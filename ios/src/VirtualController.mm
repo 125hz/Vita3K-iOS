@@ -30,8 +30,6 @@ static BOOL g_overlay_preview_only = NO;
 // Whichever in-game sheet is currently presented (menu, controller options,
 // performance toggles), so a second request replaces rather than stacks.
 static UIViewController *g_presented_sheet = nil;
-// The always-on performance readout, added over the game.
-static UIViewController *g_perf_overlay_controller = nil;
 // Set when a sub-screen (controller options, trophies, performance HUD) was
 // opened from the in-game menu, so closing it returns to the menu instead of
 // dropping straight back to the game.
@@ -116,10 +114,12 @@ static void presentGameMenu() {
                 dismissPresentedSheet(nil);
             }
             editLayout:^{
-                // Editing hands the screen back to the controls themselves, so
-                // the menu must not reappear behind the editor afterwards.
-                g_return_to_game_menu = NO;
-                dismissPresentedSheet(^{ vita3k_ios_begin_layout_editing(); });
+                // Opens the options screen, NOT the editor directly. The
+                // editor is reached from a button inside options, matching the
+                // home-screen settings flow. Options re-opens the game menu on
+                // dismissal, so this returns to it.
+                g_return_to_game_menu = YES;
+                dismissPresentedSheet(^{ vita3k_ios_present_controller_options(); });
             }
             trophies:^{
                 g_return_to_game_menu = YES;
@@ -139,11 +139,19 @@ static void presentGameMenu() {
                 dismissPresentedSheet(nil);
             }
             quit:^{
-                dismissPresentedSheet(^{
-                    SDL_Event event{};
-                    event.type = SDL_EVENT_QUIT;
-                    SDL_PushEvent(&event);
-                });
+                // Post the quit synchronously and dismiss without animation.
+                // Waiting on the sheet's dismissal completion to post the
+                // event risked a hang if that animation stalled while teardown
+                // was already tearing the window down - the occasional
+                // hard-freeze on quit.
+                if (g_presented_sheet) {
+                    UIViewController *sheet = g_presented_sheet;
+                    g_presented_sheet = nil;
+                    [sheet dismissViewControllerAnimated:NO completion:nil];
+                }
+                SDL_Event event{};
+                event.type = SDL_EVENT_QUIT;
+                SDL_PushEvent(&event);
             }]);
     });
 }
@@ -199,14 +207,8 @@ void vita3k_ios_show_virtual_controller() {
         overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [window addSubview:overlay];
         [window bringSubviewToFront:overlay];
-
-        // Performance readout sits above the controls but takes no touches.
-        g_perf_overlay_controller = [TsubomiGameOverlayHosts performanceOverlayViewController];
-        UIView *perf = g_perf_overlay_controller.view;
-        perf.frame = window.bounds;
-        perf.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [window addSubview:perf];
-        [window bringSubviewToFront:perf];
+        // The performance readout is drawn inside this same overlay now (so it
+        // can be dragged in the layout editor); there is no separate controller.
 
         if (!g_three_finger_target)
             g_three_finger_target = [[Vita3KThreeFingerTarget alloc] init];
@@ -230,8 +232,6 @@ void vita3k_ios_hide_virtual_controller() {
         [TsubomiControlsHost releaseAllInputs];
         [TsubomiControlsHost setLayoutEditing:NO];
         dismissPresentedSheet(nil);
-        [g_perf_overlay_controller.view removeFromSuperview];
-        g_perf_overlay_controller = nil;
         [g_overlay_controller.view removeFromSuperview];
         g_overlay_controller = nil;
         g_overlay_preview_only = NO;

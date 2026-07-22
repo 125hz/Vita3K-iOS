@@ -148,18 +148,44 @@ final class ControlsModel {
         return CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
     }
 
-    /// Controls that should currently be drawn and hit-tested, in draw order.
+    /// Controls that should be drawn and hit-tested, in draw order. Excludes
+    /// the menu button, which is always shown and is rendered separately (it is
+    /// the way back to the in-game menu, so it must survive both the
+    /// physical-controller hide and the touch surface's control filtering).
     func visibleControls(in size: CGSize) -> [ControlDefinition] {
         if hideWhenPhysical && physicalControllerConnected && !isEditing {
             return []
         }
         return Self.definitions.filter { definition in
+            guard definition.kind != .menu else { return false }
             guard let placement = placement(definition.id, in: size) else { return false }
-            // The menu button is hidden while editing: its own drag handle is
-            // the control being moved, and it would overlap Done.
-            if definition.kind == .menu && isEditing { return false }
             return placement.visible
         }
+    }
+
+    // MARK: - Performance overlay position
+
+    /// Normalized centre per orientation, like the controls. Kept here so the
+    /// layout editor can drag it with the same machinery.
+    private(set) var perfPositions: [String: CGPoint] = [:]
+
+    private static func defaultPerfPosition(_ orientation: String) -> CGPoint {
+        // Below the notch, out of the way of the thumbs.
+        orientation == "portrait" ? CGPoint(x: 0.5, y: 0.13) : CGPoint(x: 0.3, y: 0.12)
+    }
+
+    func perfOverlayCenter(in size: CGSize) -> CGPoint {
+        let key = Self.orientationKey(for: size)
+        let normalized = perfPositions[key] ?? Self.defaultPerfPosition(key)
+        return CGPoint(x: normalized.x * size.width, y: normalized.y * size.height)
+    }
+
+    func movePerfOverlay(to rawCenter: CGPoint, in size: CGSize) {
+        let key = Self.orientationKey(for: size)
+        let x = min(max(rawCenter.x / size.width, 0.05), 0.95)
+        let y = min(max(rawCenter.y / size.height, 0.03), 0.97)
+        perfPositions[key] = CGPoint(x: x, y: y)
+        scheduleSave()
     }
 
     // MARK: - Editing
@@ -276,6 +302,14 @@ final class ControlsModel {
         // Merge rather than replace: a layout saved by an older build may not
         // contain every control, and those must keep their built-in position
         // instead of vanishing.
+        if let perf = root["perf"] as? [String: [String: Double]] {
+            for (orientation, point) in perf {
+                if let x = point["x"], let y = point["y"] {
+                    perfPositions[orientation] = CGPoint(x: x, y: y)
+                }
+            }
+        }
+
         guard let savedLayouts = root["layouts"] as? [String: [String: [String: Any]]] else { return }
         for (orientation, saved) in savedLayouts {
             for (id, values) in saved {
@@ -296,6 +330,10 @@ final class ControlsModel {
             }
             encodedLayouts[orientation] = encoded
         }
+        var encodedPerf: [String: [String: Double]] = [:]
+        for (orientation, point) in perfPositions {
+            encodedPerf[orientation] = ["x": point.x, "y": point.y]
+        }
         let root: [String: Any] = [
             "opacity": opacity,
             "scale": scale,
@@ -306,6 +344,7 @@ final class ControlsModel {
             // overlay wrote; nothing reads it any more.
             "layoutVersion": 4,
             "layouts": encodedLayouts,
+            "perf": encodedPerf,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted]) else { return }
         let url = Self.configURL
@@ -322,28 +361,31 @@ final class ControlsModel {
         func p(_ x: Double, _ y: Double) -> ControlPlacement {
             ControlPlacement(x: x, y: y, visible: true)
         }
+        // Spread wider than the original defaults so the Liquid Glass shapes
+        // do not merge into each other: the d-pad and face clusters have more
+        // gap between their members, and the two halves sit further out.
         return [
             "landscape": [
-                "dpad_up": p(0.14, 0.66), "dpad_down": p(0.14, 0.86),
-                "dpad_left": p(0.08, 0.76), "dpad_right": p(0.20, 0.76),
-                "triangle": p(0.86, 0.66), "cross": p(0.86, 0.86),
-                "square": p(0.80, 0.76), "circle": p(0.92, 0.76),
-                "left_trigger": p(0.09, 0.13), "right_trigger": p(0.91, 0.13),
-                "left_shoulder": p(0.09, 0.25), "right_shoulder": p(0.91, 0.25),
-                "select": p(0.43, 0.91), "start": p(0.57, 0.91),
-                "left_stick": p(0.29, 0.73), "right_stick": p(0.71, 0.73),
-                "menu": p(0.95, 0.17),
+                "dpad_up": p(0.12, 0.60), "dpad_down": p(0.12, 0.88),
+                "dpad_left": p(0.05, 0.74), "dpad_right": p(0.19, 0.74),
+                "triangle": p(0.88, 0.60), "cross": p(0.88, 0.88),
+                "square": p(0.81, 0.74), "circle": p(0.95, 0.74),
+                "left_trigger": p(0.07, 0.11), "right_trigger": p(0.93, 0.11),
+                "left_shoulder": p(0.07, 0.26), "right_shoulder": p(0.93, 0.26),
+                "select": p(0.42, 0.93), "start": p(0.58, 0.93),
+                "left_stick": p(0.30, 0.72), "right_stick": p(0.70, 0.72),
+                "menu": p(0.95, 0.13),
             ],
             "portrait": [
-                "dpad_up": p(0.22, 0.59), "dpad_down": p(0.22, 0.71),
-                "dpad_left": p(0.11, 0.65), "dpad_right": p(0.33, 0.65),
-                "triangle": p(0.78, 0.59), "cross": p(0.78, 0.71),
-                "square": p(0.67, 0.65), "circle": p(0.89, 0.65),
-                "left_shoulder": p(0.15, 0.53), "right_shoulder": p(0.85, 0.53),
-                "left_trigger": p(0.15, 0.47), "right_trigger": p(0.85, 0.47),
-                "select": p(0.40, 0.94), "start": p(0.60, 0.94),
-                "left_stick": p(0.20, 0.84), "right_stick": p(0.80, 0.84),
-                "menu": p(0.94, 0.54),
+                "dpad_up": p(0.19, 0.57), "dpad_down": p(0.19, 0.75),
+                "dpad_left": p(0.08, 0.66), "dpad_right": p(0.30, 0.66),
+                "triangle": p(0.81, 0.57), "cross": p(0.81, 0.75),
+                "square": p(0.70, 0.66), "circle": p(0.92, 0.66),
+                "left_shoulder": p(0.13, 0.49), "right_shoulder": p(0.87, 0.49),
+                "left_trigger": p(0.13, 0.41), "right_trigger": p(0.87, 0.41),
+                "select": p(0.37, 0.95), "start": p(0.63, 0.95),
+                "left_stick": p(0.22, 0.86), "right_stick": p(0.78, 0.86),
+                "menu": p(0.92, 0.50),
             ],
         ]
     }

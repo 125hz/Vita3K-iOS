@@ -6,20 +6,31 @@ import UIKit
 /// The returned controller's view is transparent and must be added over the
 /// game's Metal view. Touches in the gaps between controls fall through to it
 /// (see ControlTouchSurface), which is how Vita touchscreen input still works.
+/// Hosting controller that reports its top safe-area inset to the core.
+///
+/// The core letterboxes the guest image below the notch using this value, and
+/// UIKit's view.safeAreaInsets is the authoritative source that updates on
+/// rotation - more reliable than reading it back through a SwiftUI
+/// GeometryReader, which reports zero once the content goes full-bleed.
+private final class ControlsHostingController<Content: View>: UIHostingController<Content> {
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
+        SafeAreaReporter.topPixels = Float(view.safeAreaInsets.top * scale)
+    }
+}
+
 @objc(TsubomiControlsHost)
 @MainActor
 final class ControlsHost: NSObject {
 
     @objc(controlsViewControllerWithMenuHandler:)
     static func controlsViewController(onMenuTap: @escaping () -> Void) -> UIViewController {
-        let controller = UIHostingController(rootView: ControlsOverlayView(onMenuTap: onMenuTap))
+        let controller = ControlsHostingController(rootView: ControlsOverlayView(onMenuTap: onMenuTap))
         // The overlay is chrome over a live drawable: it must never paint a
         // background of its own, or the game disappears behind it.
         controller.view.backgroundColor = .clear
         controller.view.isOpaque = false
-        // Let the game's own drawable own the safe area; controls are placed
-        // by normalized position across the full screen.
-        controller.safeAreaRegions = []
         return controller
     }
 

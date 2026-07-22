@@ -61,6 +61,11 @@ final class PerformanceStateBridge: NSObject {
 /// The readout itself: a single glass capsule, draggable to reposition.
 @MainActor
 struct PerformanceOverlayView: View {
+    /// True while the layout editor is open: the overlay then shows a sample
+    /// readout so there is always something to drag, even with every metric
+    /// off, and it accepts hits so the drag gesture can land on it.
+    var editingProxy: Bool = false
+
     @State private var state = PerformanceState.shared
 
     @AppStorage(DefaultsKey.perfFPS.rawValue) private var showFPS = false
@@ -70,11 +75,11 @@ struct PerformanceOverlayView: View {
     @AppStorage(DefaultsKey.perfBattery.rawValue) private var showBattery = false
 
     var body: some View {
-        if state.isVisible && hasAnyMetric {
+        if editingProxy || (state.isVisible && hasAnyMetric) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(readout)
+                Text(editingProxy && !hasAnyMetric ? "60 FPS · 16.7 ms" : readout)
                     .font(.caption.monospacedDigit().weight(.semibold))
-                if showGraph {
+                if showGraph || (editingProxy && !hasAnyMetric) {
                     FrametimeGraph(samples: state.frametimeHistory)
                         .frame(width: 150, height: 26)
                 }
@@ -84,8 +89,16 @@ struct PerformanceOverlayView: View {
             // Non-interactive glass: this sits over a 60fps drawable, and an
             // interactive variant would run a live refraction pass every frame
             // for a readout nobody touches.
-            .glassEffect(.regular, in: .rect(cornerRadius: 14, style: .continuous))
-            .allowsHitTesting(false)
+            .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
+            .overlay {
+                if editingProxy {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(.tint, lineWidth: 1.5)
+                }
+            }
+            // Only hit-testable while editing, so it never intercepts a touch
+            // meant for the game or the controls beneath it.
+            .allowsHitTesting(editingProxy)
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Performance: \(readout)")
         }

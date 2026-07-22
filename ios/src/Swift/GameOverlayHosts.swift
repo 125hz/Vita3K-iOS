@@ -49,17 +49,6 @@ final class GameOverlayHosts: NSObject {
         host(PerformanceHUDPanel(onFinish: onFinish))
     }
 
-    /// A transparent hosting controller for the always-on performance readout.
-    /// Its view is added over the game and must not intercept touches.
-    @objc static func performanceOverlayViewController() -> UIViewController {
-        let controller = UIHostingController(rootView: PerformanceOverlayView())
-        controller.view.backgroundColor = .clear
-        controller.view.isOpaque = false
-        controller.view.isUserInteractionEnabled = false
-        controller.safeAreaRegions = []
-        return controller
-    }
-
     private static func host(_ view: some View) -> UIViewController {
         let controller = UIHostingController(rootView: view)
         // The game keeps rendering behind these sheets; a clear background lets

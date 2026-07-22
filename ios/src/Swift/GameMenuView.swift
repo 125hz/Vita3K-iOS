@@ -24,8 +24,8 @@ struct GameMenuView: View {
                     row("Resume", subtitle: nil, symbol: "play.fill", action: onResume)
                 }
                 Section {
-                    row("Controller Options",
-                        subtitle: "Layout, visibility, scale and opacity",
+                    row("Layout Options",
+                        subtitle: "Reposition controls, visibility, scale and opacity",
                         symbol: "gamecontroller.fill",
                         action: onEditLayout)
                     row("Trophies",

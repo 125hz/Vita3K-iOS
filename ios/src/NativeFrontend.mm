@@ -1263,63 +1263,9 @@ void vita3k_ios_request_current_trophies() {
     queue_action(std::move(action));
 }
 
-@interface Vita3KFrametimeGraph : UIView
-@property(nonatomic, strong) NSMutableArray<NSNumber *> *samples;
-- (void)addSample:(CGFloat)value;
-@end
-
-@implementation Vita3KFrametimeGraph
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        self.backgroundColor = UIColor.clearColor;
-        self.opaque = NO;
-        self.samples = [NSMutableArray array];
-    }
-    return self;
-}
-- (void)addSample:(CGFloat)value {
-    if (!isfinite(value) || value <= 0)
-        return;
-    [self.samples addObject:@(value)];
-    while (self.samples.count > 60)
-        [self.samples removeObjectAtIndex:0];
-    [self setNeedsDisplay];
-}
-- (void)drawRect:(CGRect)rect {
-    if (self.samples.count < 2)
-        return;
-    CGFloat maximum = 16.67;
-    for (NSNumber *sample in self.samples)
-        maximum = MAX(maximum, MIN((CGFloat)sample.doubleValue, 100.0));
-    UIBezierPath *path = [UIBezierPath bezierPath];
-    const CGFloat step = CGRectGetWidth(rect) / MAX((CGFloat)self.samples.count - 1, 1);
-    [self.samples enumerateObjectsUsingBlock:^(NSNumber *sample, NSUInteger index, __unused BOOL *stop) {
-        const CGFloat value = MIN((CGFloat)sample.doubleValue, maximum);
-        CGPoint point = CGPointMake(index * step,
-            CGRectGetHeight(rect) - (value / maximum) * (CGRectGetHeight(rect) - 2) - 1);
-        if (index == 0)
-            [path moveToPoint:point];
-        else
-            [path addLineToPoint:point];
-    }];
-    UIColor *line = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
-        ? UIColor.whiteColor : UIColor.blackColor;
-    [line setStroke];
-    path.lineWidth = 1.35;
-    path.lineJoinStyle = kCGLineJoinRound;
-    path.lineCapStyle = kCGLineCapRound;
-    [path stroke];
-}
-- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
-    [super traitCollectionDidChange:previousTraitCollection];
-    [self setNeedsDisplay];
-}
-@end
-
-static UIVisualEffectView *g_perf_hud = nil;
-static UILabel *g_perf_label = nil;
-static Vita3KFrametimeGraph *g_perf_graph = nil;
+// The FPS/frametime/graph/RAM/battery readout is SwiftUI now
+// (PerformanceOverlayView), fed from vita3k_ios_update_perf_overlay via
+// TsubomiPerformanceStateBridge. Only the live-log panel below is still UIKit.
 
 // Optional live log/console overlay (Settings > Performance overlay > Show
 // live log): a bottom-docked scrolling panel of the most recent log lines,
@@ -1381,117 +1327,50 @@ static void update_log_overlay(UIWindow *window) {
 }
 
 void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime_ms) {
+    // Memory and battery are sampled here (UIKit side) and pushed, along with
+    // the guest FPS and frametime, into the SwiftUI PerformanceState. The
+    // readout itself is drawn by PerformanceOverlayView inside the controls
+    // overlay - this no longer builds a UIKit HUD. The live-log panel is still
+    // UIKit and is updated below.
+    const float fps = guest_fps;
+    const float ft = frametime_ms;
     perform_on_main(^{
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-        const BOOL show_fps = [defaults boolForKey:@"vita3k.perf.fps"];
-        const BOOL show_frametime = [defaults boolForKey:@"vita3k.perf.frametime"];
-        const BOOL show_graph = [defaults boolForKey:@"vita3k.perf.frametimeGraph"];
-        const BOOL show_ram = [defaults boolForKey:@"vita3k.perf.ram"];
-        const BOOL show_battery = [defaults boolForKey:@"vita3k.perf.battery"];
-        UIWindow *window = active_window();
-        update_log_overlay(window);
-        if ([defaults boolForKey:@"vita3k.perf.hidden"]
-            || (!show_fps && !show_frametime && !show_graph && !show_ram && !show_battery)) {
-            g_perf_hud.hidden = YES;
-            return;
-        }
+        update_log_overlay(active_window());
 
-        if (!window)
+        const BOOL any = [defaults boolForKey:@"vita3k.perf.fps"]
+            || [defaults boolForKey:@"vita3k.perf.frametime"]
+            || [defaults boolForKey:@"vita3k.perf.frametimeGraph"]
+            || [defaults boolForKey:@"vita3k.perf.ram"]
+            || [defaults boolForKey:@"vita3k.perf.battery"];
+        const BOOL visible = any && ![defaults boolForKey:@"vita3k.perf.hidden"];
+        [TsubomiPerformanceStateBridge setVisible:visible];
+        if (!visible)
             return;
-        if (!g_perf_hud) {
-            // Non-interactive glass: the HUD repaints every second, so live
-            // refraction would be wasted cost.
-            g_perf_hud = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
-            g_perf_hud.layer.cornerRadius = 12;
-            g_perf_hud.clipsToBounds = YES;
-            g_perf_hud.userInteractionEnabled = NO;
-            g_perf_label = [[UILabel alloc] init];
-            g_perf_label.textColor = UIColor.labelColor;
-            g_perf_label.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
-            [g_perf_hud.contentView addSubview:g_perf_label];
-            g_perf_graph = [[Vita3KFrametimeGraph alloc] init];
-            [g_perf_hud.contentView addSubview:g_perf_graph];
-        }
-        if (g_perf_hud.superview != window) {
-            [window addSubview:g_perf_hud];
-            [window bringSubviewToFront:g_perf_hud];
-        }
-        g_perf_hud.hidden = NO;
 
-        NSMutableArray<NSString *> *parts = [NSMutableArray array];
-        if (show_fps)
-            [parts addObject:[NSString stringWithFormat:@"%.0f FPS", guest_fps]];
-        if (show_frametime)
-            [parts addObject:frametime_ms > 0
-                ? [NSString stringWithFormat:@"%.1f ms", frametime_ms] : @"-- ms"];
-        if (show_ram) {
-            task_vm_info_data_t vm_info{};
-            mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-            if (task_info(mach_task_self(), TASK_VM_INFO,
-                    reinterpret_cast<task_info_t>(&vm_info), &count) == KERN_SUCCESS)
-                [parts addObject:[NSString stringWithFormat:@"%.0f MB", vm_info.phys_footprint / (1024.0 * 1024.0)]];
-        }
-        if (show_battery) {
-            // Monitoring has to be on before batteryLevel returns anything but
-            // -1, and it used to be enabled in the UIKit library view's
-            // initialiser. That view is gone, so own it here: this is the only
-            // place that reads the level, and enabling it is idempotent.
-            //
-            // Granularity is the OS's to decide. UIDevice is documented as
-            // accurate to within 5%, and there is no public API that reports
-            // finer, so round to whole percent and show what the system gives
-            // rather than inventing precision.
-            UIDevice *device = UIDevice.currentDevice;
-            if (!device.batteryMonitoringEnabled)
-                device.batteryMonitoringEnabled = YES;
-            const float level = device.batteryLevel;
-            if (level >= 0)
-                [parts addObject:[NSString stringWithFormat:@"%.0f%%", level * 100.0f]];
-        }
-        g_perf_label.text = [parts componentsJoinedByString:@"  ·  "];
-        [g_perf_label sizeToFit];
-        const CGFloat width = MAX(CGRectGetWidth(g_perf_label.bounds) + 20, show_graph ? 170.0 : 0.0);
-        const CGFloat height = show_graph ? 58.0 : 24.0;
-        const UIEdgeInsets safe = window.safeAreaInsets;
-        const CGFloat windowWidth = CGRectGetWidth(window.bounds);
-        const CGFloat windowHeight = CGRectGetHeight(window.bounds);
-        const BOOL portrait = windowHeight > windowWidth;
-        // User-placed position from the layout editor (normalized center, per
-        // orientation); defaults: below the letterboxed game image in
-        // portrait, top-left in landscape.
-        NSString *keyX = portrait ? @"tsubomi.perfPos.portrait.x" : @"tsubomi.perfPos.landscape.x";
-        NSString *keyY = portrait ? @"tsubomi.perfPos.portrait.y" : @"tsubomi.perfPos.landscape.y";
-        CGFloat centerX;
-        CGFloat centerY;
-        if ([defaults objectForKey:keyX] && [defaults objectForKey:keyY]) {
-            centerX = [defaults doubleForKey:keyX] * windowWidth;
-            centerY = [defaults doubleForKey:keyY] * windowHeight;
-        } else if (portrait) {
-            const CGFloat gameHeight = windowWidth * 544.0 / 960.0;
-            centerX = windowWidth / 2;
-            centerY = safe.top + gameHeight + height / 2 + 10;
-        } else {
-            centerX = safe.left + 10 + width / 2;
-            centerY = safe.top + 6 + height / 2;
-        }
-        centerX = std::clamp(centerX, safe.left + width / 2, windowWidth - safe.right - width / 2);
-        centerY = std::clamp(centerY, safe.top + height / 2, windowHeight - safe.bottom - height / 2);
-        g_perf_hud.bounds = CGRectMake(0, 0, width, height);
-        g_perf_hud.center = CGPointMake(centerX, centerY);
-        g_perf_label.frame = CGRectMake(10, 3, width - 20, 18);
-        g_perf_graph.hidden = !show_graph;
-        g_perf_graph.frame = CGRectMake(10, 27, width - 20, 25);
-        if (show_graph)
-            [g_perf_graph addSample:frametime_ms];
+        double memoryMB = 0;
+        task_vm_info_data_t vm_info{};
+        mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+        if (task_info(mach_task_self(), TASK_VM_INFO,
+                reinterpret_cast<task_info_t>(&vm_info), &count) == KERN_SUCCESS)
+            memoryMB = vm_info.phys_footprint / (1024.0 * 1024.0);
+
+        UIDevice *device = UIDevice.currentDevice;
+        if (!device.batteryMonitoringEnabled)
+            device.batteryMonitoringEnabled = YES;
+        const float level = device.batteryLevel;
+        const NSInteger batteryPercent = level >= 0 ? static_cast<NSInteger>(level * 100.0f + 0.5f) : -1;
+
+        [TsubomiPerformanceStateBridge updateWithFPS:fps
+                                           frametime:ft
+                                            memoryMB:memoryMB
+                                      batteryPercent:batteryPercent];
     });
 }
 
 void vita3k_ios_hide_perf_overlay() {
     perform_on_main(^{
-        [g_perf_hud removeFromSuperview];
-        g_perf_hud = nil;
-        g_perf_label = nil;
-        g_perf_graph = nil;
+        [TsubomiPerformanceStateBridge setVisible:NO];
         [g_log_hud removeFromSuperview];
         g_log_hud = nil;
         g_log_text = nil;
