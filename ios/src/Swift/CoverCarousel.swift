@@ -6,7 +6,7 @@ import SwiftUI
 /// Looping works the way the UIKit version's did — the games are repeated many
 /// times and indices map back with modulo — but there is no seam handling: the
 /// row simply is a few hundred covers long and starts in the middle. See
-/// `repeatCount`.
+/// `rebuildItems`.
 ///
 /// The dimming is computed from each cover's distance to the viewport centre
 /// with `visualEffect`; see the note in `cover(_:side:)`.
@@ -30,24 +30,12 @@ struct CoverCarousel<Menu: View>: View {
     @State private var scrolledID: String?
     @State private var hapticTrigger = 0
 
-    /// How many times the library is repeated. Odd so there is a true middle.
-    ///
-    /// The row simply *is* this long - there is no seam-jumping. An earlier
-    /// version recentred the scroll position onto the middle repeat once the
-    /// user drifted far enough, which fought `scrollPosition` and made the row
-    /// snap backwards mid-scroll. Starting in the middle of a few hundred
-    /// covers is indistinguishable from infinite in practice, and needs no
-    /// mechanism that can misfire.
-    ///
-    /// Capped by total item count: this array is rebuilt on every layout pass,
-    /// so a large library must not turn it into tens of thousands of entries.
-    private var repeatCount: Int {
-        guard games.count > 1 else { return 1 }
-        let target = max(3, min(101, 600 / games.count))
-        return target.isMultiple(of: 2) ? target + 1 : target
-    }
-
-    private var middleRepeat: Int { repeatCount / 2 }
+    /// The repeated item list, cached. Rebuilt only when the games change - not
+    /// on every body pass. body re-runs on each scroll settle and every haptic
+    /// tick, and rebuilding several hundred structs (each with a String id) on
+    /// each of those was avoidable churn while browsing.
+    @State private var items: [Item] = []
+    @State private var middleRepeat = 0
 
     private struct Item: Identifiable {
         let repeatIndex: Int
@@ -55,13 +43,23 @@ struct CoverCarousel<Menu: View>: View {
         var id: String { "\(repeatIndex)-\(game.titleID)" }
     }
 
-    private var items: [Item] {
-        // A single-game library has nothing to loop through; repeating it would
-        // just let the user scroll past copies of the same cover.
+    /// Games' identity, so the cache rebuilds when the library actually changes.
+    private var gamesKey: String { games.map(\.titleID).joined(separator: ",") }
+
+    private func rebuildItems() {
+        // The row simply *is* this long; there is no seam-jumping. Starting in
+        // the middle of a few hundred covers is indistinguishable from infinite
+        // in practice. Capped by total item count so a large library does not
+        // become tens of thousands of entries.
         guard games.count > 1 else {
-            return games.map { Item(repeatIndex: middleRepeat, game: $0) }
+            middleRepeat = 0
+            items = games.map { Item(repeatIndex: 0, game: $0) }
+            return
         }
-        return (0..<repeatCount).flatMap { repeatIndex in
+        var target = max(3, min(101, 600 / games.count))
+        if target.isMultiple(of: 2) { target += 1 }
+        middleRepeat = target / 2
+        items = (0..<target).flatMap { repeatIndex in
             games.map { Item(repeatIndex: repeatIndex, game: $0) }
         }
     }
@@ -88,7 +86,8 @@ struct CoverCarousel<Menu: View>: View {
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $scrolledID, anchor: .center)
             .scrollIndicators(.hidden)
-            .onAppear {
+            .onChange(of: gamesKey, initial: true) { _, _ in
+                rebuildItems()
                 if scrolledID == nil, let first = games.first {
                     scrolledID = "\(middleRepeat)-\(first.titleID)"
                 }

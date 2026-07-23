@@ -302,36 +302,11 @@ struct LibraryView: View {
         // space for covers.
     }
 
-    @ViewBuilder
+    // Its own View so a toast appearing or auto-dismissing invalidates only
+    // this bar, not the whole library body (which would otherwise re-derive
+    // the grid/list/carousel content on every toast timeout).
     private var banners: some View {
-        VStack(spacing: 8) {
-            if !library.jitAvailable {
-                // Yellow-tinted glass: adaptive tinting is meant to mark a
-                // single urgent element, and a warning nobody can act around
-                // is exactly that. The tint rides on the glass rather than a
-                // flat fill, so it lenses the content beneath like the rest of
-                // the app's chrome.
-                Label(
-                    "JIT is not ready — open StikDebug, enable JIT, and keep it attached until Tsubomi finishes Preparing JIT.",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.subheadline.weight(.semibold))
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .glassEffect(.regular.tint(.yellow), in: .rect(cornerRadius: 16, style: .continuous))
-            }
-            if let status = library.statusMessage {
-                Text(status)
-                    .font(.subheadline)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .glassEffect(.regular, in: .capsule)
-                    .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, 16)
-        .animation(.snappy, value: library.statusMessage)
-        .animation(.snappy, value: library.jitAvailable)
+        LibraryBanners(library: library)
     }
 
     @ViewBuilder
@@ -495,5 +470,40 @@ private struct DeleteConfirmationDialog: ViewModifier {
         } message: {
             Text("The installed game, its update, and DLC are removed from this device. Saves and trophies are kept.")
         }
+    }
+}
+
+/// The JIT-warning banner and status toast, split out of LibraryView so a
+/// toast timing out re-renders only this bar rather than the whole library.
+@MainActor
+private struct LibraryBanners: View {
+    var library: LibraryState
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if !library.jitAvailable {
+                // Yellow-tinted glass: adaptive tinting marks a single urgent
+                // element, and a warning nobody can act around is exactly that.
+                Label(
+                    "JIT is not ready — open StikDebug, enable JIT, and keep it attached until Tsubomi finishes Preparing JIT.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.subheadline.weight(.semibold))
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassEffect(.regular.tint(.yellow), in: .rect(cornerRadius: 16, style: .continuous))
+            }
+            if let status = library.statusMessage {
+                Text(status)
+                    .font(.subheadline)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .glassEffect(.regular, in: .capsule)
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 16)
+        .animation(.snappy, value: library.statusMessage)
+        .animation(.snappy, value: library.jitAvailable)
     }
 }

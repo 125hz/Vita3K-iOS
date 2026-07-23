@@ -82,17 +82,15 @@ struct ControlsOverlayView: View {
 
     @ViewBuilder
     private func controlBody(_ definition: ControlDefinition) -> some View {
+        // Each leaf reads its own keyed state (offset / pressed) inside its own
+        // body, so @Observable scopes the invalidation to just that control.
+        // Reading those here, in this parent body, would rebuild the whole
+        // overlay on every stick move - the highest-frequency input path.
         switch definition.kind {
         case .stick:
-            StickControl(
-                definition: definition,
-                offset: model.stickOffsets[definition.id] ?? .zero
-            )
+            StickControl(definition: definition, model: model)
         default:
-            ControlFace(
-                definition: definition,
-                isPressed: model.pressedControls.contains(definition.id)
-            )
+            ControlFace(definition: definition, model: model)
         }
     }
 
@@ -278,10 +276,13 @@ private struct PerfDragModifier: ViewModifier {
 /// A button, shoulder, trigger, or word-labelled control.
 private struct ControlFace: View {
     let definition: ControlDefinition
-    let isPressed: Bool
+    var model: ControlsModel
 
     var body: some View {
-        Text(definition.label)
+        // Read inside this leaf's body so only this control invalidates when
+        // its own pressed state changes.
+        let isPressed = model.pressedControls.contains(definition.id)
+        return Text(definition.label)
             .font(.system(size: definition.usesWordLabel ? 10 : 17, weight: .bold))
             .minimumScaleFactor(0.7)
             .lineLimit(1)
@@ -303,11 +304,13 @@ private struct ControlFace: View {
 /// An analogue stick: a well with a thumb that follows the touch.
 private struct StickControl: View {
     let definition: ControlDefinition
-    /// Normalized -1...1 offset published by the touch surface.
-    let offset: CGPoint
+    var model: ControlsModel
 
     var body: some View {
-        GeometryReader { proxy in
+        // Read the offset in this leaf's body so a thumb move invalidates only
+        // this stick, not the whole overlay.
+        let offset = model.stickOffsets[definition.id] ?? .zero
+        return GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
             let thumbSide = side * 0.46
             let travel = (side - thumbSide) / 2
