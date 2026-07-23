@@ -12,6 +12,7 @@ import UIKit
 struct BootScreenView: View {
     /// Cycles the tagline so a long start reads as progress rather than a hang.
     @State private var phase = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let phases = [
         "Starting Tsubomi",
@@ -58,7 +59,11 @@ struct BootScreenView: View {
                 } catch {
                     return
                 }
-                withAnimation(.snappy) { phase += 1 }
+                if reduceMotion {
+                    phase += 1
+                } else {
+                    withAnimation(.snappy) { phase += 1 }
+                }
             }
         }
         .accessibilityElement(children: .combine)

@@ -1694,8 +1694,11 @@ int main(int argc, char *argv[]) {
     app::AppSessionController session_controller(*emuenv);
     SDL_Log("Vita3K iOS: begin_launch '%s'", launch_request->app_path.c_str());
     if (!session_controller.begin_launch(*launch_request)) {
-        LOG_ERROR("Could not find app '{}' in apps list.", launch_request->app_path);
+        LOG_ERROR("Could not prepare app '{}' for launch.", launch_request->app_path);
         restore_global_config();
+        vita3k_ios_show_boot_error(
+            "Tsubomi could not prepare this game. The failed launch was cleaned up; try again, "
+            "and export tsubomi.log plus the iOS crash report if it repeats.");
         continue;
     }
     // begin_launch() selects the title's upstream config profile. Apply the

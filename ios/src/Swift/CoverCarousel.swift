@@ -30,6 +30,8 @@ struct CoverCarousel<Menu: View>: View {
     @State private var hapticTrigger = 0
     /// Last accumulator value applied, so the next change steps by the delta.
     @State private var lastConsumedStep = 0
+    @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
+    @State private var coverAspects: [String: CGFloat] = [:]
 
     /// The repeated item list, cached. Rebuilt only when the games change - not
     /// on every body pass. body re-runs on each scroll settle and every haptic
@@ -67,11 +69,10 @@ struct CoverCarousel<Menu: View>: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let side = coverSide(in: proxy.size)
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 18) {
                     ForEach(items) { item in
-                        cover(item.game, side: side)
+                        cover(item.game, side: coverSide(for: item.game, in: proxy.size))
                             .id(item.id)
                     }
                 }
@@ -128,7 +129,11 @@ struct CoverCarousel<Menu: View>: View {
         VStack(spacing: 10) {
             // Width-fixed, height free: with Wide cover art on, the cover takes
             // its own aspect (shorter than square); otherwise it stays square.
-            GameCover(game: game, allowsWide: true)
+            GameCover(game: game, allowsWide: true) { aspect in
+                if coverAspects[game.titleID] != aspect {
+                    coverAspects[game.titleID] = aspect
+                }
+            }
                 .frame(width: side)
             Text(game.displayTitle)
                 .font(.subheadline.weight(.semibold))
@@ -188,7 +193,16 @@ struct CoverCarousel<Menu: View>: View {
         else { return }
         let next = index + direction
         guard items.indices.contains(next) else { return }
-        withAnimation(.snappy(duration: 0.16)) { scrolledID = items[next].id }
+        // scrollPosition is a two-way binding. An interrupted animation can
+        // write an intermediate cover back after the next D-pad press, making
+        // the visible and actionable games disagree. Focus navigation takes
+        // priority over decoration and acknowledges every press immediately.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            scrolledID = items[next].id
+            padFocusedTitleID = items[next].game.titleID
+        }
     }
 
     private static func titleID(from id: String) -> String? {
@@ -199,7 +213,15 @@ struct CoverCarousel<Menu: View>: View {
     /// Bigger than before (0.34 → 0.42 of the width, and less vertical
     /// reserve): the covers are the whole point of this view, so they should
     /// dominate it.
-    private func coverSide(in size: CGSize) -> CGFloat {
-        max(140, min(size.height - 70, size.width * 0.42))
+    private func coverSide(for game: GameEntry, in size: CGSize) -> CGFloat {
+        let availableHeight = max(140, size.height - 70)
+        let aspect = coverAspects[game.titleID] ?? 1
+        if wideCoverArt && aspect > 1 {
+            // Use the loaded image's actual ratio. Wide banners can grow in
+            // width without exceeding the same safe cover-height budget, while
+            // square/custom art continues through the square-safe branch.
+            return max(180, min(availableHeight * aspect, size.width * 0.56))
+        }
+        return max(140, min(availableHeight, size.width * 0.46))
     }
 }

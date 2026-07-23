@@ -565,7 +565,10 @@ std::string hex_bytes(const std::string &value) {
     UILabel *hint = [[UILabel alloc] init];
     hint.text = @"Pinch and drag to frame the cover";
     hint.textColor = UIColor.whiteColor;
-    hint.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+    hint.font = [UIFontMetrics.defaultMetrics scaledFontForFont:
+        [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold]];
+    hint.adjustsFontForContentSizeCategory = YES;
+    hint.numberOfLines = 2;
     hint.textAlignment = NSTextAlignmentCenter;
     hint.tag = 401;
     [self.view addSubview:hint];
@@ -579,7 +582,9 @@ std::string hex_bytes(const std::string &value) {
 
     UIButton *save = [UIButton buttonWithType:UIButtonTypeSystem];
     [save setTitle:@"Save" forState:UIControlStateNormal];
-    save.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    save.titleLabel.font = [UIFontMetrics.defaultMetrics scaledFontForFont:
+        [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]];
+    save.titleLabel.adjustsFontForContentSizeCategory = YES;
     save.tag = 403;
     [save addTarget:self action:@selector(saveTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:save];
@@ -594,7 +599,7 @@ std::string hex_bytes(const std::string &value) {
     const BOOL firstLayout = CGRectIsEmpty(self.cropScroll.frame);
     self.cropScroll.frame = CGRectMake((CGRectGetWidth(bounds) - side) / 2,
         safe.top + 64, side, side);
-    [self.view viewWithTag:401].frame = CGRectMake(20, safe.top + 18, CGRectGetWidth(bounds) - 40, 24);
+    [self.view viewWithTag:401].frame = CGRectMake(20, safe.top + 10, CGRectGetWidth(bounds) - 40, 44);
     [self.view viewWithTag:402].frame = CGRectMake(24, CGRectGetMaxY(self.cropScroll.frame) + 18, 90, 44);
     [self.view viewWithTag:403].frame = CGRectMake(CGRectGetWidth(bounds) - 114,
         CGRectGetMaxY(self.cropScroll.frame) + 18, 90, 44);
@@ -1081,7 +1086,8 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         library_view().autoresizingMask =
             UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         library_view().hidden = NO;
-        if (playLaunchIntro) {
+        const BOOL animateLaunchIntro = playLaunchIntro && !UIAccessibilityIsReduceMotionEnabled();
+        if (animateLaunchIntro) {
             // Cold app launch dropped the library on screen with no
             // transition at all. A short fade + gentle scale-up reads as an
             // intentional entrance instead of the UI just appearing.
@@ -1104,12 +1110,17 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
                 // equivalent of the old updateFirmwareSettings: call here.
                 g_onboarding_controller =
                     [TsubomiOnboardingHost onboardingViewControllerWithFinishHandler:^{
-                        [UIView animateWithDuration:0.3 animations:^{
-                            g_onboarding_controller.view.alpha = 0;
-                        } completion:^(__unused BOOL finished) {
+                        void (^removeOnboarding)(void) = ^{
                             [g_onboarding_controller.view removeFromSuperview];
                             g_onboarding_controller = nil;
-                        }];
+                        };
+                        if (UIAccessibilityIsReduceMotionEnabled()) {
+                            removeOnboarding();
+                        } else {
+                            [UIView animateWithDuration:0.3 animations:^{
+                                g_onboarding_controller.view.alpha = 0;
+                            } completion:^(__unused BOOL finished) { removeOnboarding(); }];
+                        }
                     }];
                 UIView *onboarding = g_onboarding_controller.view;
                 onboarding.frame = library_view().bounds;
@@ -1124,7 +1135,7 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         // The library is up; the boot screen has nothing left to cover.
         hide_boot_screen();
         [Vita3KPadNavigator.shared start];
-        if (playLaunchIntro) {
+        if (animateLaunchIntro) {
             UIView *introTarget = library_view();
             [UIView animateWithDuration:0.5
                                   delay:0.05
@@ -1231,6 +1242,12 @@ static void hide_boot_screen() {
         return;
     UIViewController *controller = g_boot_screen_controller;
     g_boot_screen_controller = nil;
+    if (UIAccessibilityIsReduceMotionEnabled()) {
+        [controller beginAppearanceTransition:NO animated:NO];
+        [controller.view removeFromSuperview];
+        [controller endAppearanceTransition];
+        return;
+    }
     [UIView animateWithDuration:0.35
                      animations:^{ controller.view.alpha = 0; }
                      completion:^(__unused BOOL finished) {

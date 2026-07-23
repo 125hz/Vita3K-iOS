@@ -21,6 +21,7 @@ struct OnboardingView: View {
     @State private var pageIndex = 0
 
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Computed rather than stored: touching a @MainActor singleton from a
     /// struct's property initializer would be an isolation violation.
@@ -153,8 +154,8 @@ struct OnboardingView: View {
             insertion: .move(edge: .trailing).combined(with: .opacity),
             removal: .move(edge: .leading).combined(with: .opacity)
         ))
-        .animation(.snappy(duration: 0.3), value: pageIndex)
-        .animation(.snappy(duration: 0.25), value: requirementSatisfied)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: pageIndex)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: requirementSatisfied)
     }
 
     @ViewBuilder
@@ -207,8 +208,8 @@ struct OnboardingView: View {
         }
         .controlSize(.large)
         .frame(maxWidth: .infinity)
-        .animation(.snappy(duration: 0.25), value: requirementSatisfied)
-        .animation(.snappy(duration: 0.25), value: installProgress)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: requirementSatisfied)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: installProgress)
     }
 
     /// Page indicator. Forward-only, so the dots are a progress readout rather
@@ -223,7 +224,7 @@ struct OnboardingView: View {
             }
         }
         .padding(.top, 4)
-        .animation(.snappy(duration: 0.3), value: pageIndex)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: pageIndex)
         .accessibilityElement()
         .accessibilityLabel("Step \(pageIndex + 1) of \(Self.pages.count)")
     }

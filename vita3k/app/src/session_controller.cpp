@@ -30,6 +30,8 @@
 #include <renderer/functions.h>
 #include <util/log.h>
 
+#include <exception>
+
 namespace app {
 
 AppSessionController::AppSessionController(EmuEnvState &emuenv)
@@ -57,8 +59,32 @@ bool AppSessionController::begin_launch(const AppLaunchRequest &launch_request, 
         return false;
     }
 
-    if (!setup_game_launch(emuenv, launch_request.app_path, update_last_time_used))
+    const auto abort_launch_safely = [&] {
+        try {
+            abort_game_launch(emuenv);
+        } catch (const std::exception &error) {
+            LOG_ERROR("Cleaning up failed launch preparation for '{}' also threw: {}",
+                launch_request.app_path, error.what());
+        } catch (...) {
+            LOG_ERROR("Cleaning up failed launch preparation for '{}' also threw an unknown exception.",
+                launch_request.app_path);
+        }
+    };
+
+    try {
+        if (!setup_game_launch(emuenv, launch_request.app_path, update_last_time_used)) {
+            abort_launch_safely();
+            return false;
+        }
+    } catch (const std::exception &error) {
+        LOG_ERROR("Game launch preparation for '{}' threw: {}", launch_request.app_path, error.what());
+        abort_launch_safely();
         return false;
+    } catch (...) {
+        LOG_ERROR("Game launch preparation for '{}' threw an unknown exception.", launch_request.app_path);
+        abort_launch_safely();
+        return false;
+    }
 
     active_launch_request = launch_request;
     renderer_initialized = false;

@@ -10,6 +10,7 @@ import SwiftUI
 struct LibraryView: View {
     @State private var library = LibraryState.shared
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Rename sheet target; nil when closed.
     @State private var renameTarget: GameEntry?
@@ -236,7 +237,11 @@ struct LibraryView: View {
 
     private func scrollToFocused(_ focused: String?, using scroller: ScrollViewProxy) {
         guard let focused else { return }
-        withAnimation(.snappy) { scroller.scrollTo(focused, anchor: .center) }
+        if reduceMotion {
+            scroller.scrollTo(focused, anchor: .center)
+        } else {
+            withAnimation(.snappy) { scroller.scrollTo(focused, anchor: .center) }
+        }
     }
 
     // MARK: - Chrome
@@ -431,6 +436,7 @@ struct LibraryView: View {
             Bridge.presentJITRequiredAlert()
             return
         }
+        guard library.beginLaunch(game) else { return }
         Bridge.launch(titleID: game.titleID)
     }
 }

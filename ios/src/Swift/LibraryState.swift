@@ -198,6 +198,10 @@ final class LibraryState {
         self.games = games
         firmwareVersion = settings.firmwareVersion
         firmwareReady = settings.firmwareReady
+        // A fresh core snapshot means the library is interactive again. Clear
+        // the launch/import shield so a completed or rejected session cannot
+        // leave an invisible full-screen blocker behind.
+        busyMessage = nil
     }
 
     fileprivate func setJITAvailable(_ available: Bool) {
@@ -219,6 +223,15 @@ final class LibraryState {
 
     fileprivate func setBusy(_ message: String?) {
         busyMessage = message
+    }
+
+    /// Accept one launch intent while the library is transitioning away.
+    /// Controller key repeat and rapid taps can otherwise enqueue another boot
+    /// before the UIKit host has removed this view.
+    func beginLaunch(_ game: GameEntry) -> Bool {
+        guard busyMessage == nil else { return false }
+        busyMessage = "Starting \(game.displayTitle)…"
+        return true
     }
 }
 

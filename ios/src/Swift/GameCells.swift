@@ -28,6 +28,9 @@ struct GameCover: View {
     /// the Wide cover art setting is on. Grid cells pass true; the list and the
     /// carousel keep a fixed square because their layout depends on it.
     var allowsWide: Bool = false
+    /// Optional layout feedback for containers whose width depends on the
+    /// loaded art's real aspect (the landscape carousel).
+    var onAspectResolved: ((CGFloat) -> Void)? = nil
 
     @State private var image: UIImage?
     @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
@@ -52,11 +55,17 @@ struct GameCover: View {
             // drawn outside the bounds; clipped() bounds it first.
             .clipped()
             .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
-            // Keyed on the path plus the art generation: the path alone does
-            // not change when an install or license import makes an icon
-            // appear where there was none, so the load would never re-run.
-            .task(id: "\(game.iconPath)#\(LibraryState.shared.artGeneration)") {
-                image = await CoverImageLoader.image(atPath: game.iconPath)
+            // Keyed on path, art generation and wide mode: the path alone does
+            // not change when an install/license makes art appear, and a live
+            // wide-mode toggle must report the natural aspect back to a
+            // carousel that may already be on screen.
+            .task(id: "\(game.iconPath)#\(LibraryState.shared.artGeneration)#\(wideCoverArt)") {
+                let loaded = await CoverImageLoader.image(atPath: game.iconPath)
+                image = loaded
+                let ratio = loaded.map {
+                    $0.size.height > 0 ? $0.size.width / $0.size.height : 1
+                } ?? 1
+                onAspectResolved?(wideCoverArt && ratio > 1 ? ratio : 1)
             }
     }
 
@@ -156,7 +165,11 @@ struct GameCard: View {
         // A little more room at the bottom so the last metadata line does not
         // sit right against the card edge.
         .padding(EdgeInsets(top: 10, leading: 10, bottom: 14, trailing: 10))
-        .background(Color(.secondarySystemGroupedBackground),
+        // The library uses systemBackground, not a grouped-list background.
+        // secondarySystemGroupedBackground is white in Light Mode and made the
+        // card disappear into its white parent. This matching non-grouped
+        // semantic level stays distinct in both appearances.
+        .background(Color(.secondarySystemBackground),
                     in: .rect(cornerRadius: 26, style: .continuous))
         .accessibilityElement(children: .combine)
     }

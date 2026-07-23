@@ -43,6 +43,14 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.34.0", notes: [
+            "Grid cards are visible again in Light Mode, using an adaptive system surface with clear separation from the library background.",
+            "Wide cover art is substantially larger in the landscape carousel.",
+            "Rapid D-pad input can no longer leave the centred cover and the game selected by Cross out of sync.",
+            "Game launch preparation is single-shot and exception-safe, with a visible recovery message instead of partial session state.",
+            "Quitting no longer waits on a guest graphics callback before asking guest threads to stop, removing a teardown deadlock.",
+            "Startup, onboarding and controller-driven scrolling now honor Reduce Motion, and the cover editor follows Dynamic Type.",
+        ]),
         Release(version: "0.33.0", notes: [
             "Wide cover art is on by default and now shows the full banner in the grid and the landscape carousel.",
             "New Settings › Library › Compact list, and the regular list's cover art is larger.",

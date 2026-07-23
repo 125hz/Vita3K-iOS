@@ -1330,16 +1330,23 @@ void invalidate_sync_objects(GxmState &gxm) {
     }
 }
 
-void shutdown(EmuEnvState &emuenv) {
+void request_shutdown(EmuEnvState &emuenv) {
     emuenv.display.abort = true;
     emuenv.renderer->notification_ready.notify_all();
     emuenv.gxm.display_queue.abort();
     emuenv.renderer->render_abort = true;
     invalidate_sync_objects(emuenv.gxm);
     emuenv.renderer->command_finish_one.notify_all();
+}
 
+void wait_for_callbacks(GxmState &gxm) {
     // wait for any deferred GXM callback to finish before continuing shutdown
-    const std::lock_guard<std::mutex> callback_guard(emuenv.gxm.callback_lock);
+    const std::lock_guard<std::mutex> callback_guard(gxm.callback_lock);
+}
+
+void shutdown(EmuEnvState &emuenv) {
+    request_shutdown(emuenv);
+    wait_for_callbacks(emuenv.gxm);
 }
 
 } // namespace gxm

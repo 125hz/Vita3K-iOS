@@ -465,12 +465,26 @@ bool init(EmuEnvState &state, Config &cfg, const Root &root_paths) {
 void shutdown_app_runtime(EmuEnvState &state) {
     state.audio.stop_all_ports();
 
+#if defined(VITA3K_PLATFORM_IOS)
+    // Signal GXM/render waiters first, then stop guest threads before waiting
+    // for a deferred guest callback to release callback_lock. Waiting on that
+    // lock first can deadlock when the callback is itself blocked in guest
+    // execution -- the observed iOS "Quit Game" freeze.
+    gxm::request_shutdown(state);
+#else
+    // Preserve the established desktop/Android teardown ordering. The split
+    // ordering above is an iOS lifecycle fix and needs device acceptance before
+    // it is considered for other frontends.
     gxm::shutdown(state);
+#endif
 
     state.net.abort_all();
     state.http.shutdown_connections();
 
     state.kernel.process_exit();
+#if defined(VITA3K_PLATFORM_IOS)
+    gxm::wait_for_callbacks(state.gxm);
+#endif
 
     state.motion.reset_runtime();
 
