@@ -26,6 +26,7 @@ struct GameCover: View {
     var cornerRadius: CGFloat = 18
 
     @State private var image: UIImage?
+    @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = false
 
     var body: some View {
         // Color.clear defines the square; the art is an overlay on top of it.
@@ -37,19 +38,7 @@ struct GameCover: View {
         // layout never sees the image's intrinsic size at all.
         Color.clear
             .aspectRatio(1, contentMode: .fit)
-            .overlay {
-                if let image {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Image(systemName: "gamecontroller.fill")
-                        .font(.largeTitle)
-                        .foregroundStyle(.pink)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.fill.secondary)
-                }
-            }
+            .overlay { artwork }
             // clipShape alone does not stop an overflowing overlay from being
             // drawn outside the bounds; clipped() bounds it first.
             .clipped()
@@ -60,6 +49,39 @@ struct GameCover: View {
             .task(id: "\(game.iconPath)#\(LibraryState.shared.artGeneration)") {
                 image = await CoverImageLoader.image(atPath: game.iconPath)
             }
+    }
+
+    @ViewBuilder
+    private var artwork: some View {
+        if let image {
+            if wideCoverArt {
+                // Wide covers (the Vita LiveArea art is wider than tall) show
+                // in full rather than being cropped to a square. The art is
+                // fit inside the frame over a blurred fill of itself, the way
+                // Apple presents mismatched-aspect artwork - nothing is lost,
+                // and the grid stays uniform because the frame is unchanged.
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .blur(radius: 14)
+                    .overlay(.black.opacity(0.15))
+                    .overlay {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                    }
+            } else {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            }
+        } else {
+            Image(systemName: "gamecontroller.fill")
+                .font(.largeTitle)
+                .foregroundStyle(.pink)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.fill.secondary)
+        }
     }
 }
 

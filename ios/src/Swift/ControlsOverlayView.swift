@@ -30,10 +30,10 @@ struct ControlsOverlayView: View {
         GeometryReader { proxy in
             let size = proxy.size
             ZStack(alignment: .topLeading) {
-                // Small merge distance: at the default spread the shapes stay
-                // distinct, but the container still lets adjacent glass blend
-                // its highlights rather than compositing hard edges.
-                GlassEffectContainer(spacing: 6) {
+                // The default spread keeps the shapes apart; the container's
+                // merge distance can stay large so adjacent glass blends its
+                // highlights the way the system intends.
+                GlassEffectContainer(spacing: 18) {
                     ZStack(alignment: .topLeading) {
                         ForEach(model.visibleControls(in: size)) { definition in
                             controlView(definition, in: size)
@@ -197,7 +197,9 @@ struct ControlsOverlayView: View {
                 .glassEffect(.regular, in: .capsule)
             Spacer()
         }
-        .padding(.top, 12)
+        // Clear the notch / Dynamic Island: the overlay is full-bleed, so
+        // padding starts at the physical top edge without this inset.
+        .padding(.top, model.topSafeInset + 12)
         .frame(width: size.width)
     }
 }

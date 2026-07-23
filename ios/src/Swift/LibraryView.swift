@@ -397,12 +397,14 @@ struct LibraryView: View {
                 Label("Use global settings", systemImage: "arrow.uturn.backward.circle")
             }
         }
-        if game.hasCustomCover {
-            Button {
-                Bridge.presentCoverCrop(titleID: game.titleID)
-            } label: {
-                Label("Adjust cover crop", systemImage: "crop")
-            }
+        // Always offered, not only for custom covers: the crop editor falls
+        // back to the game's packaged art, so the built-in cover can be
+        // reframed too. This matched the old menu and regressed when it was
+        // gated on hasCustomCover.
+        Button {
+            Bridge.presentCoverCrop(titleID: game.titleID)
+        } label: {
+            Label("Adjust cover crop", systemImage: "crop")
         }
         // Spelled out rather than Button(_:systemImage:role:action:) so the
         // destructive button matches the label-closure form used by the rest

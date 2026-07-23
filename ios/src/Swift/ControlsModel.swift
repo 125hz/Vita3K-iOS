@@ -90,6 +90,11 @@ final class ControlsModel {
     var verticalGuideX: CGFloat?
     var horizontalGuideY: CGFloat?
 
+    /// Top safe-area inset in points, reported by the hosting controller. Used
+    /// to keep the editor's Done button clear of the notch/Dynamic Island,
+    /// since the overlay itself is full-bleed and has no safe area of its own.
+    var topSafeInset: CGFloat = 0
+
     // MARK: - Definitions
 
     static let definitions: [ControlDefinition] = [

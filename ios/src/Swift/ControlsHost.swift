@@ -15,8 +15,12 @@ import UIKit
 private final class ControlsHostingController<Content: View>: UIHostingController<Content> {
     override func viewSafeAreaInsetsDidChange() {
         super.viewSafeAreaInsetsDidChange()
+        let top = view.safeAreaInsets.top
         let scale = view.window?.screen.nativeScale ?? UIScreen.main.nativeScale
-        SafeAreaReporter.topPixels = Float(view.safeAreaInsets.top * scale)
+        SafeAreaReporter.topPixels = Float(top * scale)
+        // Points, for the editor chrome to clear the notch (the overlay is
+        // full-bleed, so SwiftUI's own safe area reads zero there).
+        ControlsModel.shared.topSafeInset = top
     }
 }
 

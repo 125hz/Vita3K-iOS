@@ -17,6 +17,7 @@ enum DefaultsKey: String {
     case showTitleIDs = "tsubomi.showTitleIds"
     case showVersion = "tsubomi.showVersion"
     case showGameSize = "tsubomi.showGameSize"
+    case wideCoverArt = "tsubomi.wideCoverArt"
 
     /// Value used when the key has never been written.
     ///
@@ -28,6 +29,9 @@ enum DefaultsKey: String {
         switch self {
         case .showTitleIDs, .showVersion, .showGameSize:
             return true
+        case .wideCoverArt:
+            // Square crop is the default; wide is opt-in.
+            return false
         case .perfFPS, .perfFrametime, .perfFrametimeGraph, .perfRAM, .perfBattery, .perfLog:
             // The in-game overlay stays off until the user asks for a metric.
             return false
