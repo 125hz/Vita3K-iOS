@@ -11,15 +11,14 @@ struct LibraryView: View {
     @State private var library = LibraryState.shared
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
 
     /// Rename sheet target; nil when closed.
     @State private var renameTarget: GameEntry?
     /// Delete confirmation target.
     @State private var deleteTarget: GameEntry?
 
-    /// Drives the refresh button's symbol animation; incremented per tap.
-    @State private var refreshTick = 0
-    /// Blocks repeat taps for the length of the animation.
+    /// Blocks overlapping pull-to-refresh requests.
     @State private var isRefreshing = false
 
     /// The carousel is the landscape presentation of grid mode. List mode
@@ -105,11 +104,15 @@ struct LibraryView: View {
     @ViewBuilder
     private var content: some View {
         if library.games.isEmpty {
-            ContentUnavailableView {
-                Label("No Games", systemImage: "gamecontroller")
-            } description: {
-                Text("Tap + to import a game")
+            ScrollView {
+                ContentUnavailableView {
+                    Label("No Games", systemImage: "gamecontroller")
+                } description: {
+                    Text("Tap + to import a game")
+                }
+                .frame(maxWidth: .infinity, minHeight: 420)
             }
+            .refreshable { await refresh() }
         } else if showsCarousel {
             carouselContent
         } else if library.isListMode {
@@ -128,14 +131,24 @@ struct LibraryView: View {
     }
 
     private var carouselContent: some View {
-        CoverCarousel(
-            games: library.games,
-            dimmed: !library.firmwareReady,
-            padFocusedTitleID: carouselFocus,
-            stepAccumulator: library.carouselStepAccumulator,
-            onLaunch: launch,
-            menu: gameMenu(for:)
-        )
+        // A vertical refresh container around the horizontal carousel gives
+        // landscape the same pull-down gesture as the grid and list without
+        // changing the carousel's horizontal snapping.
+        GeometryReader { proxy in
+            ScrollView(.vertical) {
+                CoverCarousel(
+                    games: library.games,
+                    dimmed: !library.firmwareReady,
+                    padFocusedTitleID: carouselFocus,
+                    stepAccumulator: library.carouselStepAccumulator,
+                    onLaunch: launch,
+                    menu: gameMenu(for:)
+                )
+                .frame(height: proxy.size.height)
+            }
+            .scrollIndicators(.hidden)
+            .refreshable { await refresh() }
+        }
     }
 
     /// Split out for the same type-checking reason as `gridCell`.
@@ -167,6 +180,7 @@ struct LibraryView: View {
                         : EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             }
             .listStyle(.plain)
+            .refreshable { await refresh() }
             .onChange(of: library.focusedTitleID) { _, focused in
                 scrollToFocused(focused, using: scroller)
             }
@@ -209,6 +223,7 @@ struct LibraryView: View {
             .padding(.horizontal, Self.gridHorizontalPadding)
             .padding(.vertical, 12)
         }
+        .refreshable { await refresh() }
     }
 
     private var gridContent: some View {
@@ -286,17 +301,6 @@ struct LibraryView: View {
                     systemImage: library.isListMode ? "square.grid.2x2" : "list.bullet"
                 )
             }
-
-            Button {
-                refresh()
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            // The rescan is usually instant, so without feedback the button
-            // looks inert. Spinning the glyph and following with a toast makes
-            // it clear something happened.
-            .symbolEffect(.rotate, value: refreshTick)
-            .disabled(isRefreshing)
 
             // The graphics-help button is gone: the same explanation now lives
             // in Settings, next to the switches it talks about.
@@ -392,6 +396,7 @@ struct LibraryView: View {
         } label: {
             Label("Adjust cover crop", systemImage: "crop")
         }
+        .disabled(wideCoverArt)
         if game.hasCustomCover {
             Button {
                 Bridge.resetCoverArt(titleID: game.titleID)
@@ -411,21 +416,30 @@ struct LibraryView: View {
 
     // MARK: - Actions
 
-    /// Rescans installed titles, with visible feedback.
-    ///
-    /// The core replaces the library wholesale and usually finishes before the
-    /// next frame, so there is nothing to wait on - the delay here exists only
-    /// so the spin is perceptible rather than a single flicker.
-    private func refresh() {
+    /// Rescans installed titles and keeps the native refresh control active
+    /// until the core publishes the replacement snapshot.
+    private func refresh() async {
         guard !isRefreshing else { return }
         isRefreshing = true
-        refreshTick += 1
+        defer { isRefreshing = false }
+
+        let startingGeneration = library.refreshCompletionGeneration
         Bridge.refreshLibrary()
-        Task {
-            try? await Task.sleep(for: .milliseconds(650))
-            isRefreshing = false
-            library.showRefreshedToast()
+
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while library.refreshCompletionGeneration == startingGeneration && clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(40))
+            if Task.isCancelled { return }
         }
+        guard library.refreshCompletionGeneration != startingGeneration,
+              library.lastRefreshSucceeded else { return }
+
+        HomeSoundEffects.play(.ready)
+        try? await Task.sleep(for: .milliseconds(280))
+        guard !Task.isCancelled else { return }
+        HomeSoundEffects.play(.success)
+        library.showRefreshedToast()
     }
 
     private func launch(_ game: GameEntry) {
@@ -437,6 +451,7 @@ struct LibraryView: View {
             return
         }
         guard library.beginLaunch(game) else { return }
+        HomeSoundEffects.play(.press)
         Bridge.launch(titleID: game.titleID)
     }
 }

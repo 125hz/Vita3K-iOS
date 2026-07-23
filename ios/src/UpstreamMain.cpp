@@ -1347,13 +1347,16 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                     : std::nullopt;
                 vita3k_ios_hide_library();
                 return AppLaunchRequest{.app_path = action->app_path};
-            case Vita3KIOSFrontendActionKind::Refresh:
+            case Vita3KIOSFrontendActionKind::Refresh: {
                 LOG_INFO("Rescanning iOS game library");
-                if (!app::init_apps_list(emuenv))
+                const bool refreshed = app::init_apps_list(emuenv);
+                if (!refreshed)
                     LOG_ERROR("Failed to rescan apps list.");
                 games = native_games(emuenv);
                 vita3k_ios_update_library(games, native_settings(emuenv));
+                vita3k_ios_report_library_refresh(refreshed);
                 break;
+            }
             case Vita3KIOSFrontendActionKind::ApplySettings:
                 apply_native_settings(emuenv, action->settings);
                 vita3k_ios_update_library(games, native_settings(emuenv));

@@ -17,6 +17,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <objc/runtime.h>
 #include <mach/mach.h>
 #undef Ptr
 
@@ -33,6 +34,149 @@
 // ios/CMakeLists.txt. This is how the remaining Objective-C++ screens reach
 // the migrated SwiftUI ones.
 #import "Tsubomi-Swift.h"
+
+// iOS 26 no longer scales the presenting screen behind a sheet. Restore that
+// small depth cue app-wide: any presented modal gets a subtly recessed,
+// rounded background, and every dismissal path (button, swipe, or system
+// picker) restores the exact transform/layer state it found. Reduce Motion
+// leaves the system's standard dimming transition untouched.
+namespace {
+
+const void *kTsubomiDepthBackgroundKey = &kTsubomiDepthBackgroundKey;
+const void *kTsubomiDepthTransformKey = &kTsubomiDepthTransformKey;
+const void *kTsubomiDepthRadiusKey = &kTsubomiDepthRadiusKey;
+const void *kTsubomiDepthMasksKey = &kTsubomiDepthMasksKey;
+const void *kTsubomiDepthCurveKey = &kTsubomiDepthCurveKey;
+
+void prepare_modal_depth(UIView *view) {
+    if (!view || objc_getAssociatedObject(view, kTsubomiDepthTransformKey))
+        return;
+    objc_setAssociatedObject(view, kTsubomiDepthTransformKey,
+        [NSValue valueWithCGAffineTransform:view.transform], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(view, kTsubomiDepthRadiusKey,
+        @(view.layer.cornerRadius), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(view, kTsubomiDepthMasksKey,
+        @(view.layer.masksToBounds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(view, kTsubomiDepthCurveKey,
+        view.layer.cornerCurve, OBJC_ASSOCIATION_COPY_NONATOMIC);
+}
+
+void animate_modal_depth(UIView *view) {
+    if (!view || UIAccessibilityIsReduceMotionEnabled())
+        return;
+    [UIView animateWithDuration:0.38
+        delay:0
+        usingSpringWithDamping:0.9
+        initialSpringVelocity:0
+        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+        animations:^{
+            NSValue *original = objc_getAssociatedObject(view, kTsubomiDepthTransformKey);
+            if (!original)
+                return;
+            view.transform = CGAffineTransformScale(original.CGAffineTransformValue, 0.96, 0.96);
+            view.layer.cornerRadius = 20;
+            view.layer.cornerCurve = kCACornerCurveContinuous;
+            view.layer.masksToBounds = YES;
+        }
+        completion:nil];
+}
+
+void restore_modal_depth(UIView *view, BOOL animated) {
+    NSValue *transform = objc_getAssociatedObject(view, kTsubomiDepthTransformKey);
+    NSNumber *radius = objc_getAssociatedObject(view, kTsubomiDepthRadiusKey);
+    NSNumber *masks = objc_getAssociatedObject(view, kTsubomiDepthMasksKey);
+    NSString *curve = objc_getAssociatedObject(view, kTsubomiDepthCurveKey);
+    if (!view || !transform)
+        return;
+
+    void (^restore)(void) = ^{
+        view.transform = transform.CGAffineTransformValue;
+        view.layer.cornerRadius = radius.doubleValue;
+        view.layer.masksToBounds = masks.boolValue;
+        view.layer.cornerCurve = curve;
+    };
+    if (animated && !UIAccessibilityIsReduceMotionEnabled()) {
+        [UIView animateWithDuration:0.32
+            delay:0
+            usingSpringWithDamping:0.94
+            initialSpringVelocity:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+            animations:restore
+            completion:nil];
+    } else {
+        restore();
+    }
+    objc_setAssociatedObject(view, kTsubomiDepthTransformKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    objc_setAssociatedObject(view, kTsubomiDepthRadiusKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    objc_setAssociatedObject(view, kTsubomiDepthMasksKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    objc_setAssociatedObject(view, kTsubomiDepthCurveKey, nil, OBJC_ASSOCIATION_ASSIGN);
+}
+
+} // namespace
+
+@interface UIViewController (TsubomiModalDepth)
+- (void)tsubomi_presentViewController:(UIViewController *)controller
+                             animated:(BOOL)animated
+                           completion:(void (^)(void))completion;
+- (void)tsubomi_dismissViewControllerAnimated:(BOOL)animated
+                                    completion:(void (^)(void))completion;
+- (void)tsubomi_viewWillAppear:(BOOL)animated;
+@end
+
+@implementation UIViewController (TsubomiModalDepth)
+
++ (void)load {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Method present = class_getInstanceMethod(
+            self, @selector(presentViewController:animated:completion:));
+        Method depthPresent = class_getInstanceMethod(
+            self, @selector(tsubomi_presentViewController:animated:completion:));
+        method_exchangeImplementations(present, depthPresent);
+
+        Method dismiss = class_getInstanceMethod(
+            self, @selector(dismissViewControllerAnimated:completion:));
+        Method depthDismiss = class_getInstanceMethod(
+            self, @selector(tsubomi_dismissViewControllerAnimated:completion:));
+        method_exchangeImplementations(dismiss, depthDismiss);
+
+        Method appear = class_getInstanceMethod(self, @selector(viewWillAppear:));
+        Method depthAppear = class_getInstanceMethod(self, @selector(tsubomi_viewWillAppear:));
+        method_exchangeImplementations(appear, depthAppear);
+    });
+}
+
+- (void)tsubomi_presentViewController:(UIViewController *)controller
+                             animated:(BOOL)animated
+                           completion:(void (^)(void))completion {
+    UIView *background = self.viewIfLoaded;
+    const BOOL addsDepth = animated && background.window && !UIAccessibilityIsReduceMotionEnabled();
+    if (addsDepth) {
+        prepare_modal_depth(background);
+        objc_setAssociatedObject(controller, kTsubomiDepthBackgroundKey,
+            [NSValue valueWithNonretainedObject:background], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    [self tsubomi_presentViewController:controller animated:animated completion:completion];
+    if (addsDepth)
+        animate_modal_depth(background);
+}
+
+- (void)tsubomi_dismissViewControllerAnimated:(BOOL)animated
+                                    completion:(void (^)(void))completion {
+    UIViewController *dismissed = self.presentedViewController ?: self;
+    NSValue *stored = objc_getAssociatedObject(dismissed, kTsubomiDepthBackgroundKey);
+    restore_modal_depth(stored.nonretainedObjectValue, animated);
+    [self tsubomi_dismissViewControllerAnimated:animated completion:completion];
+}
+
+- (void)tsubomi_viewWillAppear:(BOOL)animated {
+    [self tsubomi_viewWillAppear:animated];
+    // Interactive sheet swipes do not necessarily call the public dismissal
+    // method, but the presenting controller always reappears.
+    restore_modal_depth(self.viewIfLoaded, animated);
+}
+
+@end
 
 namespace {
 
@@ -479,6 +623,7 @@ void present_settings_sheet(NSString *title_id, NSString *display_name) {
     UIViewController *root = active_window().rootViewController;
     if (!root || root.presentedViewController)
         return;
+    [TsubomiSoundEffects playNamed:@"loading"];
     // Belt and braces: a lingering game drawable must never be visible under
     // the settings sheet.
     set_metal_drawables_hidden(active_window(), YES);
@@ -1432,15 +1577,30 @@ void vita3k_ios_report_import_result(const std::string &message, const bool succ
             [TsubomiLibraryStateBridge invalidateArt];
             // The toast owns its own dismissal timer in LibraryState.
             [TsubomiLibraryStateBridge showStatusMessage:text];
+            const BOOL gameInstalled =
+                [text hasPrefix:@"Installed "] || [text localizedCaseInsensitiveContainsString:@"PKG installed"];
+            const BOOL licenseInstalled =
+                [text localizedCaseInsensitiveContainsString:@"license installed"];
+            if (gameInstalled || licenseInstalled)
+                [TsubomiSoundEffects playNamed:@"success"];
             if ([text localizedCaseInsensitiveContainsString:@"license"])
                 present_alert(@"License installed", text);
         } else {
+            if ([text localizedCaseInsensitiveContainsString:@"needs a matching license"]
+                || [text localizedCaseInsensitiveContainsString:@"work.bin first"])
+                [TsubomiSoundEffects playNamed:@"error"];
             // Keep the precise installer detail on screen until dismissed.
             NSString *title = [text localizedCaseInsensitiveContainsString:@"save"]
                 ? @"Save transfer failed"
                 : @"Import failed";
             present_alert(title, text);
         }
+    });
+}
+
+void vita3k_ios_report_library_refresh(const bool success) {
+    perform_on_main(^{
+        [TsubomiLibraryStateBridge reportRefreshSucceeded:success];
     });
 }
 
@@ -1473,6 +1633,7 @@ void vita3k_ios_prompt_license_import(const std::string &title_id) {
                                                    style:UIAlertActionStyleDefault
                                                  handler:^(__unused UIAlertAction *action) { present_license_picker(); }]];
         [prompt addAction:[UIAlertAction actionWithTitle:@"Not now" style:UIAlertActionStyleCancel handler:nil]];
+        [TsubomiSoundEffects playNamed:@"error"];
         [root presentViewController:prompt animated:YES completion:nil];
     });
 }
@@ -1529,6 +1690,7 @@ void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_r
     for (const auto &label : restart_required)
         [labels addObject:[NSString stringWithUTF8String:label.c_str()]];
     perform_on_main(^{
+        [TsubomiSoundEffects playNamed:@"sparkle"];
         if (labels.count == 0)
             return;
         // Restart-required settings are reported through the same toast the

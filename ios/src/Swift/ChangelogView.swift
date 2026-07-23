@@ -43,6 +43,12 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.37.0", notes: [
+            "Opening a modal now subtly scales and rounds the screen behind it for a stronger sense of depth; Reduce Motion keeps the standard system transition.",
+            "Library-only interaction sounds now mark carousel selection, game launch, imports, license requirements, settings, and refresh completion. They are enabled by default and can be disabled in Settings › Library.",
+            "Pull down from the grid, list, empty library, or landscape carousel to rescan the library. The old bottom-bar Refresh button is removed.",
+            "Adjust cover crop is unavailable while Wide cover art is enabled, because wide cards display the full image instead of the square crop.",
+        ]),
         Release(version: "0.36.0", notes: [
             "Physical and on-screen analog sticks now translate circular SDL output to the Vita's independent-axis range, so full diagonal movement no longer drops to roughly 71% per axis.",
             "Partial stick travel remains analog, and desktop and Android controller behavior is unchanged.",

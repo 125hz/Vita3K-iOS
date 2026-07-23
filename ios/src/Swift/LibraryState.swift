@@ -28,6 +28,10 @@ final class LibraryState {
     /// view's load task would re-run on their own - the cover stayed blank
     /// until the app restarted. Cells fold this into their task identity.
     private(set) var artGeneration = 0
+    /// Manual refresh completion comes from the core after its rescan result is
+    /// known. A failed scan can still publish the previous snapshot.
+    private(set) var refreshCompletionGeneration = 0
+    private(set) var lastRefreshSucceeded = false
 
     /// Transient toast under the header, cleared automatically.
     private(set) var statusMessage: String?
@@ -209,6 +213,14 @@ final class LibraryState {
         jitAvailable = available
     }
 
+    fileprivate func reportRefresh(succeeded: Bool) {
+        lastRefreshSucceeded = succeeded
+        refreshCompletionGeneration &+= 1
+        if !succeeded {
+            showStatus("Library refresh failed", duration: .seconds(3))
+        }
+    }
+
     /// Shows a toast for `duration` seconds. A second message replaces the
     /// first and restarts the timer rather than stacking.
     fileprivate func showStatus(_ message: String, duration: Duration = .seconds(6)) {
@@ -252,6 +264,11 @@ final class LibraryStateBridge: NSObject {
     @objc(setJITAvailable:)
     static func setJITAvailable(_ available: Bool) {
         LibraryState.shared.setJITAvailable(available)
+    }
+
+    @objc(reportRefreshSucceeded:)
+    static func reportRefresh(succeeded: Bool) {
+        LibraryState.shared.reportRefresh(succeeded: succeeded)
     }
 
     @objc(showStatusMessage:)

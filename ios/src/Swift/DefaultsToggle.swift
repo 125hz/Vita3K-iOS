@@ -20,6 +20,7 @@ enum DefaultsKey: String {
     case wideCoverArt = "tsubomi.wideCoverArt"
     case compactList = "tsubomi.compactList"
     case coloredFaceButtons = "tsubomi.coloredFaceButtons"
+    case soundEffects = "tsubomi.soundEffects"
 
     /// Value used when the key has never been written.
     ///
@@ -29,7 +30,7 @@ enum DefaultsKey: String {
     /// library was still drawing the data.
     var defaultValue: Bool {
         switch self {
-        case .showTitleIDs, .showVersion, .showGameSize, .coloredFaceButtons, .wideCoverArt:
+        case .showTitleIDs, .showVersion, .showGameSize, .coloredFaceButtons, .wideCoverArt, .soundEffects:
             return true
         case .compactList:
             // The roomier list is the default; compact is opt-in.

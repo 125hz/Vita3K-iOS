@@ -177,6 +177,11 @@ void vita3k_ios_hide_perf_overlay();
 // while successes use the transient status label.
 void vita3k_ios_report_import_result(const std::string &message, bool success);
 
+// Completes a user-requested library rescan. Kept separate from the snapshot
+// push so the refresh control can distinguish a published old snapshot after a
+// failed scan from a genuinely successful refresh.
+void vita3k_ios_report_library_refresh(bool success);
+
 // Dismisses the "Booting…" overlay and shows a boot-failure alert so a failed
 // launch returns to the library instead of taking the whole app down.
 void vita3k_ios_show_boot_error(const std::string &message);

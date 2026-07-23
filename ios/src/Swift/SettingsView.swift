@@ -47,6 +47,12 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         model.save()
+                        // Per-game settings persist immediately in the native
+                        // frontend. Global settings play after the core reports
+                        // that its commit completed.
+                        if model.isPerGame {
+                            HomeSoundEffects.play(.sparkle)
+                        }
                         onFinish()
                     }
                 }
@@ -155,10 +161,11 @@ struct SettingsView: View {
             DefaultsToggle("Show game size", key: .showGameSize, onChange: Bridge.reloadLibraryCells)
             DefaultsToggle("Wide cover art", key: .wideCoverArt)
             DefaultsToggle("Compact list", key: .compactList)
+            DefaultsToggle("Interface sound effects", key: .soundEffects)
         } header: {
             Text("Library")
         } footer: {
-            Text("Wide cover art shows each cover in full instead of cropping it to a square. Compact list shrinks the covers and fits more games on screen.")
+            Text("Wide cover art shows each cover in full instead of cropping it to a square. Compact list shrinks the covers and fits more games on screen. Interface sounds play only while browsing the library and are on by default.")
         }
     }
 

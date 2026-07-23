@@ -105,6 +105,7 @@ struct CoverCarousel<Menu: View>: View {
             guard let newValue, let titleID = Self.titleID(from: newValue) else { return }
             if oldValue != nil {
                 hapticTrigger += 1
+                HomeSoundEffects.play(.tick)
             }
             // Touch scrolling drives the pad focus too, so picking the
             // controller back up continues from the visible cover.
