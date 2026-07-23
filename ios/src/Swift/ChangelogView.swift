@@ -43,6 +43,9 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.34.1", notes: [
+            "Fixes the iPhoneOS compile failure in the variable-width cover carousel.",
+        ]),
         Release(version: "0.34.0", notes: [
             "Grid cards are visible again in Light Mode, using an adaptive system surface with clear separation from the library background.",
             "Wide cover art is substantially larger in the landscape carousel.",

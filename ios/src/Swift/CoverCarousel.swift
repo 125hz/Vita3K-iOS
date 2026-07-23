@@ -69,6 +69,12 @@ struct CoverCarousel<Menu: View>: View {
 
     var body: some View {
         GeometryReader { proxy in
+            // Edge insets must be based on a value available to the whole
+            // scroll view. Covers can now have different widths, so reserve
+            // space for the widest one while each item keeps its own size.
+            let widestSide = games.reduce(CGFloat.zero) {
+                max($0, coverSide(for: $1, in: proxy.size))
+            }
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 18) {
                     ForEach(items) { item in
@@ -84,7 +90,7 @@ struct CoverCarousel<Menu: View>: View {
             // measured on that container instead of the covers - advancing one
             // game took most of a screen-width of drag. This insets the content
             // while leaving the scroll targets measured on the covers.
-            .safeAreaPadding(.horizontal, max(0, (proxy.size.width - side) / 2))
+            .safeAreaPadding(.horizontal, max(0, (proxy.size.width - widestSide) / 2))
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $scrolledID, anchor: .center)
             .scrollIndicators(.hidden)
