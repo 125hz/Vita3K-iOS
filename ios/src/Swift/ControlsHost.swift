@@ -24,13 +24,75 @@ private final class ControlsHostingController<Content: View>: UIHostingControlle
     }
 }
 
+/// Top-level overlay container that lets game-surface touches reach SDL.
+///
+/// `ControlTouchSurface` rejects points between visible controls, but that is
+/// not sufficient on its own: the full-screen `UIHostingController.view`
+/// remains a hit-test candidate and can still stop UIKit from searching the
+/// Metal view below it. Filtering at the overlay's root is the boundary that
+/// makes true sibling-view passthrough possible.
+private final class ControlsPassthroughView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let model = ControlsModel.shared
+        if model.isEditing {
+            return super.hitTest(point, with: event)
+        }
+
+        let size = bounds.size
+        let hitsControl = model.visibleControls(in: size).contains { definition in
+            model.frame(for: definition, in: size)?.contains(point) == true
+        }
+        if hitsControl {
+            return super.hitTest(point, with: event)
+        }
+
+        if model.isVisible("menu", in: size),
+           let menu = ControlsModel.definition(for: "menu"),
+           model.frame(for: menu, in: size)?.contains(point) == true {
+            return super.hitTest(point, with: event)
+        }
+
+        // Returning nil from the top-level overlay, rather than only from a
+        // descendant, lets UIWindow continue hit-testing the SDL/Metal view.
+        return nil
+    }
+}
+
+/// Owns the SwiftUI host inside a root view with explicit passthrough rules.
+private final class ControlsContainerController<Content: View>: UIViewController {
+    private let host: ControlsHostingController<Content>
+
+    init(rootView: Content) {
+        host = ControlsHostingController(rootView: rootView)
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func loadView() {
+        let root = ControlsPassthroughView()
+        root.backgroundColor = .clear
+        root.isOpaque = false
+        view = root
+
+        addChild(host)
+        host.view.frame = root.bounds
+        host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        host.view.backgroundColor = .clear
+        host.view.isOpaque = false
+        root.addSubview(host.view)
+        host.didMove(toParent: self)
+    }
+}
+
 @objc(TsubomiControlsHost)
 @MainActor
 final class ControlsHost: NSObject {
 
     @objc(controlsViewControllerWithMenuHandler:)
     static func controlsViewController(onMenuTap: @escaping () -> Void) -> UIViewController {
-        let controller = ControlsHostingController(rootView: ControlsOverlayView(onMenuTap: onMenuTap))
+        let controller = ControlsContainerController(rootView: ControlsOverlayView(onMenuTap: onMenuTap))
         // The overlay is chrome over a live drawable: it must never paint a
         // background of its own, or the game disappears behind it.
         controller.view.backgroundColor = .clear

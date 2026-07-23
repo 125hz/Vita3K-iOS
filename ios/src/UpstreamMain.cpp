@@ -1878,6 +1878,13 @@ int main(int argc, char *argv[]) {
             case SDL_EVENT_FINGER_MOTION:
             case SDL_EVENT_FINGER_UP: {
                 handle_touch_event(emuenv->touch, event.tfinger);
+                if (event.type != SDL_EVENT_FINGER_MOTION) {
+                    LOG_DEBUG("iOS Vita touch {}: finger={} x={:.4f} y={:.4f} active={}",
+                        event.type == SDL_EVENT_FINGER_DOWN ? "down" : "up",
+                        static_cast<std::uint64_t>(event.tfinger.fingerID),
+                        event.tfinger.x, event.tfinger.y,
+                        static_cast<unsigned>(emuenv->touch.finger_count));
+                }
                 auto &mouse = emuenv->ctrl.overlay_mouse;
                 mouse.x.store(event.tfinger.x * 960.f, std::memory_order_relaxed);
                 mouse.y.store(event.tfinger.y * 544.f, std::memory_order_relaxed);
