@@ -120,18 +120,16 @@ struct SettingsView: View {
     private var controlsSection: some View {
         Section {
             Button("Virtual controls…") {
-                // Still the UIKit layout editor: it drags live control views
-                // around the on-screen overlay, which has no SwiftUI analogue
-                // yet. Presented over this sheet.
                 Bridge.presentControllerOptions()
             }
+            DefaultsToggle("Colored face buttons", key: .coloredFaceButtons)
             NavigationLink("Face button layout") {
                 FaceButtonLayoutView(model: model)
             }
         } header: {
             Text("Controls")
         } footer: {
-            Text("Virtual controls covers opacity, scale, layout, visibility, and physical-pad auto-hide. Some third-party controllers report face buttons in Xbox-style positions; remap them if the wrong button responds.")
+            Text("Virtual controls covers opacity, scale, layout, visibility, and physical-pad auto-hide. Colored face buttons tint the on-screen ✕ ○ □ △ glyphs. Some third-party controllers report face buttons in Xbox-style positions; remap them if the wrong button responds.")
         }
     }
 

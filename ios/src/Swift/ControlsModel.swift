@@ -366,31 +366,31 @@ final class ControlsModel {
         func p(_ x: Double, _ y: Double) -> ControlPlacement {
             ControlPlacement(x: x, y: y, visible: true)
         }
-        // Spread wider than the original defaults so the Liquid Glass shapes
-        // do not merge into each other: the d-pad and face clusters have more
-        // gap between their members, and the two halves sit further out.
+        // Tuned by hand on device and supplied as the defaults; see
+        // ios_controls.json layouts. Spread so the Liquid Glass shapes stay
+        // distinct.
         return [
             "landscape": [
-                "dpad_up": p(0.12, 0.60), "dpad_down": p(0.12, 0.88),
-                "dpad_left": p(0.05, 0.74), "dpad_right": p(0.19, 0.74),
-                "triangle": p(0.88, 0.60), "cross": p(0.88, 0.88),
-                "square": p(0.81, 0.74), "circle": p(0.95, 0.74),
-                "left_trigger": p(0.07, 0.11), "right_trigger": p(0.93, 0.11),
-                "left_shoulder": p(0.07, 0.26), "right_shoulder": p(0.93, 0.26),
-                "select": p(0.42, 0.93), "start": p(0.58, 0.93),
-                "left_stick": p(0.30, 0.72), "right_stick": p(0.70, 0.72),
-                "menu": p(0.95, 0.13),
+                "dpad_up": p(0.14, 0.6393), "dpad_down": p(0.14, 0.8876),
+                "dpad_left": p(0.08, 0.76), "dpad_right": p(0.20, 0.76),
+                "triangle": p(0.86, 0.6393), "cross": p(0.86, 0.8876),
+                "square": p(0.80, 0.76), "circle": p(0.92, 0.76),
+                "left_trigger": p(0.09, 0.13), "right_trigger": p(0.92, 0.13),
+                "left_shoulder": p(0.09, 0.25), "right_shoulder": p(0.92, 0.25),
+                "select": p(0.43, 0.91), "start": p(0.57, 0.91),
+                "left_stick": p(0.3125, 0.73), "right_stick": p(0.6955, 0.73),
+                "menu": p(0.9478, 0.3814),
             ],
             "portrait": [
-                "dpad_up": p(0.19, 0.57), "dpad_down": p(0.19, 0.75),
-                "dpad_left": p(0.08, 0.66), "dpad_right": p(0.30, 0.66),
-                "triangle": p(0.81, 0.57), "cross": p(0.81, 0.75),
-                "square": p(0.70, 0.66), "circle": p(0.92, 0.66),
-                "left_shoulder": p(0.13, 0.49), "right_shoulder": p(0.87, 0.49),
-                "left_trigger": p(0.13, 0.41), "right_trigger": p(0.87, 0.41),
-                "select": p(0.37, 0.95), "start": p(0.63, 0.95),
-                "left_stick": p(0.22, 0.86), "right_stick": p(0.78, 0.86),
-                "menu": p(0.92, 0.50),
+                "dpad_up": p(0.22, 0.59), "dpad_down": p(0.22, 0.71),
+                "dpad_left": p(0.0884, 0.65), "dpad_right": p(0.3474, 0.65),
+                "triangle": p(0.78, 0.59), "cross": p(0.78, 0.71),
+                "square": p(0.6484, 0.65), "circle": p(0.9182, 0.65),
+                "left_shoulder": p(0.1649, 0.5144), "right_shoulder": p(0.85, 0.5144),
+                "left_trigger": p(0.1649, 0.4486), "right_trigger": p(0.85, 0.4486),
+                "select": p(0.40, 0.94), "start": p(0.60, 0.94),
+                "left_stick": p(0.20, 0.84), "right_stick": p(0.80, 0.84),
+                "menu": p(0.9154, 0.3676),
             ],
         ]
     }

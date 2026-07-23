@@ -43,6 +43,24 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.32.0", notes: [
+            "The whole on-screen controller, the in-game menu, controller options and the performance overlay are now SwiftUI with real Liquid Glass. The menu button is always visible and can be dragged anywhere without entering the editor; the performance overlay can be repositioned in Layout Options.",
+            "On-screen ✕ ○ □ △ glyphs are colored (blue, red, pink, green). Turn it off in Settings › Controls.",
+            "New Settings › Library › Wide cover art shows the full Vita banner art instead of cropping it to a square.",
+            "The default control layout is spread out and hand-tuned so the glass buttons no longer merge together.",
+            "The game is no longer clipped by the notch in portrait, and quitting a game no longer occasionally freezes.",
+            "Battery and smoothness pass: analog-stick input and library browsing do far less redraw work.",
+        ]),
+        Release(version: "0.27.0", notes: [
+            "Fixed a launch crash on a fresh install, and a stale frame of a quit game showing behind the library.",
+            "The library title is centered and its controls moved to a Liquid Glass bar at the bottom of the screen.",
+            "The landscape cover carousel loops endlessly in one direction with a controller, and its covers are larger.",
+            "Grid cards are all the same size, and a refresh shows a quick spin and confirmation.",
+        ]),
+        Release(version: "0.26.0", notes: [
+            "Tsubomi now requires iOS 26 — the interface is built around Liquid Glass, so the old fallback look is gone.",
+            "Settings, Trophies and first-run setup were rebuilt in SwiftUI ahead of the rest of the app.",
+        ]),
         Release(version: "0.25.0", notes: [
             "The game library is now SwiftUI. Grid, list and the landscape cover carousel are rebuilt on system components, so scrolling, context menus and rotation all behave the way they do elsewhere in iOS.",
             "Fixed the carousel opening with every cover at full brightness — the games beside the selected one are now dimmed immediately instead of only after the first scroll.",

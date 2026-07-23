@@ -278,15 +278,34 @@ private struct ControlFace: View {
     let definition: ControlDefinition
     var model: ControlsModel
 
+    @AppStorage(DefaultsKey.coloredFaceButtons.rawValue) private var coloredFaceButtons = true
+
+    /// PlayStation face-button colours, for the four face glyphs only.
+    private var faceColor: Color? {
+        guard coloredFaceButtons else { return nil }
+        switch definition.id {
+        case "cross": return .blue
+        case "circle": return .red
+        case "square": return .pink
+        case "triangle": return .green
+        default: return nil
+        }
+    }
+
     var body: some View {
         // Read inside this leaf's body so only this control invalidates when
         // its own pressed state changes.
         let isPressed = model.pressedControls.contains(definition.id)
+        // A coloured face glyph keeps its colour when pressed (the glass tint
+        // provides the press feedback); everything else follows the tint on
+        // press, primary otherwise.
+        let glyphStyle: AnyShapeStyle = faceColor.map { AnyShapeStyle($0) }
+            ?? (isPressed ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
         return Text(definition.label)
             .font(.system(size: definition.usesWordLabel ? 10 : 17, weight: .bold))
             .minimumScaleFactor(0.7)
             .lineLimit(1)
-            .foregroundStyle(isPressed ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+            .foregroundStyle(glyphStyle)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // Pressed state tints the material itself rather than painting an
             // opaque chip over it, which is what Liquid Glass expects.

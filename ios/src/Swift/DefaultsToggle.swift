@@ -18,6 +18,7 @@ enum DefaultsKey: String {
     case showVersion = "tsubomi.showVersion"
     case showGameSize = "tsubomi.showGameSize"
     case wideCoverArt = "tsubomi.wideCoverArt"
+    case coloredFaceButtons = "tsubomi.coloredFaceButtons"
 
     /// Value used when the key has never been written.
     ///
@@ -27,7 +28,7 @@ enum DefaultsKey: String {
     /// library was still drawing the data.
     var defaultValue: Bool {
         switch self {
-        case .showTitleIDs, .showVersion, .showGameSize:
+        case .showTitleIDs, .showVersion, .showGameSize, .coloredFaceButtons:
             return true
         case .wideCoverArt:
             // Square crop is the default; wide is opt-in.

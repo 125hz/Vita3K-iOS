@@ -24,12 +24,21 @@ extension View {
 struct GameCover: View {
     let game: GameEntry
     var cornerRadius: CGFloat = 18
+    /// Whether this placement may adopt the cover's natural (wide) aspect when
+    /// the Wide cover art setting is on. Grid cells pass true; the list and the
+    /// carousel keep a fixed square because their layout depends on it.
+    var allowsWide: Bool = false
 
     @State private var image: UIImage?
     @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = false
 
+    /// The Vita banner art (pic0.png) is wider than tall, so square-cropping
+    /// loses its sides. In wide mode a grid cover takes the image's own aspect
+    /// and shows all of it; otherwise it is cropped to a square.
+    private var wide: Bool { allowsWide && wideCoverArt }
+
     var body: some View {
-        // Color.clear defines the square; the art is an overlay on top of it.
+        // Color.clear defines the frame; the art is an overlay on top of it.
         //
         // Applying .aspectRatio to the image itself does not work: a
         // .scaledToFill() image reports its *filled* size as its ideal size,
@@ -37,7 +46,7 @@ struct GameCover: View {
         // rows apart. Sizing an empty shape and overlaying the image means the
         // layout never sees the image's intrinsic size at all.
         Color.clear
-            .aspectRatio(1, contentMode: .fit)
+            .aspectRatio(coverAspect, contentMode: .fit)
             .overlay { artwork }
             // clipShape alone does not stop an overflowing overlay from being
             // drawn outside the bounds; clipped() bounds it first.
@@ -51,30 +60,21 @@ struct GameCover: View {
             }
     }
 
+    /// Square unless wide is on and the loaded image is actually wider than a
+    /// square; then it uses the image's real aspect so the whole cover shows.
+    private var coverAspect: CGFloat {
+        guard wide, let image, image.size.height > 0 else { return 1 }
+        let ratio = image.size.width / image.size.height
+        return ratio > 1 ? ratio : 1
+    }
+
     @ViewBuilder
     private var artwork: some View {
         if let image {
-            if wideCoverArt {
-                // Wide covers (the Vita LiveArea art is wider than tall) show
-                // in full rather than being cropped to a square. The art is
-                // fit inside the frame over a blurred fill of itself, the way
-                // Apple presents mismatched-aspect artwork - nothing is lost,
-                // and the grid stays uniform because the frame is unchanged.
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .blur(radius: 14)
-                    .overlay(.black.opacity(0.15))
-                    .overlay {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                    }
-            } else {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            }
+            // Wide: fit the whole cover. Square: fill and crop, as before.
+            Image(uiImage: image)
+                .resizable()
+                .aspectRatio(contentMode: wide ? .fit : .fill)
         } else {
             Image(systemName: "gamecontroller.fill")
                 .font(.largeTitle)
@@ -136,7 +136,7 @@ struct GameCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            GameCover(game: game)
+            GameCover(game: game, allowsWide: true)
             // Reserves two lines whether the title needs them or not, so a
             // one-line title and a two-line title produce the same card height
             // and the grid rows line up.
@@ -153,7 +153,9 @@ struct GameCard: View {
             GameMetadata(game: game)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
+        // A little more room at the bottom so the last metadata line does not
+        // sit right against the card edge.
+        .padding(EdgeInsets(top: 10, leading: 10, bottom: 14, trailing: 10))
         .background(Color(.secondarySystemGroupedBackground),
                     in: .rect(cornerRadius: 26, style: .continuous))
         .accessibilityElement(children: .combine)

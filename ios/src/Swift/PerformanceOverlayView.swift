@@ -79,9 +79,14 @@ struct PerformanceOverlayView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(editingProxy && !hasAnyMetric ? "60 FPS · 16.7 ms" : readout)
                     .font(.caption.monospacedDigit().weight(.semibold))
+                    .fixedSize()
                 if showGraph || (editingProxy && !hasAnyMetric) {
+                    // Fill the readout's width (which the text line sets) rather
+                    // than a fixed 150pt, which left the graph ending short of
+                    // the right edge when the text was wider.
                     FrametimeGraph(samples: state.frametimeHistory)
-                        .frame(width: 150, height: 26)
+                        .frame(height: 26)
+                        .frame(maxWidth: .infinity)
                 }
             }
             .padding(.horizontal, 12)
