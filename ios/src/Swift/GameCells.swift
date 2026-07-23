@@ -30,7 +30,7 @@ struct GameCover: View {
     var allowsWide: Bool = false
 
     @State private var image: UIImage?
-    @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = false
+    @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
 
     /// The Vita banner art (pic0.png) is wider than tall, so square-cropping
     /// loses its sides. In wide mode a grid cover takes the image's own aspect
@@ -164,16 +164,30 @@ struct GameCard: View {
 
 /// List row: sits directly on the background like a system list — no fill, no
 /// forced palette, so every colour adapts to light and dark.
+///
+/// Two densities. The default row has a large cover and the metadata on its own
+/// lines. Compact shrinks the cover and folds the facts onto one line, the way
+/// a dense system list (Files, Mail preview) trades detail for rows-per-screen.
 @MainActor
 struct GameRow: View {
     let game: GameEntry
 
     @AppStorage(DefaultsKey.showTitleIDs.rawValue) private var showTitleIDs = true
+    @AppStorage(DefaultsKey.showGameSize.rawValue) private var showSize = true
+    @AppStorage(DefaultsKey.compactList.rawValue) private var compact = false
 
     var body: some View {
+        if compact {
+            compactRow
+        } else {
+            regularRow
+        }
+    }
+
+    private var regularRow: some View {
         HStack(alignment: .top, spacing: 12) {
-            GameCover(game: game, cornerRadius: 8)
-                .frame(width: 56, height: 56)
+            GameCover(game: game, cornerRadius: 10)
+                .frame(width: 72, height: 72)
                 // The row's text can be three lines tall; without this the
                 // cover is asked to match that height and stops being square.
                 .fixedSize()
@@ -193,5 +207,41 @@ struct GameRow: View {
         .padding(.vertical, 4)
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
+    }
+
+    private var compactRow: some View {
+        HStack(spacing: 10) {
+            GameCover(game: game, cornerRadius: 7)
+                .frame(width: 40, height: 40)
+                .fixedSize()
+            VStack(alignment: .leading, spacing: 1) {
+                Text(game.displayTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                compactSubtitle
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 2)
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// One line: play time, optional size, and the trophy count folded in.
+    private var compactSubtitle: Text {
+        var line = Text(game.playedTimeText)
+        if showSize {
+            line = line + Text("  ·  \(game.sizeText)")
+        }
+        if game.trophiesTotal > 0 {
+            line = line
+                + Text("  ")
+                + Text(Image(systemName: "trophy.fill")).foregroundColor(.yellow)
+                + Text(" \(game.trophiesUnlocked)/\(game.trophiesTotal)")
+        }
+        return line
     }
 }

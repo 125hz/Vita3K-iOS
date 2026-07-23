@@ -71,14 +71,14 @@ final class LibraryState {
     /// through the same gating path a tap uses.
     var padLaunchTarget: GameEntry?
 
-    /// Carousel D-pad stepping. The carousel is an endlessly repeated row and
-    /// owns its own repeat-qualified scroll identity, so it cannot be moved by
-    /// game index without jumping across repeats back to the start (which is
-    /// what made holding a direction snap back instead of continuing). The pad
-    /// instead requests a relative step the carousel applies to whichever cover
-    /// is currently centred.
-    private(set) var carouselStepToken = 0
-    private(set) var carouselStepDirection = 0
+    /// Carousel D-pad stepping, as a running net-steps total rather than a
+    /// token + direction. Two rapid presses can coalesce into a single
+    /// observation, and a token only told the carousel "something moved" - it
+    /// stepped once for two presses, so the internal position and the visible
+    /// one drifted apart and the next press looked like it skipped a game. An
+    /// accumulator lets the carousel step by the true delta since it last read
+    /// it, so coalesced presses still move the right number of covers.
+    private(set) var carouselStepAccumulator = 0
 
     private var statusDismissal: Task<Void, Never>?
 
@@ -117,8 +117,7 @@ final class LibraryState {
             // in one direction across repeats rather than snapping to the
             // start when the game index wraps. focusedTitleID is updated by
             // the carousel from whatever ends up centred.
-            carouselStepDirection = step
-            carouselStepToken &+= 1
+            carouselStepAccumulator += step
             return
         }
         // Grid and list are finite lists, where wrapping from the bottom back

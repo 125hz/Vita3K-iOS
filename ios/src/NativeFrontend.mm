@@ -404,6 +404,12 @@ NSString *custom_cover_path(NSString *title_id) {
     return cover_render_path(title_id);
 }
 
+void reset_custom_cover(NSString *title_id) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    [fm removeItemAtPath:cover_render_path(title_id) error:nil];
+    [fm removeItemAtPath:cover_original_path(title_id) error:nil];
+}
+
 bool title_has_settings(NSString *title_id) {
     return has_game_settings(title_id);
 }
@@ -822,10 +828,23 @@ void reload_library_cells() {
 
 // The library is driveable only while it is on screen and nothing is presented
 // over it. A presented sheet (settings, trophies) is SwiftUI's to handle.
+// Whatever the library currently has presented over it - a settings/trophy
+// sheet, or the pad-actions / delete confirmation dialog. The library is
+// parented to the window with no containment (see vita3k_ios_show_library), so
+// SwiftUI presents from g_library_controller, not from window.rootViewController
+// - checking only the latter let controller input keep driving the library
+// behind an open context menu, so Cross booted a game instead of picking an
+// item.
+static UIViewController *library_presented_controller() {
+    if (g_library_controller.presentedViewController)
+        return g_library_controller.presentedViewController;
+    return library_view().window.rootViewController.presentedViewController;
+}
+
 - (BOOL)navigationAllowed {
-    UIWindow *window = library_view().window;
-    return self.active && window != nil
-        && window.rootViewController.presentedViewController == nil;
+    return self.active
+        && library_view().window != nil
+        && library_presented_controller() == nil;
 }
 
 - (void)moveX:(NSInteger)dx y:(NSInteger)dy {
@@ -849,8 +868,10 @@ void reload_library_cells() {
 - (void)back {
     if (!self.active)
         return;
-    UIWindow *window = library_view().window;
-    UIViewController *presented = window.rootViewController.presentedViewController;
+    // Circle dismisses whatever the library has presented - including the
+    // pad-actions dialog opened with Triangle - which is why this looks at the
+    // library controller too, not only the window root.
+    UIViewController *presented = library_presented_controller();
     if (presented) {
         [presented dismissViewControllerAnimated:YES completion:nil];
         return;

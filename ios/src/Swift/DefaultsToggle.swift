@@ -18,6 +18,7 @@ enum DefaultsKey: String {
     case showVersion = "tsubomi.showVersion"
     case showGameSize = "tsubomi.showGameSize"
     case wideCoverArt = "tsubomi.wideCoverArt"
+    case compactList = "tsubomi.compactList"
     case coloredFaceButtons = "tsubomi.coloredFaceButtons"
 
     /// Value used when the key has never been written.
@@ -28,10 +29,10 @@ enum DefaultsKey: String {
     /// library was still drawing the data.
     var defaultValue: Bool {
         switch self {
-        case .showTitleIDs, .showVersion, .showGameSize, .coloredFaceButtons:
+        case .showTitleIDs, .showVersion, .showGameSize, .coloredFaceButtons, .wideCoverArt:
             return true
-        case .wideCoverArt:
-            // Square crop is the default; wide is opt-in.
+        case .compactList:
+            // The roomier list is the default; compact is opt-in.
             return false
         case .perfFPS, .perfFrametime, .perfFrametimeGraph, .perfRAM, .perfBattery, .perfLog:
             // The in-game overlay stays off until the user asks for a metric.

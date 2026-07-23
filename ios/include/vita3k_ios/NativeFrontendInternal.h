@@ -59,6 +59,9 @@ NSString *display_title_for(NSString *title_id, NSString *original);
 void set_display_title(NSString *title_id, NSString *title);
 bool title_has_custom_cover(NSString *title_id);
 NSString *custom_cover_path(NSString *title_id);
+// Deletes a title's custom cover (rendered + original) so it falls back to the
+// packaged art. No-op when the title has no custom cover.
+void reset_custom_cover(NSString *title_id);
 bool title_has_settings(NSString *title_id);
 
 // Hex dump used when a package's title is not valid UTF-8.

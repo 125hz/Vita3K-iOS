@@ -43,6 +43,15 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.33.0", notes: [
+            "Wide cover art is on by default and now shows the full banner in the grid and the landscape carousel.",
+            "New Settings › Library › Compact list, and the regular list's cover art is larger.",
+            "Hold a game and you can reset a custom cover back to the packaged art.",
+            "On-screen ✕ and △ are a bit larger, and the square is a lighter pink so it no longer reads like the circle.",
+            "Colored face buttons can also be toggled from the in-game Layout Options.",
+            "Fixed: a game controller could still drive the library while a game's context menu was open, so Cross launched a game instead of picking a menu item.",
+            "Fixed carousel D-pad double-taps registering twice, and the performance graph no longer stretches the whole overlay.",
+        ]),
         Release(version: "0.32.0", notes: [
             "The whole on-screen controller, the in-game menu, controller options and the performance overlay are now SwiftUI with real Liquid Glass. The menu button is always visible and can be dragged anywhere without entering the editor; the performance overlay can be repositioned in Layout Options.",
             "On-screen ✕ ○ □ △ glyphs are colored (blue, red, pink, green). Turn it off in Settings › Controls.",

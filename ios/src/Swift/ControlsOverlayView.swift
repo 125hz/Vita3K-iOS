@@ -286,9 +286,21 @@ private struct ControlFace: View {
         switch definition.id {
         case "cross": return .blue
         case "circle": return .red
-        case "square": return .pink
+        // A lighter pink so the square reads clearly different from the red
+        // circle next to it.
+        case "square": return Color(red: 1.0, green: 0.66, blue: 0.86)
         case "triangle": return .green
         default: return nil
+        }
+    }
+
+    /// The ✕ and △ glyphs are visually smaller than ○ and □ at the same point
+    /// size, so they are bumped up to look the same weight.
+    private var glyphSize: CGFloat {
+        if definition.usesWordLabel { return 10 }
+        switch definition.id {
+        case "cross", "triangle": return 21
+        default: return 17
         }
     }
 
@@ -302,7 +314,7 @@ private struct ControlFace: View {
         let glyphStyle: AnyShapeStyle = faceColor.map { AnyShapeStyle($0) }
             ?? (isPressed ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
         return Text(definition.label)
-            .font(.system(size: definition.usesWordLabel ? 10 : 17, weight: .bold))
+            .font(.system(size: glyphSize, weight: .bold))
             .minimumScaleFactor(0.7)
             .lineLimit(1)
             .foregroundStyle(glyphStyle)

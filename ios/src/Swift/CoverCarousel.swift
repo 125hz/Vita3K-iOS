@@ -18,17 +18,18 @@ struct CoverCarousel<Menu: View>: View {
     /// Pad focus. Two-way: scrolling by touch moves the pad's focus so the two
     /// never disagree, and D-pad input scrolls the row.
     @Binding var padFocusedTitleID: String?
-    /// D-pad stepping from LibraryState. The token changes on each press; the
-    /// direction says which way. Passed in rather than read from a shared
-    /// object because the carousel otherwise has no reference to it.
-    let stepToken: Int
-    let stepDirection: Int
+    /// D-pad stepping from LibraryState: a running net-steps total. The
+    /// carousel steps by the delta since it last read it, so two presses that
+    /// coalesce into one observation still move the right number of covers.
+    let stepAccumulator: Int
     let onLaunch: (GameEntry) -> Void
     @ViewBuilder let menu: (GameEntry) -> Menu
 
     /// Identity of the centred item, as "<repeat>-<titleID>".
     @State private var scrolledID: String?
     @State private var hapticTrigger = 0
+    /// Last accumulator value applied, so the next change steps by the delta.
+    @State private var lastConsumedStep = 0
 
     /// The repeated item list, cached. Rebuilt only when the games change - not
     /// on every body pass. body re-runs on each scroll settle and every haptic
@@ -110,8 +111,14 @@ struct CoverCarousel<Menu: View>: View {
         // travelling one way. Moving the scroll target directly (not through
         // the focus id) is also what keeps rapid presses in sync: each press
         // advances exactly one detent instead of racing a focus round-trip.
-        .onChange(of: stepToken) { _, _ in
-            stepCarousel(by: stepDirection)
+        // Adopt the current total as the baseline on appear so re-entering the
+        // carousel does not step by the whole accumulated history, then step
+        // by the delta on each subsequent change.
+        .onAppear { lastConsumedStep = stepAccumulator }
+        .onChange(of: stepAccumulator) { _, new in
+            let delta = new - lastConsumedStep
+            lastConsumedStep = new
+            if delta != 0 { stepCarousel(by: delta) }
         }
         .sensoryFeedback(.selection, trigger: hapticTrigger)
         .opacity(dimmed ? 0.55 : 1)
@@ -119,8 +126,10 @@ struct CoverCarousel<Menu: View>: View {
 
     private func cover(_ game: GameEntry, side: CGFloat) -> some View {
         VStack(spacing: 10) {
-            GameCover(game: game)
-                .frame(width: side, height: side)
+            // Width-fixed, height free: with Wide cover art on, the cover takes
+            // its own aspect (shorter than square); otherwise it stays square.
+            GameCover(game: game, allowsWide: true)
+                .frame(width: side)
             Text(game.displayTitle)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)

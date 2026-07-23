@@ -154,10 +154,11 @@ struct SettingsView: View {
             DefaultsToggle("Show version number", key: .showVersion, onChange: Bridge.reloadLibraryCells)
             DefaultsToggle("Show game size", key: .showGameSize, onChange: Bridge.reloadLibraryCells)
             DefaultsToggle("Wide cover art", key: .wideCoverArt)
+            DefaultsToggle("Compact list", key: .compactList)
         } header: {
             Text("Library")
         } footer: {
-            Text("Wide cover art shows each cover in full instead of cropping it to a square.")
+            Text("Wide cover art shows each cover in full instead of cropping it to a square. Compact list shrinks the covers and fits more games on screen.")
         }
     }
 

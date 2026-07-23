@@ -131,8 +131,7 @@ struct LibraryView: View {
             games: library.games,
             dimmed: !library.firmwareReady,
             padFocusedTitleID: carouselFocus,
-            stepToken: library.carouselStepToken,
-            stepDirection: library.carouselStepDirection,
+            stepAccumulator: library.carouselStepAccumulator,
             onLaunch: launch,
             menu: gameMenu(for:)
         )
@@ -152,12 +151,19 @@ struct LibraryView: View {
         .id(game.titleID)
     }
 
+    @AppStorage(DefaultsKey.compactList.rawValue) private var compactList = false
+
     private var listContent: some View {
         // ScrollViewReader so the pad can bring its focused row into view;
         // List's own scrolling has no other way to be driven programmatically.
         ScrollViewReader { scroller in
             List(library.games) { game in
                 listRow(game)
+                    // Tighter insets in compact mode so the smaller rows pack
+                    // closer together, which is the point of the density.
+                    .listRowInsets(compactList
+                        ? EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16)
+                        : EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             }
             .listStyle(.plain)
             .onChange(of: library.focusedTitleID) { _, focused in
@@ -380,6 +386,13 @@ struct LibraryView: View {
             Bridge.presentCoverCrop(titleID: game.titleID)
         } label: {
             Label("Adjust cover crop", systemImage: "crop")
+        }
+        if game.hasCustomCover {
+            Button {
+                Bridge.resetCoverArt(titleID: game.titleID)
+            } label: {
+                Label("Reset cover art", systemImage: "arrow.uturn.backward")
+            }
         }
         // Spelled out rather than Button(_:systemImage:role:action:) so the
         // destructive button matches the label-closure form used by the rest

@@ -196,6 +196,10 @@ NS_SWIFT_NAME(Bridge)
 + (void)presentCoverCropForTitle:(NSString *)titleID
     NS_SWIFT_NAME(presentCoverCrop(titleID:));
 
+/// Removes a title's custom cover so it returns to the packaged art.
++ (void)resetCoverArtForTitle:(NSString *)titleID
+    NS_SWIFT_NAME(resetCoverArt(titleID:));
+
 /// Shows the graphics-help explainer from the library header.
 + (void)presentGraphicsHelp;
 

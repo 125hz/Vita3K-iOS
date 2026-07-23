@@ -74,19 +74,23 @@ struct PerformanceOverlayView: View {
     @AppStorage(DefaultsKey.perfRAM.rawValue) private var showRAM = false
     @AppStorage(DefaultsKey.perfBattery.rawValue) private var showBattery = false
 
+    /// Width of the readout text, so the graph can match it exactly. Measured
+    /// rather than using maxWidth: .infinity, which made the whole overlay
+    /// stretch to the full screen width.
+    @State private var textWidth: CGFloat = 0
+
     var body: some View {
         if editingProxy || (state.isVisible && hasAnyMetric) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(editingProxy && !hasAnyMetric ? "60 FPS · 16.7 ms" : readout)
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .fixedSize()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { textWidth = $0 }
                 if showGraph || (editingProxy && !hasAnyMetric) {
-                    // Fill the readout's width (which the text line sets) rather
-                    // than a fixed 150pt, which left the graph ending short of
-                    // the right edge when the text was wider.
+                    // Exactly the readout's width, so the line reaches the box's
+                    // right edge without the overlay growing to fill the screen.
                     FrametimeGraph(samples: state.frametimeHistory)
-                        .frame(height: 26)
-                        .frame(maxWidth: .infinity)
+                        .frame(width: textWidth, height: 26)
                 }
             }
             .padding(.horizontal, 12)

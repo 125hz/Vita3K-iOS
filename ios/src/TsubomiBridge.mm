@@ -419,6 +419,14 @@ id bridge_games() {
     vita3k_ios_internal::present_cover_crop_editor(titleID);
 }
 
++ (void)resetCoverArtForTitle:(NSString *)titleID {
+    vita3k_ios_internal::reset_custom_cover(titleID);
+    // Drop the cached bitmap so the packaged art shows immediately. The library
+    // state re-derives its entries when the art cache is invalidated.
+    vita3k_ios_internal::invalidate_cached_art(nil);
+    vita3k_ios_internal::reload_library();
+}
+
 + (void)presentGraphicsHelp {
     vita3k_ios_internal::show_graphics_help();
 }

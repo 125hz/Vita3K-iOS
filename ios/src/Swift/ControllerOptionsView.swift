@@ -69,6 +69,7 @@ struct ControllerOptionsView: View {
                     Toggle("Hide for physical controller", isOn: $model.hideWhenPhysical)
                     Toggle("Haptic feedback", isOn: $model.haptics)
                     Toggle("Alignment guides", isOn: $model.snapGuides)
+                    DefaultsToggle("Colored face buttons", key: .coloredFaceButtons)
                 }
 
                 Section {
