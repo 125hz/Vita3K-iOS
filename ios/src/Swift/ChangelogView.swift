@@ -43,6 +43,10 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.36.0", notes: [
+            "Physical and on-screen analog sticks now translate circular SDL output to the Vita's independent-axis range, so full diagonal movement no longer drops to roughly 71% per axis.",
+            "Partial stick travel remains analog, and desktop and Android controller behavior is unchanged.",
+        ]),
         Release(version: "0.35.1", notes: [
             "Fixes the iPhoneOS compile failure in the new Vita touchscreen input diagnostics.",
         ]),

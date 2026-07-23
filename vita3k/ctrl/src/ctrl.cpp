@@ -25,6 +25,8 @@
 #include <kernel/state.h>
 #include <util/log.h>
 
+#include <cmath>
+
 static int reserve_port(CtrlState &state) {
     for (int i = 0; i < SCE_CTRL_MAX_WIRELESS_NUM; i++) {
         if (state.free_ports[i]) {
@@ -195,6 +197,25 @@ static uint8_t float_to_byte(float f) {
     return static_cast<uint8_t>(mapped * 255);
 }
 
+#ifdef VITA3K_PLATFORM_IOS
+static void map_circular_stick_to_vita_axes(float &x, float &y) {
+    // SDL controllers commonly expose a circular output range: a full
+    // 45-degree tilt is approximately (0.707, 0.707). The Vita API exposes
+    // two independent byte axes, and games such as Persona 4 Golden can use
+    // the strongest component as a walk/run threshold. Preserve radial travel
+    // while expanding its direction to a square gate so a full diagonal can
+    // reach (1, 1), just as a full cardinal reaches 1 on its active axis.
+    const float radial_travel = std::min(std::hypot(x, y), 1.0f);
+    const float strongest_component = std::max(std::abs(x), std::abs(y));
+    if (strongest_component <= 0.0f)
+        return;
+
+    const float scale = radial_travel / strongest_component;
+    x = std::clamp(x * scale, -1.0f, 1.0f);
+    y = std::clamp(y * scale, -1.0f, 1.0f);
+}
+#endif
+
 static void apply_controller(EmuEnvState &emuenv, uint32_t *buttons, float axes[4], SDL_Gamepad *controller, bool ext) {
     const auto &axis_binds = emuenv.cfg.controller_axis_binds;
 
@@ -220,10 +241,18 @@ static void apply_controller(EmuEnvState &emuenv, uint32_t *buttons, float axes[
     }
 
     auto &analog_multiplier = emuenv.cfg.controller_analog_multiplier;
-    axes[0] += axis_to_axis(SDL_GetGamepadAxis(controller, static_cast<SDL_GamepadAxis>(axis_binds[0])), analog_multiplier);
-    axes[1] += axis_to_axis(SDL_GetGamepadAxis(controller, static_cast<SDL_GamepadAxis>(axis_binds[1])), analog_multiplier);
-    axes[2] += axis_to_axis(SDL_GetGamepadAxis(controller, static_cast<SDL_GamepadAxis>(axis_binds[2])), analog_multiplier);
-    axes[3] += axis_to_axis(SDL_GetGamepadAxis(controller, static_cast<SDL_GamepadAxis>(axis_binds[3])), analog_multiplier);
+    float left_x = axis_to_axis(SDL_GetGamepadAxis(controller, static_cast<SDL_GamepadAxis>(axis_binds[0])), analog_multiplier);
+    float left_y = axis_to_axis(SDL_GetGamepadAxis(controller, static_cast<SDL_GamepadAxis>(axis_binds[1])), analog_multiplier);
+    float right_x = axis_to_axis(SDL_GetGamepadAxis(controller, static_cast<SDL_GamepadAxis>(axis_binds[2])), analog_multiplier);
+    float right_y = axis_to_axis(SDL_GetGamepadAxis(controller, static_cast<SDL_GamepadAxis>(axis_binds[3])), analog_multiplier);
+#ifdef VITA3K_PLATFORM_IOS
+    map_circular_stick_to_vita_axes(left_x, left_y);
+    map_circular_stick_to_vita_axes(right_x, right_y);
+#endif
+    axes[0] += left_x;
+    axes[1] += left_y;
+    axes[2] += right_x;
+    axes[3] += right_y;
 }
 
 static void retrieve_ctrl_data(EmuEnvState &emuenv, int port, bool is_v2, bool negative, bool from_ext_function, SceUInt32 &buttons, SceUInt8 &lx, SceUInt8 &ly, SceUInt8 &rx, SceUInt8 &ry) {
