@@ -51,6 +51,7 @@
 #include <renderer/functions.h>
 #include <renderer/state.h>
 #include <touch/functions.h>
+#include <touch/state.h>
 #include <util/fs.h>
 #include <util/log.h>
 

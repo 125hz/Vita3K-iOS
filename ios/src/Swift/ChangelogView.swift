@@ -43,6 +43,9 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.35.1", notes: [
+            "Fixes the iPhoneOS compile failure in the new Vita touchscreen input diagnostics.",
+        ]),
         Release(version: "0.35.0", notes: [
             "Touches between the on-screen controls now pass through the SwiftUI overlay to the Vita front touchscreen, including Gravity Rush touch interactions.",
             "Device logs now record Vita touch-down and touch-up delivery for input troubleshooting.",
