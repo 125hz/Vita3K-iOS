@@ -28,6 +28,9 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if !model.isPerGame {
+                    generalSection
+                }
                 videoSection
                 graphicsSection
                 audioSection
@@ -42,8 +45,13 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle(model.navigationTitle)
-            .navigationBarTitleDisplayMode(model.isPerGame ? .inline : .large)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(model.navigationTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         model.save()
@@ -61,6 +69,12 @@ struct SettingsView: View {
     }
 
     // MARK: - Sections
+
+    private var generalSection: some View {
+        Section("General") {
+            DefaultsToggle("Interface sound effects", key: .soundEffects)
+        }
+    }
 
     private var videoSection: some View {
         Section("Video") {
@@ -161,11 +175,10 @@ struct SettingsView: View {
             DefaultsToggle("Show game size", key: .showGameSize, onChange: Bridge.reloadLibraryCells)
             DefaultsToggle("Wide cover art", key: .wideCoverArt)
             DefaultsToggle("Compact list", key: .compactList)
-            DefaultsToggle("Interface sound effects", key: .soundEffects)
         } header: {
             Text("Library")
         } footer: {
-            Text("Wide cover art shows each cover in full instead of cropping it to a square. Compact list shrinks the covers and fits more games on screen. Interface sounds play only while browsing the library and are on by default.")
+            Text("Wide cover art shows each game's widescreen artwork in full. Compact list shrinks the covers and fits more games on screen.")
         }
     }
 

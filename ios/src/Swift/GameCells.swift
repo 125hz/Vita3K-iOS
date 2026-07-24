@@ -25,13 +25,9 @@ struct GameCover: View {
     let game: GameEntry
     var cornerRadius: CGFloat = 18
     /// Whether this placement may adopt the cover's natural (wide) aspect when
-    /// the Wide cover art setting is on. Grid cells pass true; the list and the
-    /// carousel keep a fixed square because their layout depends on it.
+    /// the Wide cover art setting is on. Grid and carousel cells pass true;
+    /// list rows stay square because their layout depends on it.
     var allowsWide: Bool = false
-    /// Optional layout feedback for containers whose width depends on the
-    /// loaded art's real aspect (the landscape carousel).
-    var onAspectResolved: ((CGFloat) -> Void)? = nil
-
     @State private var image: UIImage?
     @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
 
@@ -55,26 +51,18 @@ struct GameCover: View {
             // drawn outside the bounds; clipped() bounds it first.
             .clipped()
             .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
-            // Keyed on path, art generation and wide mode: the path alone does
-            // not change when an install/license makes art appear, and a live
-            // wide-mode toggle must report the natural aspect back to a
-            // carousel that may already be on screen.
+            // Keyed on path and art generation: the path alone does not change
+            // when an install/license makes art appear.
             .task(id: "\(game.iconPath)#\(LibraryState.shared.artGeneration)#\(wideCoverArt)") {
-                let loaded = await CoverImageLoader.image(atPath: game.iconPath)
-                image = loaded
-                let ratio = loaded.map {
-                    $0.size.height > 0 ? $0.size.width / $0.size.height : 1
-                } ?? 1
-                onAspectResolved?(wideCoverArt && ratio > 1 ? ratio : 1)
+                image = await CoverImageLoader.image(atPath: game.iconPath)
             }
     }
 
-    /// Square unless wide is on and the loaded image is actually wider than a
-    /// square; then it uses the image's real aspect so the whole cover shows.
+    /// Vita pic0 artwork is authored for a 16:9 banner. Fixing that frame keeps
+    /// every card identical even if an individual game's source file reports
+    /// unusual pixel dimensions.
     private var coverAspect: CGFloat {
-        guard wide, let image, image.size.height > 0 else { return 1 }
-        let ratio = image.size.width / image.size.height
-        return ratio > 1 ? ratio : 1
+        wide ? 16.0 / 9.0 : 1
     }
 
     @ViewBuilder
@@ -84,6 +72,8 @@ struct GameCover: View {
             Image(uiImage: image)
                 .resizable()
                 .aspectRatio(contentMode: wide ? .fit : .fill)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.fill.secondary)
         } else {
             Image(systemName: "gamecontroller.fill")
                 .font(.largeTitle)

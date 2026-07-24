@@ -11,15 +11,10 @@ struct LibraryView: View {
     @State private var library = LibraryState.shared
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
-
     /// Rename sheet target; nil when closed.
     @State private var renameTarget: GameEntry?
     /// Delete confirmation target.
     @State private var deleteTarget: GameEntry?
-
-    /// Blocks overlapping pull-to-refresh requests.
-    @State private var isRefreshing = false
 
     /// The carousel is the landscape presentation of grid mode. List mode
     /// stays a list in both orientations.
@@ -268,6 +263,18 @@ struct LibraryView: View {
         // the reachable one. The system gives the group its own Liquid Glass
         // container here.
         ToolbarItemGroup(placement: .bottomBar) {
+            Button {
+                HomeSoundEffects.play(.press)
+                library.isListMode.toggle()
+            } label: {
+                Label(
+                    library.isListMode ? "Grid view" : "List view",
+                    systemImage: library.isListMode ? "square.grid.2x2" : "list.bullet"
+                )
+            }
+
+            Spacer()
+
             Menu {
                 Button {
                     // Importing a game before firmware exists produces a title
@@ -292,24 +299,22 @@ struct LibraryView: View {
             } label: {
                 Label("Add", systemImage: "plus")
             }
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    HomeSoundEffects.play(.press)
+                }
+            )
 
-            Button {
-                library.isListMode.toggle()
-            } label: {
-                Label(
-                    library.isListMode ? "Grid view" : "List view",
-                    systemImage: library.isListMode ? "square.grid.2x2" : "list.bullet"
-                )
-            }
-
-            // The graphics-help button is gone: the same explanation now lives
-            // in Settings, next to the switches it talks about.
+            Spacer()
 
             Button {
                 Bridge.presentGlobalSettings()
             } label: {
                 Label("Settings", systemImage: "gearshape.fill")
             }
+
+            // The graphics-help button is gone: the same explanation now lives
+            // in Settings, next to the switches it talks about.
         }
 
         // The firmware version indicator that used to sit here is gone: it is
@@ -374,34 +379,12 @@ struct LibraryView: View {
         } label: {
             Label("Game settings", systemImage: "slider.horizontal.3")
         }
-        Button {
-            Bridge.presentCoverPicker(titleID: game.titleID)
-        } label: {
-            Label("Custom cover art", systemImage: "photo")
-        }
         if game.hasSettingsOverrides {
             Button {
                 Bridge.resetSettings(forTitle: game.titleID)
                 Bridge.refreshLibrary()
             } label: {
                 Label("Use global settings", systemImage: "arrow.uturn.backward.circle")
-            }
-        }
-        // Always offered, not only for custom covers: the crop editor falls
-        // back to the game's packaged art, so the built-in cover can be
-        // reframed too. This matched the old menu and regressed when it was
-        // gated on hasCustomCover.
-        Button {
-            Bridge.presentCoverCrop(titleID: game.titleID)
-        } label: {
-            Label("Adjust cover crop", systemImage: "crop")
-        }
-        .disabled(wideCoverArt)
-        if game.hasCustomCover {
-            Button {
-                Bridge.resetCoverArt(titleID: game.titleID)
-            } label: {
-                Label("Reset cover art", systemImage: "arrow.uturn.backward")
             }
         }
         // Spelled out rather than Button(_:systemImage:role:action:) so the
@@ -419,10 +402,6 @@ struct LibraryView: View {
     /// Rescans installed titles and keeps the native refresh control active
     /// until the core publishes the replacement snapshot.
     private func refresh() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-
         let startingGeneration = library.refreshCompletionGeneration
         Bridge.refreshLibrary()
 

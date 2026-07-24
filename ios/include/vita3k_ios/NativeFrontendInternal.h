@@ -53,15 +53,10 @@ void present_firmware_picker();
 // Re-reads the library display toggles and redraws the visible cells.
 void reload_library();
 
-// Per-title frontend state that lives in NSUserDefaults / the covers directory
-// rather than in the core's game entry.
+// Per-title frontend state that lives in NSUserDefaults rather than in the
+// core's game entry.
 NSString *display_title_for(NSString *title_id, NSString *original);
 void set_display_title(NSString *title_id, NSString *title);
-bool title_has_custom_cover(NSString *title_id);
-NSString *custom_cover_path(NSString *title_id);
-// Deletes a title's custom cover (rendered + original) so it falls back to the
-// packaged art. No-op when the title has no custom cover.
-void reset_custom_cover(NSString *title_id);
 bool title_has_settings(NSString *title_id);
 
 // Hex dump used when a package's title is not valid UTF-8.
@@ -80,12 +75,10 @@ id bridge_games();
 // TsubomiSettings *, declared as id to keep this header C++-safe.
 id bridge_settings();
 
-// Document/photo pickers owned by NativeFrontend.mm.
+// Document pickers owned by NativeFrontend.mm.
 void present_game_picker();
 void present_license_import_picker();
 void present_save_import_picker(NSString *title_id);
-void present_cover_art_picker(NSString *title_id);
-void present_cover_crop_editor(NSString *title_id);
 
 // The library's firmware gate: presents an explanatory alert and returns false
 // when the three official packages are not all installed.

@@ -43,6 +43,13 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.38.0", notes: [
+            "Home-screen settings, trophies, pickers, and other modal screens now dim and recess the visible library; alerts and context-menu confirmations stay in place.",
+            "Settings starts with a General section for Interface sound effects, uses a centered title, and the home bar places list/card view on the left with Add centered.",
+            "Rapid pull-to-refresh gestures no longer discard their ready and success cues, and Add plus the list/card toggle now play the press cue.",
+            "Wide cover art always returns to each game's packaged 16:9 artwork with consistent card sizes. Custom cover picking and cropping have been removed.",
+            "The transient Tsubomi startup screen has been removed.",
+        ]),
         Release(version: "0.37.0", notes: [
             "Opening a modal now subtly scales and rounds the screen behind it for a stronger sense of depth; Reduce Motion keeps the standard system transition.",
             "Library-only interaction sounds now mark carousel selection, game launch, imports, license requirements, settings, and refresh completion. They are enabled by default and can be disabled in Settings › Library.",

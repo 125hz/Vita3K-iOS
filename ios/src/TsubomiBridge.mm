@@ -67,10 +67,7 @@ NSString *trophy_grade_name(int grade) {
     }
     _displayTitle = vita3k_ios_internal::display_title_for(_titleID, title);
 
-    _hasCustomCover = vita3k_ios_internal::title_has_custom_cover(_titleID);
-    _iconPath = _hasCustomCover
-        ? vita3k_ios_internal::custom_cover_path(_titleID)
-        : to_ns(entry.icon_path);
+    _iconPath = to_ns(entry.icon_path);
     _hasSettingsOverrides = vita3k_ios_internal::title_has_settings(_titleID);
 
     NSString *version = to_ns(entry.version);
@@ -409,22 +406,6 @@ id bridge_games() {
     action.kind = Vita3KIOSFrontendActionKind::ExportSave;
     action.title_id = to_std(titleID);
     vita3k_ios_internal::queue_frontend_action(std::move(action));
-}
-
-+ (void)presentCoverPickerForTitle:(NSString *)titleID {
-    vita3k_ios_internal::present_cover_art_picker(titleID);
-}
-
-+ (void)presentCoverCropForTitle:(NSString *)titleID {
-    vita3k_ios_internal::present_cover_crop_editor(titleID);
-}
-
-+ (void)resetCoverArtForTitle:(NSString *)titleID {
-    vita3k_ios_internal::reset_custom_cover(titleID);
-    // Drop the cached bitmap so the packaged art shows immediately. The library
-    // state re-derives its entries when the art cache is invalidated.
-    vita3k_ios_internal::invalidate_cached_art(nil);
-    vita3k_ios_internal::reload_library();
 }
 
 + (void)presentGraphicsHelp {

@@ -126,12 +126,6 @@ void vita3k_ios_update_library(const std::vector<Vita3KIOSGameEntry> &games,
 void vita3k_ios_hide_library();
 std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action();
 void vita3k_ios_report_settings_result(const std::vector<std::string> &restart_required);
-// Covers SDL's black drawable from window creation until the library appears.
-// Startup reserves the guest arena, builds the JIT pool and scans titles, all
-// of which otherwise happen behind an unexplained black screen. Dismissed
-// automatically by vita3k_ios_show_library.
-void vita3k_ios_show_boot_screen();
-
 int vita3k_ios_load_fps_limit();
 
 // Returns true exactly once, on the first launch of a build that knows about

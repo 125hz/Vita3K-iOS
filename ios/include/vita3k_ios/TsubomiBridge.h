@@ -82,8 +82,6 @@ NS_SWIFT_NAME(GameEntry)
 @property(nonatomic, readonly) NSInteger trophiesTotal;
 /// True when the user has saved per-game setting overrides for this title.
 @property(nonatomic, readonly) BOOL hasSettingsOverrides;
-/// True when the user has replaced the cover art, which enables re-cropping.
-@property(nonatomic, readonly) BOOL hasCustomCover;
 @end
 
 /// One trophy row, already localized and formatted for display. The grade,
@@ -188,17 +186,6 @@ NS_SWIFT_NAME(Bridge)
 + (void)presentSaveImportPickerForTitle:(NSString *)titleID
     NS_SWIFT_NAME(presentSaveImportPicker(titleID:));
 + (void)exportSaveForTitle:(NSString *)titleID NS_SWIFT_NAME(exportSave(titleID:));
-
-/// Photo picker for replacing a title's cover art, and the crop editor for a
-/// cover that has already been chosen.
-+ (void)presentCoverPickerForTitle:(NSString *)titleID
-    NS_SWIFT_NAME(presentCoverPicker(titleID:));
-+ (void)presentCoverCropForTitle:(NSString *)titleID
-    NS_SWIFT_NAME(presentCoverCrop(titleID:));
-
-/// Removes a title's custom cover so it returns to the packaged art.
-+ (void)resetCoverArtForTitle:(NSString *)titleID
-    NS_SWIFT_NAME(resetCoverArt(titleID:));
 
 /// Shows the graphics-help explainer from the library header.
 + (void)presentGraphicsHelp;

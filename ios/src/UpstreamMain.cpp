@@ -1650,11 +1650,6 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // Everything from here to the first vita3k_ios_show_library - reserving the
-    // guest arena, building the JIT pool, scanning titles - happens behind
-    // SDL's black drawable with nothing on screen to explain it.
-    vita3k_ios_show_boot_screen();
-
     const bool initial_jit_available = ios_jit_available();
     vita3k_ios_set_jit_available(initial_jit_available);
     LOG_INFO("iOS JIT availability probe: {}",

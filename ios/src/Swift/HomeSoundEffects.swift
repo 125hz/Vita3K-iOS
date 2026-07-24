@@ -27,7 +27,7 @@ final class HomeSoundEffects: NSObject {
     private static let enabledKey = DefaultsKey.soundEffects.rawValue
 
     private let engine = AVAudioEngine()
-    private let players = (0..<8).map { _ in AVAudioPlayerNode() }
+    private let players = (0..<24).map { _ in AVAudioPlayerNode() }
     private let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
     private var nextPlayer = 0
     private var buffers: [Cue: AVAudioPCMBuffer] = [:]
@@ -70,11 +70,17 @@ final class HomeSoundEffects: NSObject {
         let buffer = buffers[cue] ?? Self.render(cue, format: format)
         buffers[cue] = buffer
 
-        // A small player pool keeps quick carousel ticks immediate instead of
-        // queueing them behind a longer loading/success cue.
-        let player = players[nextPlayer]
-        nextPlayer = (nextPlayer + 1) % players.count
-        player.stop()
+        // Prefer a free voice so rapid refresh pairs, carousel ticks, and
+        // toolbar presses never cancel a cue that is still audible. The
+        // round-robin fallback is only reached after 24 simultaneous sounds.
+        let player: AVAudioPlayerNode
+        if let idle = players.first(where: { !$0.isPlaying }) {
+            player = idle
+        } else {
+            player = players[nextPlayer]
+            nextPlayer = (nextPlayer + 1) % players.count
+            player.stop()
+        }
         player.scheduleBuffer(buffer)
         player.play()
     }

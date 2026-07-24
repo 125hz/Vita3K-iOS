@@ -79,7 +79,6 @@ if(VITA3K_BUILD_IOS_UPSTREAM_CORE)
         "-framework Foundation"
         "-framework GameController"
         "-framework Metal"
-        "-framework PhotosUI"
         "-framework QuartzCore"
         "-framework UIKit"
         "-framework UniformTypeIdentifiers"

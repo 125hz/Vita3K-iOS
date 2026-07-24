@@ -13,7 +13,6 @@
 #define Ptr MacTypesPtr
 #import <AVFoundation/AVFoundation.h>
 #import <GameController/GameController.h>
-#import <PhotosUI/PhotosUI.h>
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -35,18 +34,36 @@
 // the migrated SwiftUI ones.
 #import "Tsubomi-Swift.h"
 
+// The visible library is installed directly on the window instead of inside
+// SDL's root controller. The presentation hook needs this reference so home
+// sheets recess the library rather than the hidden Metal view below it.
+static UIViewController *g_library_controller = nil;
+
 // iOS 26 no longer scales the presenting screen behind a sheet. Restore that
-// small depth cue app-wide: any presented modal gets a subtly recessed,
-// rounded background, and every dismissal path (button, swipe, or system
-// picker) restores the exact transform/layer state it found. Reduce Motion
-// leaves the system's standard dimming transition untouched.
+// depth cue for modal screens, while alerts and action-sheet confirmations dim
+// in place without moving the library.
 namespace {
 
 const void *kTsubomiDepthBackgroundKey = &kTsubomiDepthBackgroundKey;
+const void *kTsubomiDepthPresenterBackgroundKey = &kTsubomiDepthPresenterBackgroundKey;
 const void *kTsubomiDepthTransformKey = &kTsubomiDepthTransformKey;
 const void *kTsubomiDepthRadiusKey = &kTsubomiDepthRadiusKey;
 const void *kTsubomiDepthMasksKey = &kTsubomiDepthMasksKey;
 const void *kTsubomiDepthCurveKey = &kTsubomiDepthCurveKey;
+const void *kTsubomiDepthShadeKey = &kTsubomiDepthShadeKey;
+
+BOOL should_add_modal_depth(UIViewController *controller) {
+    return controller && ![controller isKindOfClass:UIAlertController.class];
+}
+
+UIView *modal_depth_background(UIViewController *presenter) {
+    UIView *presenterView = presenter.viewIfLoaded;
+    UIWindow *window = presenterView.window;
+    UIView *library = g_library_controller.viewIfLoaded;
+    if (window && presenter == window.rootViewController && library.window == window && !library.hidden)
+        return library;
+    return presenterView;
+}
 
 void prepare_modal_depth(UIView *view) {
     if (!view || objc_getAssociatedObject(view, kTsubomiDepthTransformKey))
@@ -59,6 +76,13 @@ void prepare_modal_depth(UIView *view) {
         @(view.layer.masksToBounds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(view, kTsubomiDepthCurveKey,
         view.layer.cornerCurve, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    UIView *shade = [[UIView alloc] initWithFrame:view.bounds];
+    shade.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    shade.backgroundColor = UIColor.blackColor;
+    shade.alpha = 0;
+    shade.userInteractionEnabled = NO;
+    [view addSubview:shade];
+    objc_setAssociatedObject(view, kTsubomiDepthShadeKey, shade, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 void animate_modal_depth(UIView *view) {
@@ -77,6 +101,8 @@ void animate_modal_depth(UIView *view) {
             view.layer.cornerRadius = 20;
             view.layer.cornerCurve = kCACornerCurveContinuous;
             view.layer.masksToBounds = YES;
+            UIView *shade = objc_getAssociatedObject(view, kTsubomiDepthShadeKey);
+            shade.alpha = 0.16;
         }
         completion:nil];
 }
@@ -86,6 +112,7 @@ void restore_modal_depth(UIView *view, BOOL animated) {
     NSNumber *radius = objc_getAssociatedObject(view, kTsubomiDepthRadiusKey);
     NSNumber *masks = objc_getAssociatedObject(view, kTsubomiDepthMasksKey);
     NSString *curve = objc_getAssociatedObject(view, kTsubomiDepthCurveKey);
+    UIView *shade = objc_getAssociatedObject(view, kTsubomiDepthShadeKey);
     if (!view || !transform)
         return;
 
@@ -94,6 +121,15 @@ void restore_modal_depth(UIView *view, BOOL animated) {
         view.layer.cornerRadius = radius.doubleValue;
         view.layer.masksToBounds = masks.boolValue;
         view.layer.cornerCurve = curve;
+        shade.alpha = 0;
+    };
+    void (^cleanup)(void) = ^{
+        [shade removeFromSuperview];
+        objc_setAssociatedObject(view, kTsubomiDepthTransformKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        objc_setAssociatedObject(view, kTsubomiDepthRadiusKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        objc_setAssociatedObject(view, kTsubomiDepthMasksKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        objc_setAssociatedObject(view, kTsubomiDepthCurveKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        objc_setAssociatedObject(view, kTsubomiDepthShadeKey, nil, OBJC_ASSOCIATION_ASSIGN);
     };
     if (animated && !UIAccessibilityIsReduceMotionEnabled()) {
         [UIView animateWithDuration:0.32
@@ -102,14 +138,11 @@ void restore_modal_depth(UIView *view, BOOL animated) {
             initialSpringVelocity:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
             animations:restore
-            completion:nil];
+            completion:^(__unused BOOL finished) { cleanup(); }];
     } else {
         restore();
+        cleanup();
     }
-    objc_setAssociatedObject(view, kTsubomiDepthTransformKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    objc_setAssociatedObject(view, kTsubomiDepthRadiusKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    objc_setAssociatedObject(view, kTsubomiDepthMasksKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    objc_setAssociatedObject(view, kTsubomiDepthCurveKey, nil, OBJC_ASSOCIATION_ASSIGN);
 }
 
 } // namespace
@@ -149,11 +182,14 @@ void restore_modal_depth(UIView *view, BOOL animated) {
 - (void)tsubomi_presentViewController:(UIViewController *)controller
                              animated:(BOOL)animated
                            completion:(void (^)(void))completion {
-    UIView *background = self.viewIfLoaded;
-    const BOOL addsDepth = animated && background.window && !UIAccessibilityIsReduceMotionEnabled();
+    UIView *background = modal_depth_background(self);
+    const BOOL addsDepth = animated && background.window && should_add_modal_depth(controller)
+        && !UIAccessibilityIsReduceMotionEnabled();
     if (addsDepth) {
         prepare_modal_depth(background);
         objc_setAssociatedObject(controller, kTsubomiDepthBackgroundKey,
+            [NSValue valueWithNonretainedObject:background], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, kTsubomiDepthPresenterBackgroundKey,
             [NSValue valueWithNonretainedObject:background], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     [self tsubomi_presentViewController:controller animated:animated completion:completion];
@@ -166,6 +202,9 @@ void restore_modal_depth(UIView *view, BOOL animated) {
     UIViewController *dismissed = self.presentedViewController ?: self;
     NSValue *stored = objc_getAssociatedObject(dismissed, kTsubomiDepthBackgroundKey);
     restore_modal_depth(stored.nonretainedObjectValue, animated);
+    objc_setAssociatedObject(dismissed, kTsubomiDepthBackgroundKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    objc_setAssociatedObject(dismissed.presentingViewController,
+        kTsubomiDepthPresenterBackgroundKey, nil, OBJC_ASSOCIATION_ASSIGN);
     [self tsubomi_dismissViewControllerAnimated:animated completion:completion];
 }
 
@@ -173,7 +212,10 @@ void restore_modal_depth(UIView *view, BOOL animated) {
     [self tsubomi_viewWillAppear:animated];
     // Interactive sheet swipes do not necessarily call the public dismissal
     // method, but the presenting controller always reappears.
-    restore_modal_depth(self.viewIfLoaded, animated);
+    NSValue *stored = objc_getAssociatedObject(self, kTsubomiDepthPresenterBackgroundKey);
+    if (stored)
+        restore_modal_depth(stored.nonretainedObjectValue, animated);
+    objc_setAssociatedObject(self, kTsubomiDepthPresenterBackgroundKey, nil, OBJC_ASSOCIATION_ASSIGN);
 }
 
 @end
@@ -205,8 +247,6 @@ void reload_library_cells();
 
 // Declared in NativeFrontend.mm's own scope rather than the anonymous
 // namespace: -updateGames:settings: calls it from further down the file.
-static void hide_boot_screen();
-
 static void vita3k_ios_internal_cache_snapshot(const std::vector<Vita3KIOSGameEntry> &games,
     const Vita3KIOSSettings &settings) {
     const std::lock_guard lock(g_settings_mutex);
@@ -400,33 +440,6 @@ UIImage *cover_image(NSString *path, void (^ready)(UIImage *)) {
     return nil;
 }
 
-// ---- Custom cover art -------------------------------------------------------
-// Users can replace a game's library art with a photo. The picked original is
-// kept so the crop can be re-adjusted later; the rendered square cover is what
-// cells actually display.
-
-NSString *covers_directory() {
-    NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    NSString *directory = [documents stringByAppendingPathComponent:@"Tsubomi/covers"];
-    [NSFileManager.defaultManager createDirectoryAtPath:directory
-                            withIntermediateDirectories:YES attributes:nil error:nil];
-    return directory;
-}
-
-NSString *cover_original_path(NSString *titleId) {
-    return [covers_directory() stringByAppendingPathComponent:
-        [NSString stringWithFormat:@"%@-original.png", titleId]];
-}
-
-NSString *cover_render_path(NSString *titleId) {
-    return [covers_directory() stringByAppendingPathComponent:
-        [NSString stringWithFormat:@"%@-cover.png", titleId]];
-}
-
-BOOL has_custom_cover(NSString *titleId) {
-    return [NSFileManager.defaultManager fileExistsAtPath:cover_render_path(titleId)];
-}
-
 // ---- Per-game settings ------------------------------------------------------
 // Overrides are a defaults dictionary per title; absent = use global settings.
 
@@ -487,9 +500,6 @@ namespace {
 // Defined further down the file, past this block.
 std::string hex_bytes(const std::string &value);
 } // namespace
-static void present_cover_crop(NSString *titleId, UIImage *image);
-static void present_cover_picker(NSString *titleId);
-
 // The seam TsubomiBridge.mm uses; see NativeFrontendInternal.h. Thin
 // forwarders so the storage details above stay file-local.
 namespace vita3k_ios_internal {
@@ -540,20 +550,6 @@ void set_display_title(NSString *title_id, NSString *title) {
         [defaults removeObjectForKey:title_override_key(title_id)];
 }
 
-bool title_has_custom_cover(NSString *title_id) {
-    return has_custom_cover(title_id);
-}
-
-NSString *custom_cover_path(NSString *title_id) {
-    return cover_render_path(title_id);
-}
-
-void reset_custom_cover(NSString *title_id) {
-    NSFileManager *fm = NSFileManager.defaultManager;
-    [fm removeItemAtPath:cover_render_path(title_id) error:nil];
-    [fm removeItemAtPath:cover_original_path(title_id) error:nil];
-}
-
 bool title_has_settings(NSString *title_id) {
     return has_game_settings(title_id);
 }
@@ -587,23 +583,6 @@ void present_license_import_picker() {
 
 void present_save_import_picker(NSString *title_id) {
     present_save_picker(title_id);
-}
-
-void present_cover_art_picker(NSString *title_id) {
-    present_cover_picker(title_id);
-}
-
-void present_cover_crop_editor(NSString *title_id) {
-    // Re-crop the previously picked original when there is one, otherwise the
-    // game's packaged art, so the built-in cover can be reframed too.
-    UIImage *source = [UIImage imageWithContentsOfFile:cover_original_path(title_id)];
-    if (!source) {
-        const auto game = game_for_title(title_id);
-        if (game)
-            source = [UIImage imageWithContentsOfFile:
-                [NSString stringWithUTF8String:game->icon_path.c_str()] ?: @""];
-    }
-    present_cover_crop(title_id, source);
 }
 
 bool firmware_ready_or_alert() {
@@ -676,192 +655,9 @@ std::string hex_bytes(const std::string &value) {
 
 } // namespace
 
-// Pan/zoom square crop for custom cover art. The scroll view's visible square
-// maps directly to the rendered 1024x1024 cover.
-@interface Vita3KCoverCropController : UIViewController <UIScrollViewDelegate>
-@property(nonatomic, strong) UIImage *image;
-@property(nonatomic, copy) NSString *titleId;
-@property(nonatomic, copy) dispatch_block_t onDone;
-@property(nonatomic, strong) UIScrollView *cropScroll;
-@property(nonatomic, strong) UIImageView *imageView;
-@end
-
-@implementation Vita3KCoverCropController
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.view.backgroundColor = UIColor.blackColor;
-
-    self.cropScroll = [[UIScrollView alloc] init];
-    self.cropScroll.delegate = self;
-    self.cropScroll.showsHorizontalScrollIndicator = NO;
-    self.cropScroll.showsVerticalScrollIndicator = NO;
-    self.cropScroll.alwaysBounceHorizontal = YES;
-    self.cropScroll.alwaysBounceVertical = YES;
-    self.cropScroll.layer.borderColor = UIColor.whiteColor.CGColor;
-    self.cropScroll.layer.borderWidth = 1.5;
-    self.cropScroll.clipsToBounds = YES;
-    [self.view addSubview:self.cropScroll];
-
-    self.imageView = [[UIImageView alloc] initWithImage:self.image];
-    self.imageView.contentMode = UIViewContentModeScaleToFill;
-    [self.cropScroll addSubview:self.imageView];
-
-    UILabel *hint = [[UILabel alloc] init];
-    hint.text = @"Pinch and drag to frame the cover";
-    hint.textColor = UIColor.whiteColor;
-    hint.font = [UIFontMetrics.defaultMetrics scaledFontForFont:
-        [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold]];
-    hint.adjustsFontForContentSizeCategory = YES;
-    hint.numberOfLines = 2;
-    hint.textAlignment = NSTextAlignmentCenter;
-    hint.tag = 401;
-    [self.view addSubview:hint];
-
-    UIButton *cancel = [UIButton buttonWithType:UIButtonTypeSystem];
-    [cancel setTitle:@"Cancel" forState:UIControlStateNormal];
-    cancel.tintColor = UIColor.whiteColor;
-    cancel.tag = 402;
-    [cancel addTarget:self action:@selector(cancelTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:cancel];
-
-    UIButton *save = [UIButton buttonWithType:UIButtonTypeSystem];
-    [save setTitle:@"Save" forState:UIControlStateNormal];
-    save.titleLabel.font = [UIFontMetrics.defaultMetrics scaledFontForFont:
-        [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold]];
-    save.titleLabel.adjustsFontForContentSizeCategory = YES;
-    save.tag = 403;
-    [save addTarget:self action:@selector(saveTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:save];
-}
-
-- (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    const UIEdgeInsets safe = self.view.safeAreaInsets;
-    const CGRect bounds = self.view.bounds;
-    const CGFloat side = MIN(CGRectGetWidth(bounds) - 40,
-        CGRectGetHeight(bounds) - safe.top - safe.bottom - 140);
-    const BOOL firstLayout = CGRectIsEmpty(self.cropScroll.frame);
-    self.cropScroll.frame = CGRectMake((CGRectGetWidth(bounds) - side) / 2,
-        safe.top + 64, side, side);
-    [self.view viewWithTag:401].frame = CGRectMake(20, safe.top + 10, CGRectGetWidth(bounds) - 40, 44);
-    [self.view viewWithTag:402].frame = CGRectMake(24, CGRectGetMaxY(self.cropScroll.frame) + 18, 90, 44);
-    [self.view viewWithTag:403].frame = CGRectMake(CGRectGetWidth(bounds) - 114,
-        CGRectGetMaxY(self.cropScroll.frame) + 18, 90, 44);
-    if (firstLayout && self.image) {
-        const CGSize imageSize = self.image.size;
-        // Minimum zoom always fills the square.
-        const CGFloat fill = MAX(side / imageSize.width, side / imageSize.height);
-        self.imageView.frame = CGRectMake(0, 0, imageSize.width, imageSize.height);
-        self.cropScroll.contentSize = imageSize;
-        self.cropScroll.minimumZoomScale = fill;
-        self.cropScroll.maximumZoomScale = MAX(fill * 8, 2.0);
-        self.cropScroll.zoomScale = fill;
-        // Center the initial crop.
-        self.cropScroll.contentOffset = CGPointMake(
-            MAX(0, (imageSize.width * fill - side) / 2),
-            MAX(0, (imageSize.height * fill - side) / 2));
-    }
-}
-
-- (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView {
-    (void)scrollView;
-    return self.imageView;
-}
-
-- (void)cancelTapped {
-    [self dismissViewControllerAnimated:YES completion:nil];
-}
-
-- (void)saveTapped {
-    const CGFloat side = CGRectGetWidth(self.cropScroll.bounds);
-    const CGFloat zoom = self.cropScroll.zoomScale;
-    const CGRect cropInImage = CGRectMake(self.cropScroll.contentOffset.x / zoom,
-        self.cropScroll.contentOffset.y / zoom, side / zoom, side / zoom);
-    const CGFloat renderSide = 1024;
-    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
-    format.opaque = YES;
-    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc]
-        initWithSize:CGSizeMake(renderSide, renderSide) format:format];
-    UIImage *image = self.image;
-    UIImage *rendered = [renderer imageWithActions:^(__unused UIGraphicsImageRendererContext *context) {
-        const CGFloat scale = renderSide / cropInImage.size.width;
-        [image drawInRect:CGRectMake(-cropInImage.origin.x * scale, -cropInImage.origin.y * scale,
-            image.size.width * scale, image.size.height * scale)];
-    }];
-    [UIImagePNGRepresentation(rendered) writeToFile:cover_render_path(self.titleId) atomically:YES];
-    invalidate_cover_cache(cover_render_path(self.titleId));
-    dispatch_block_t done = self.onDone;
-    [self dismissViewControllerAnimated:YES completion:^{
-        if (done)
-            done();
-    }];
-}
-
-@end
-
-// Keeps the PHPicker delegate alive while the sheet is up; on pick, stores the
-// original and opens the crop controller.
-@interface Vita3KCoverPicker : NSObject <PHPickerViewControllerDelegate>
-@property(nonatomic, copy) NSString *titleId;
-@end
-
-static Vita3KCoverPicker *g_cover_picker = nil;
-static void present_cover_crop(NSString *titleId, UIImage *image);
-
-@implementation Vita3KCoverPicker
-
-- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
-    NSString *titleId = self.titleId;
-    [picker dismissViewControllerAnimated:YES completion:nil];
-    NSItemProvider *provider = results.firstObject.itemProvider;
-    if (![provider canLoadObjectOfClass:UIImage.class])
-        return;
-    [provider loadObjectOfClass:UIImage.class completionHandler:^(id<NSItemProviderReading> object, NSError *error) {
-        UIImage *image = (UIImage *)object;
-        if (!image || error)
-            return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [UIImagePNGRepresentation(image) writeToFile:cover_original_path(titleId) atomically:YES];
-            present_cover_crop(titleId, image);
-        });
-    }];
-}
-
-@end
-
-static void present_cover_crop(NSString *titleId, UIImage *image) {
-    UIViewController *root = active_window().rootViewController;
-    if (!root || !image)
-        return;
-    Vita3KCoverCropController *crop = [[Vita3KCoverCropController alloc] init];
-    crop.image = image;
-    crop.titleId = titleId;
-    crop.onDone = ^{ reload_library_cells(); };
-    crop.modalPresentationStyle = UIModalPresentationFullScreen;
-    [root presentViewController:crop animated:YES completion:nil];
-}
-
-static void present_cover_picker(NSString *titleId) {
-    UIViewController *root = active_window().rootViewController;
-    if (!root)
-        return;
-    PHPickerConfiguration *configuration = [[PHPickerConfiguration alloc] init];
-    configuration.selectionLimit = 1;
-    configuration.filter = PHPickerFilter.imagesFilter;
-    PHPickerViewController *picker = [[PHPickerViewController alloc] initWithConfiguration:configuration];
-    if (!g_cover_picker)
-        g_cover_picker = [[Vita3KCoverPicker alloc] init];
-    g_cover_picker.titleId = titleId;
-    picker.delegate = g_cover_picker;
-    [root presentViewController:picker animated:YES completion:nil];
-}
-
-
 // The SwiftUI library (TsubomiLibraryHost). Retained here because only its
 // view is installed in the hierarchy; its content comes from LibraryState,
 // which the core pushes into through TsubomiLibraryStateBridge.
-static UIViewController *g_library_controller = nil;
 // Onboarding is added over the library's view, so it is retained alongside it.
 static UIViewController *g_onboarding_controller = nil;
 
@@ -1277,8 +1073,6 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         }
         [library_view().superview bringSubviewToFront:library_view()];
         set_metal_drawables_hidden(window, YES);
-        // The library is up; the boot screen has nothing left to cover.
-        hide_boot_screen();
         [Vita3KPadNavigator.shared start];
         if (animateLaunchIntro) {
             UIView *introTarget = library_view();
@@ -1357,49 +1151,6 @@ std::optional<Vita3KIOSFrontendAction> vita3k_ios_take_frontend_action() {
     auto action = std::move(g_pending_action);
     g_pending_action.reset();
     return action;
-}
-
-static UIViewController *g_boot_screen_controller = nil;
-
-void vita3k_ios_show_boot_screen() {
-    perform_on_main(^{
-        UIWindow *window = active_window();
-        if (!window || g_boot_screen_controller)
-            return;
-        // No containment, and its view goes on the window - the same rule the
-        // library follows. See the note in vita3k_ios_show_library about why
-        // mixing the two crashes.
-        g_boot_screen_controller = [TsubomiBootScreenHost bootScreenViewController];
-        UIView *boot = g_boot_screen_controller.view;
-        boot.frame = window.bounds;
-        boot.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [g_boot_screen_controller beginAppearanceTransition:YES animated:NO];
-        [window addSubview:boot];
-        [g_boot_screen_controller endAppearanceTransition];
-        [window bringSubviewToFront:boot];
-    });
-}
-
-// Called once the library is on screen. Fades rather than cuts, so a fast
-// start does not flash.
-static void hide_boot_screen() {
-    if (!g_boot_screen_controller)
-        return;
-    UIViewController *controller = g_boot_screen_controller;
-    g_boot_screen_controller = nil;
-    if (UIAccessibilityIsReduceMotionEnabled()) {
-        [controller beginAppearanceTransition:NO animated:NO];
-        [controller.view removeFromSuperview];
-        [controller endAppearanceTransition];
-        return;
-    }
-    [UIView animateWithDuration:0.35
-                     animations:^{ controller.view.alpha = 0; }
-                     completion:^(__unused BOOL finished) {
-        [controller beginAppearanceTransition:NO animated:NO];
-        [controller.view removeFromSuperview];
-        [controller endAppearanceTransition];
-    }];
 }
 
 int vita3k_ios_load_fps_limit() {

@@ -31,7 +31,6 @@ struct CoverCarousel<Menu: View>: View {
     /// Last accumulator value applied, so the next change steps by the delta.
     @State private var lastConsumedStep = 0
     @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
-    @State private var coverAspects: [String: CGFloat] = [:]
 
     /// The repeated item list, cached. Rebuilt only when the games change - not
     /// on every body pass. body re-runs on each scroll settle and every haptic
@@ -69,16 +68,13 @@ struct CoverCarousel<Menu: View>: View {
 
     var body: some View {
         GeometryReader { proxy in
-            // Edge insets must be based on a value available to the whole
-            // scroll view. Covers can now have different widths, so reserve
-            // space for the widest one while each item keeps its own size.
-            let widestSide = games.reduce(CGFloat.zero) {
-                max($0, coverSide(for: $1, in: proxy.size))
-            }
+            // Every item shares one width so toggling wide art cannot leave a
+            // mixture of carousel card sizes.
+            let coverWidth = coverSide(in: proxy.size)
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 18) {
                     ForEach(items) { item in
-                        cover(item.game, side: coverSide(for: item.game, in: proxy.size))
+                        cover(item.game, side: coverWidth)
                             .id(item.id)
                     }
                 }
@@ -90,7 +86,7 @@ struct CoverCarousel<Menu: View>: View {
             // measured on that container instead of the covers - advancing one
             // game took most of a screen-width of drag. This insets the content
             // while leaving the scroll targets measured on the covers.
-            .safeAreaPadding(.horizontal, max(0, (proxy.size.width - widestSide) / 2))
+            .safeAreaPadding(.horizontal, max(0, (proxy.size.width - coverWidth) / 2))
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $scrolledID, anchor: .center)
             .scrollIndicators(.hidden)
@@ -134,13 +130,9 @@ struct CoverCarousel<Menu: View>: View {
 
     private func cover(_ game: GameEntry, side: CGFloat) -> some View {
         VStack(spacing: 10) {
-            // Width-fixed, height free: with Wide cover art on, the cover takes
-            // its own aspect (shorter than square); otherwise it stays square.
-            GameCover(game: game, allowsWide: true) { aspect in
-                if coverAspects[game.titleID] != aspect {
-                    coverAspects[game.titleID] = aspect
-                }
-            }
+            // Width-fixed, height free: wide covers use one 16:9 frame so
+            // switching modes cannot leave a mixture of card sizes.
+            GameCover(game: game, allowsWide: true)
                 .frame(width: side)
             Text(game.displayTitle)
                 .font(.subheadline.weight(.semibold))
@@ -220,14 +212,10 @@ struct CoverCarousel<Menu: View>: View {
     /// Bigger than before (0.34 → 0.42 of the width, and less vertical
     /// reserve): the covers are the whole point of this view, so they should
     /// dominate it.
-    private func coverSide(for game: GameEntry, in size: CGSize) -> CGFloat {
+    private func coverSide(in size: CGSize) -> CGFloat {
         let availableHeight = max(140, size.height - 70)
-        let aspect = coverAspects[game.titleID] ?? 1
-        if wideCoverArt && aspect > 1 {
-            // Use the loaded image's actual ratio. Wide banners can grow in
-            // width without exceeding the same safe cover-height budget, while
-            // square/custom art continues through the square-safe branch.
-            return max(180, min(availableHeight * aspect, size.width * 0.56))
+        if wideCoverArt {
+            return max(180, min(availableHeight * (16.0 / 9.0), size.width * 0.56))
         }
         return max(140, min(availableHeight, size.width * 0.46))
     }
