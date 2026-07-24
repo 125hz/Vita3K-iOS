@@ -52,8 +52,8 @@ struct LibraryView: View {
                                 .font(.title2.weight(.bold))
                         }
                     }
-                    .toolbar { toolbarContent }
                     .safeAreaInset(edge: .top, spacing: 0) { banners }
+                    .safeAreaInset(edge: .bottom, spacing: 8) { homeBar }
                     .overlay { busyOverlay }
                     // Keep the state's idea of the presentation in step with
                     // what is actually drawn, so pad D-pad movement matches
@@ -256,24 +256,20 @@ struct LibraryView: View {
 
     // MARK: - Chrome
 
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        // Bottom bar rather than the navigation bar: these are the library's
-        // primary actions, and on a phone held one-handed the bottom edge is
-        // the reachable one. The system gives the group its own Liquid Glass
-        // container here.
-        ToolbarItemGroup(placement: .bottomBar) {
+    private var homeBar: some View {
+        // One custom plane instead of three ToolbarItems: iOS 26 gives each
+        // toolbar item its own glass island, while the requested design is one
+        // continuous capsule. Equal-width slots keep Add exactly centered.
+        HStack(spacing: 0) {
             Button {
                 HomeSoundEffects.play(.press)
                 library.isListMode.toggle()
             } label: {
-                Label(
-                    library.isListMode ? "Grid view" : "List view",
-                    systemImage: library.isListMode ? "square.grid.2x2" : "list.bullet"
-                )
+                Image(systemName: library.isListMode ? "square.grid.2x2" : "list.bullet")
+                    .frame(maxWidth: .infinity, minHeight: 48)
             }
-
-            Spacer()
+            .buttonStyle(.plain)
+            .accessibilityLabel(library.isListMode ? "Grid view" : "List view")
 
             Menu {
                 Button {
@@ -297,29 +293,31 @@ struct LibraryView: View {
                     Label("Import firmware (.PUP)", systemImage: "cpu")
                 }
             } label: {
-                Label("Add", systemImage: "plus")
+                Image(systemName: "plus")
+                    .frame(maxWidth: .infinity, minHeight: 48)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add")
             .simultaneousGesture(
                 TapGesture().onEnded {
                     HomeSoundEffects.play(.press)
                 }
             )
 
-            Spacer()
-
             Button {
                 Bridge.presentGlobalSettings()
             } label: {
-                Label("Settings", systemImage: "gearshape.fill")
+                Image(systemName: "gearshape.fill")
+                    .frame(maxWidth: .infinity, minHeight: 48)
             }
-
-            // The graphics-help button is gone: the same explanation now lives
-            // in Settings, next to the switches it talks about.
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
         }
-
-        // The firmware version indicator that used to sit here is gone: it is
-        // shown in Settings > About, and the library header is worth more as
-        // space for covers.
+        .font(.title3.weight(.semibold))
+        .frame(maxWidth: 360)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
     }
 
     // Its own View so a toast appearing or auto-dismissing invalidates only
@@ -402,10 +400,15 @@ struct LibraryView: View {
     /// Rescans installed titles and keeps the native refresh control active
     /// until the core publishes the replacement snapshot.
     private func refresh() async {
+        // Crossing the pull threshold is the "ready" event. Play it before the
+        // rescan so every accepted gesture has immediate feedback, even when a
+        // previous refresh completed only moments ago.
+        HomeSoundEffects.play(.ready)
+        let clock = ContinuousClock()
+        let readyAt = clock.now
         let startingGeneration = library.refreshCompletionGeneration
         Bridge.refreshLibrary()
 
-        let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(5))
         while library.refreshCompletionGeneration == startingGeneration && clock.now < deadline {
             try? await Task.sleep(for: .milliseconds(40))
@@ -414,8 +417,12 @@ struct LibraryView: View {
         guard library.refreshCompletionGeneration != startingGeneration,
               library.lastRefreshSucceeded else { return }
 
-        HomeSoundEffects.play(.ready)
-        try? await Task.sleep(for: .milliseconds(280))
+        // Keep the success cue distinct when a small library rescans almost
+        // instantly, without adding delay to slower real-world refreshes.
+        let earliestSuccess = readyAt.advanced(by: .milliseconds(280))
+        if clock.now < earliestSuccess {
+            try? await clock.sleep(until: earliestSuccess)
+        }
         guard !Task.isCancelled else { return }
         HomeSoundEffects.play(.success)
         library.showRefreshedToast()

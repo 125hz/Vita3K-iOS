@@ -43,6 +43,11 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.38.1", notes: [
+            "The home controls now share one continuous Liquid Glass capsule, with list/card view on the left, Add centered, and Settings on the right.",
+            "Opening a home modal now recesses and dims the library more deeply, synchronized with the system sheet transition; in-game screens and confirmation alerts are unchanged.",
+            "Pull-to-refresh now plays its ready cue as soon as each refresh is accepted, followed by success when the rescan finishes.",
+        ]),
         Release(version: "0.38.0", notes: [
             "Home-screen settings, trophies, pickers, and other modal screens now dim and recess the visible library; alerts and context-menu confirmations stay in place.",
             "Settings starts with a General section for Interface sound effects, uses a centered title, and the home bar places list/card view on the left with Add centered.",

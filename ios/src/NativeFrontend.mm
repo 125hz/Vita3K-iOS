@@ -51,6 +51,7 @@ const void *kTsubomiDepthRadiusKey = &kTsubomiDepthRadiusKey;
 const void *kTsubomiDepthMasksKey = &kTsubomiDepthMasksKey;
 const void *kTsubomiDepthCurveKey = &kTsubomiDepthCurveKey;
 const void *kTsubomiDepthShadeKey = &kTsubomiDepthShadeKey;
+const void *kTsubomiDepthRestoringKey = &kTsubomiDepthRestoringKey;
 
 BOOL should_add_modal_depth(UIViewController *controller) {
     return controller && ![controller isKindOfClass:UIAlertController.class];
@@ -63,6 +64,11 @@ UIView *modal_depth_background(UIViewController *presenter) {
     if (window && presenter == window.rootViewController && library.window == window && !library.hidden)
         return library;
     return presenterView;
+}
+
+BOOL is_visible_library_background(UIView *view) {
+    UIView *library = g_library_controller.viewIfLoaded;
+    return view && view == library && library.window && !library.hidden;
 }
 
 void prepare_modal_depth(UIView *view) {
@@ -85,36 +91,68 @@ void prepare_modal_depth(UIView *view) {
     objc_setAssociatedObject(view, kTsubomiDepthShadeKey, shade, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-void animate_modal_depth(UIView *view) {
-    if (!view || UIAccessibilityIsReduceMotionEnabled())
+void apply_modal_depth(UIView *view) {
+    NSValue *original = objc_getAssociatedObject(view, kTsubomiDepthTransformKey);
+    if (!view || !original)
         return;
-    [UIView animateWithDuration:0.38
-        delay:0
-        usingSpringWithDamping:0.9
-        initialSpringVelocity:0
-        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
-        animations:^{
-            NSValue *original = objc_getAssociatedObject(view, kTsubomiDepthTransformKey);
-            if (!original)
-                return;
-            view.transform = CGAffineTransformScale(original.CGAffineTransformValue, 0.96, 0.96);
-            view.layer.cornerRadius = 20;
-            view.layer.cornerCurve = kCACornerCurveContinuous;
-            view.layer.masksToBounds = YES;
-            UIView *shade = objc_getAssociatedObject(view, kTsubomiDepthShadeKey);
-            shade.alpha = 0.16;
-        }
-        completion:nil];
+    view.transform = CGAffineTransformScale(original.CGAffineTransformValue, 0.92, 0.92);
+    view.layer.cornerRadius = 28;
+    view.layer.cornerCurve = kCACornerCurveContinuous;
+    view.layer.masksToBounds = YES;
+    UIView *shade = objc_getAssociatedObject(view, kTsubomiDepthShadeKey);
+    shade.alpha = 0.22;
 }
 
-void restore_modal_depth(UIView *view, BOOL animated) {
+void animate_modal_depth(
+    UIView *view, id<UIViewControllerTransitionCoordinator> coordinator) {
+    if (!view)
+        return;
+    if (UIAccessibilityIsReduceMotionEnabled()) {
+        apply_modal_depth(view);
+        return;
+    }
+    if (coordinator) {
+        [coordinator animateAlongsideTransition:
+                         ^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+                             apply_modal_depth(view);
+                         }
+                                           completion:nil];
+        return;
+    }
+    [UIView animateWithDuration:0.5
+                     delay:0
+                   options:UIViewAnimationOptionBeginFromCurrentState
+                       | UIViewAnimationOptionAllowUserInteraction
+                       | UIViewAnimationOptionCurveEaseInOut
+                animations:^{ apply_modal_depth(view); }
+                completion:nil];
+}
+
+void restore_modal_depth(UIView *view, BOOL animated,
+    id<UIViewControllerTransitionCoordinator> coordinator,
+    dispatch_block_t didFinish) {
+    if (!view) {
+        if (didFinish)
+            didFinish();
+        return;
+    }
+    if ([objc_getAssociatedObject(view, kTsubomiDepthRestoringKey) boolValue]) {
+        if (didFinish)
+            didFinish();
+        return;
+    }
     NSValue *transform = objc_getAssociatedObject(view, kTsubomiDepthTransformKey);
     NSNumber *radius = objc_getAssociatedObject(view, kTsubomiDepthRadiusKey);
     NSNumber *masks = objc_getAssociatedObject(view, kTsubomiDepthMasksKey);
     NSString *curve = objc_getAssociatedObject(view, kTsubomiDepthCurveKey);
     UIView *shade = objc_getAssociatedObject(view, kTsubomiDepthShadeKey);
-    if (!view || !transform)
+    if (!transform) {
+        if (didFinish)
+            didFinish();
         return;
+    }
+    objc_setAssociatedObject(
+        view, kTsubomiDepthRestoringKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     void (^restore)(void) = ^{
         view.transform = transform.CGAffineTransformValue;
@@ -130,15 +168,36 @@ void restore_modal_depth(UIView *view, BOOL animated) {
         objc_setAssociatedObject(view, kTsubomiDepthMasksKey, nil, OBJC_ASSOCIATION_ASSIGN);
         objc_setAssociatedObject(view, kTsubomiDepthCurveKey, nil, OBJC_ASSOCIATION_ASSIGN);
         objc_setAssociatedObject(view, kTsubomiDepthShadeKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        objc_setAssociatedObject(view, kTsubomiDepthRestoringKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        if (didFinish)
+            didFinish();
     };
     if (animated && !UIAccessibilityIsReduceMotionEnabled()) {
-        [UIView animateWithDuration:0.32
-            delay:0
-            usingSpringWithDamping:0.94
-            initialSpringVelocity:0
-            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
-            animations:restore
-            completion:^(__unused BOOL finished) { cleanup(); }];
+        if (coordinator) {
+            [coordinator animateAlongsideTransition:
+                             ^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+                                 restore();
+                             }
+                                               completion:
+                                                   ^(id<UIViewControllerTransitionCoordinatorContext> context) {
+                                                       if (context.isCancelled) {
+                                                           apply_modal_depth(view);
+                                                           objc_setAssociatedObject(view,
+                                                               kTsubomiDepthRestoringKey, nil,
+                                                               OBJC_ASSOCIATION_ASSIGN);
+                                                       } else {
+                                                           cleanup();
+                                                       }
+                                                   }];
+        } else {
+            [UIView animateWithDuration:0.5
+                             delay:0
+                           options:UIViewAnimationOptionBeginFromCurrentState
+                               | UIViewAnimationOptionAllowUserInteraction
+                               | UIViewAnimationOptionCurveEaseInOut
+                        animations:restore
+                        completion:^(__unused BOOL finished) { cleanup(); }];
+        }
     } else {
         restore();
         cleanup();
@@ -183,7 +242,8 @@ void restore_modal_depth(UIView *view, BOOL animated) {
                              animated:(BOOL)animated
                            completion:(void (^)(void))completion {
     UIView *background = modal_depth_background(self);
-    const BOOL addsDepth = animated && background.window && should_add_modal_depth(controller)
+    const BOOL addsDepth = animated && is_visible_library_background(background)
+        && should_add_modal_depth(controller)
         && !UIAccessibilityIsReduceMotionEnabled();
     if (addsDepth) {
         prepare_modal_depth(background);
@@ -194,18 +254,22 @@ void restore_modal_depth(UIView *view, BOOL animated) {
     }
     [self tsubomi_presentViewController:controller animated:animated completion:completion];
     if (addsDepth)
-        animate_modal_depth(background);
+        animate_modal_depth(background, controller.transitionCoordinator ?: self.transitionCoordinator);
 }
 
 - (void)tsubomi_dismissViewControllerAnimated:(BOOL)animated
                                     completion:(void (^)(void))completion {
     UIViewController *dismissed = self.presentedViewController ?: self;
+    UIViewController *presenter = dismissed.presentingViewController;
     NSValue *stored = objc_getAssociatedObject(dismissed, kTsubomiDepthBackgroundKey);
-    restore_modal_depth(stored.nonretainedObjectValue, animated);
-    objc_setAssociatedObject(dismissed, kTsubomiDepthBackgroundKey, nil, OBJC_ASSOCIATION_ASSIGN);
-    objc_setAssociatedObject(dismissed.presentingViewController,
-        kTsubomiDepthPresenterBackgroundKey, nil, OBJC_ASSOCIATION_ASSIGN);
     [self tsubomi_dismissViewControllerAnimated:animated completion:completion];
+    restore_modal_depth(stored.nonretainedObjectValue, animated,
+        dismissed.transitionCoordinator ?: self.transitionCoordinator, ^{
+            objc_setAssociatedObject(
+                dismissed, kTsubomiDepthBackgroundKey, nil, OBJC_ASSOCIATION_ASSIGN);
+            objc_setAssociatedObject(
+                presenter, kTsubomiDepthPresenterBackgroundKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        });
 }
 
 - (void)tsubomi_viewWillAppear:(BOOL)animated {
@@ -214,8 +278,10 @@ void restore_modal_depth(UIView *view, BOOL animated) {
     // method, but the presenting controller always reappears.
     NSValue *stored = objc_getAssociatedObject(self, kTsubomiDepthPresenterBackgroundKey);
     if (stored)
-        restore_modal_depth(stored.nonretainedObjectValue, animated);
-    objc_setAssociatedObject(self, kTsubomiDepthPresenterBackgroundKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        restore_modal_depth(stored.nonretainedObjectValue, animated, self.transitionCoordinator, ^{
+            objc_setAssociatedObject(
+                self, kTsubomiDepthPresenterBackgroundKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        });
 }
 
 @end
