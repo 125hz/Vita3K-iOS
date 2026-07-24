@@ -43,6 +43,9 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.40.1", notes: [
+            "Fixed the iPhoneOS SwiftUI compile failure in the animated JIT status banner.",
+        ]),
         Release(version: "0.40.0", notes: [
             "Transient home notifications now float above the library without moving the games.",
             "Wide artwork is used in the regular list as well as cards and carousel; Compact list always uses each game's square icon0.png.",

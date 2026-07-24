@@ -519,17 +519,19 @@ private struct LibraryJITBanner: View {
     var library: LibraryState
 
     var body: some View {
-        if !library.jitAvailable {
-            Label(
-                "JIT not active",
-                systemImage: "exclamationmark.triangle.fill"
-            )
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.black)
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(.regular.tint(.yellow), in: .rect(cornerRadius: 16, style: .continuous))
-            .padding(.horizontal, 16)
+        Group {
+            if !library.jitAvailable {
+                Label(
+                    "JIT not active",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.black)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .glassEffect(.regular.tint(.yellow), in: .rect(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal, 16)
+            }
         }
         .animation(.snappy, value: library.jitAvailable)
     }
