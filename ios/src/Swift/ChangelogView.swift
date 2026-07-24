@@ -43,6 +43,12 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.42.0", notes: [
+            "Live Area now uses Vita3K's original 960×544 authored layouts, scaling the complete background, frames, gate, and Start control onto both portrait and landscape screens without scrolling.",
+            "Orientation Lock now sits directly below Layout Options in the in-game menu.",
+            "Library settings can export every game save to one ZIP or import matching saves from an all-saves archive.",
+            "The Library category now follows General and can sort every library view by Alphabetical, Title ID, Playtime, or Recently Played.",
+        ]),
         Release(version: "0.41.0", notes: [
             "Live Area artwork, title, frames, and Start control are smaller in both portrait and landscape.",
             "Rotating while Live Area is open no longer leaves the library wider than the portrait window after dismissal.",

@@ -15,6 +15,8 @@
 #import <UIKit/UIKit.h>
 #undef Ptr
 
+#include <algorithm>
+#include <cstdint>
 #include <string>
 #include <utility>
 
@@ -71,6 +73,9 @@ NSString *trophy_grade_name(int grade) {
     _wideArtPath = to_ns(entry.wide_art_path);
     _liveAreaContentsPath = to_ns(entry.live_area_contents_path);
     _hasSettingsOverrides = vita3k_ios_internal::title_has_settings(_titleID);
+    _playedTimeSeconds = std::max<int64_t>(0, entry.time_played_seconds);
+    _lastPlayedTimestamp = std::max<int64_t>(
+        0, static_cast<int64_t>(entry.last_played_timestamp));
 
     NSString *version = to_ns(entry.version);
     _versionText = version.length ? [@"v" stringByAppendingString:version] : @"Unknown version";
@@ -420,6 +425,16 @@ id bridge_games() {
     Vita3KIOSFrontendAction action;
     action.kind = Vita3KIOSFrontendActionKind::ExportSave;
     action.title_id = to_std(titleID);
+    vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
++ (void)presentAllSaveImportPicker {
+    vita3k_ios_internal::present_all_save_import_picker();
+}
+
++ (void)exportAllSaves {
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::ExportSave;
     vita3k_ios_internal::queue_frontend_action(std::move(action));
 }
 

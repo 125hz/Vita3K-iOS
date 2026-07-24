@@ -765,6 +765,10 @@ void present_save_import_picker(NSString *title_id) {
     present_save_picker(title_id);
 }
 
+void present_all_save_import_picker() {
+    present_save_picker(@"");
+}
+
 bool firmware_ready_or_alert() {
     const auto settings = current_global_settings();
     if (settings.firmware_ready)
@@ -1075,6 +1079,8 @@ static UIViewController *library_presented_controller() {
         busy = @"Installing license…";
     else if (self.kind == Vita3KIOSFrontendActionKind::ImportSave)
         busy = @"Importing save…";
+    if (self.kind == Vita3KIOSFrontendActionKind::ImportSave && !self.titleId.length)
+        busy = @"Importing all game saves...";
     [TsubomiLibraryStateBridge setBusyMessage:busy];
     Vita3KIOSFrontendAction action;
     action.kind = self.kind;
@@ -1089,11 +1095,18 @@ static Vita3KImportPicker *g_import_picker = nil;
 
 namespace {
 
+UIViewController *document_picker_presenter() {
+    UIViewController *presenter = active_window().rootViewController;
+    while (presenter.presentedViewController)
+        presenter = presenter.presentedViewController;
+    return presenter;
+}
+
 // Presents the Files picker for a game/firmware/license import. Attached to the
 // + button's UIMenu (games/firmware) and the post-install license prompt.
 void present_import_picker(BOOL firmware) {
-    UIViewController *root = active_window().rootViewController;
-    if (!root)
+    UIViewController *presenter = document_picker_presenter();
+    if (!presenter)
         return;
     if (!g_import_picker)
         g_import_picker = [[Vita3KImportPicker alloc] init];
@@ -1119,12 +1132,12 @@ void present_import_picker(BOOL firmware) {
         [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
     picker.delegate = g_import_picker;
     picker.allowsMultipleSelection = NO;
-    [root presentViewController:picker animated:YES completion:nil];
+    [presenter presentViewController:picker animated:YES completion:nil];
 }
 
 void present_license_picker() {
-    UIViewController *root = active_window().rootViewController;
-    if (!root)
+    UIViewController *presenter = document_picker_presenter();
+    if (!presenter)
         return;
     if (!g_import_picker)
         g_import_picker = [[Vita3KImportPicker alloc] init];
@@ -1135,12 +1148,12 @@ void present_license_picker() {
         [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]];
     picker.delegate = g_import_picker;
     picker.allowsMultipleSelection = NO;
-    [root presentViewController:picker animated:YES completion:nil];
+    [presenter presentViewController:picker animated:YES completion:nil];
 }
 
 void present_save_picker(NSString *titleId) {
-    UIViewController *root = active_window().rootViewController;
-    if (!root)
+    UIViewController *presenter = document_picker_presenter();
+    if (!presenter)
         return;
     if (!g_import_picker)
         g_import_picker = [[Vita3KImportPicker alloc] init];
@@ -1150,7 +1163,7 @@ void present_save_picker(NSString *titleId) {
         [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP, UTTypeData]];
     picker.delegate = g_import_picker;
     picker.allowsMultipleSelection = NO;
-    [root presentViewController:picker animated:YES completion:nil];
+    [presenter presentViewController:picker animated:YES completion:nil];
 }
 
 } // namespace
@@ -1392,11 +1405,14 @@ void vita3k_ios_share_file(const std::string &path) {
     perform_on_main(^{
         NSURL *url = [NSURL fileURLWithPath:filePath];
         UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
-        UIViewController *root = active_window().rootViewController;
-        share.popoverPresentationController.sourceView = root.view;
-        share.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(root.view.bounds),
-            CGRectGetMidY(root.view.bounds), 1, 1);
-        [root presentViewController:share animated:YES completion:nil];
+        UIViewController *presenter = document_picker_presenter();
+        if (!presenter)
+            return;
+        share.popoverPresentationController.sourceView = presenter.view;
+        share.popoverPresentationController.sourceRect =
+            CGRectMake(CGRectGetMidX(presenter.view.bounds),
+                CGRectGetMidY(presenter.view.bounds), 1, 1);
+        [presenter presentViewController:share animated:YES completion:nil];
     });
 }
 

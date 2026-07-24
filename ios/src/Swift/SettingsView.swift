@@ -21,6 +21,8 @@ struct SettingsView: View {
     private var orientationLock = OrientationLockOption.portrait.rawValue
     @AppStorage(NormalListArtwork.defaultsKey)
     private var normalListArtwork = NormalListArtwork.coverArt.rawValue
+    @AppStorage(LibrarySortOption.defaultsKey)
+    private var librarySort = LibrarySortOption.alphabetical.rawValue
     /// Invoked when the user is done; the host controller dismisses.
     private let onFinish: () -> Void
 
@@ -36,6 +38,7 @@ struct SettingsView: View {
             Form {
                 if !model.isPerGame {
                     generalSection
+                    librarySection
                 }
                 videoSection
                 graphicsSection
@@ -43,7 +46,6 @@ struct SettingsView: View {
                 if !model.isPerGame {
                     controlsSection
                     performanceOverlaySection
-                    librarySection
                     firmwareSection
                 }
                 if model.isPerGame {
@@ -201,10 +203,29 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.menu)
+            Picker("Sort games by", selection: $librarySort) {
+                ForEach(LibrarySortOption.allCases) { option in
+                    Text(option.title).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: librarySort) { _, newValue in
+                LibraryState.shared.setSortOption(rawValue: newValue)
+            }
+            Button {
+                Bridge.exportAllSaves()
+            } label: {
+                Label("Export all game saves", systemImage: "square.and.arrow.up")
+            }
+            Button {
+                Bridge.presentAllSaveImportPicker()
+            } label: {
+                Label("Import all game saves…", systemImage: "square.and.arrow.down")
+            }
         } header: {
             Text("Library")
         } footer: {
-            Text("Choose cover art or the square game icon for the normal list. Compact list always uses the game icon.")
+            Text("Choose cover art or the square game icon for the normal list. Compact list always uses the game icon. Import replaces saves for games included in the archive; saves for other games remain unchanged.")
         }
     }
 

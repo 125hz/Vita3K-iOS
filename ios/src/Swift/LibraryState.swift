@@ -47,6 +47,9 @@ final class LibraryState {
         }
     }
 
+    /// Persisted ordering shared by list, grid, carousel, and controller focus.
+    private(set) var sortOption: LibrarySortOption
+
     /// Matches the key the Objective-C frontend used, so the user's choice
     /// survives the migration.
     private static let listModeKey = "tsubomi.libraryListMode"
@@ -89,6 +92,47 @@ final class LibraryState {
     private init() {
         // Key absent means list, which was the previous default.
         isListMode = UserDefaults.standard.object(forKey: Self.listModeKey) as? Bool ?? true
+        sortOption = LibrarySortOption(
+            rawValue: UserDefaults.standard.string(forKey: LibrarySortOption.defaultsKey) ?? ""
+        ) ?? .alphabetical
+    }
+
+    /// One ordered source prevents a visible cell and the controller's focused
+    /// item from disagreeing after the sort changes.
+    var orderedGames: [GameEntry] {
+        games.sorted { lhs, rhs in
+            switch sortOption {
+            case .alphabetical:
+                return titleAscending(lhs, rhs)
+            case .titleID:
+                let order = lhs.titleID.localizedStandardCompare(rhs.titleID)
+                return order == .orderedSame ? titleAscending(lhs, rhs) : order == .orderedAscending
+            case .playtime:
+                return lhs.playedTimeSeconds == rhs.playedTimeSeconds
+                    ? titleAscending(lhs, rhs)
+                    : lhs.playedTimeSeconds > rhs.playedTimeSeconds
+            case .recentlyPlayed:
+                return lhs.lastPlayedTimestamp == rhs.lastPlayedTimestamp
+                    ? titleAscending(lhs, rhs)
+                    : lhs.lastPlayedTimestamp > rhs.lastPlayedTimestamp
+            }
+        }
+    }
+
+    func setSortOption(rawValue: String) {
+        guard let option = LibrarySortOption(rawValue: rawValue),
+              option != sortOption else { return }
+        sortOption = option
+        UserDefaults.standard.set(option.rawValue, forKey: LibrarySortOption.defaultsKey)
+        clearPadFocus()
+    }
+
+    private func titleAscending(_ lhs: GameEntry, _ rhs: GameEntry) -> Bool {
+        let order = lhs.displayTitle.localizedStandardCompare(rhs.displayTitle)
+        if order == .orderedSame {
+            return lhs.titleID.localizedStandardCompare(rhs.titleID) == .orderedAscending
+        }
+        return order == .orderedAscending
     }
 
     // MARK: - Focus movement
@@ -99,9 +143,10 @@ final class LibraryState {
     /// first game rather than moving, so the user can see where they are
     /// before anything scrolls.
     fileprivate func moveFocus(dx: Int, dy: Int, layout: FocusLayout) {
-        guard !games.isEmpty else { return }
+        let ordered = orderedGames
+        guard !ordered.isEmpty else { return }
         guard let current = focusedIndex else {
-            focusedTitleID = games.first?.titleID
+            focusedTitleID = ordered.first?.titleID
             return
         }
         let step: Int
@@ -126,9 +171,9 @@ final class LibraryState {
         }
         // Grid and list are finite lists, where wrapping from the bottom back
         // to the top is disorienting.
-        let next = min(max(current + step, 0), games.count - 1)
+        let next = min(max(current + step, 0), ordered.count - 1)
         guard next != current else { return }
-        focusedTitleID = games[next].titleID
+        focusedTitleID = ordered[next].titleID
     }
 
     fileprivate func activateFocused() {
@@ -186,7 +231,7 @@ final class LibraryState {
 
     private var focusedIndex: Int? {
         guard let focusedTitleID else { return nil }
-        return games.firstIndex { $0.titleID == focusedTitleID }
+        return orderedGames.firstIndex { $0.titleID == focusedTitleID }
     }
 
     /// Which movement model applies, decided by the view's current presentation.

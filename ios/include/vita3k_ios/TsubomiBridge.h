@@ -78,6 +78,9 @@ NS_SWIFT_NAME(GameEntry)
 @property(nonatomic, readonly, copy) NSString *playedTimeText;
 /// A localized short date, or "Never played".
 @property(nonatomic, readonly, copy) NSString *lastPlayedText;
+/// Raw values used for deterministic library sorting.
+@property(nonatomic, readonly) long long playedTimeSeconds;
+@property(nonatomic, readonly) long long lastPlayedTimestamp;
 /// Formatted with NSByteCountFormatter, e.g. "3.2 GB".
 @property(nonatomic, readonly, copy) NSString *sizeText;
 /// 0 total means the title ships no trophy data.
@@ -197,6 +200,8 @@ NS_SWIFT_NAME(Bridge)
 + (void)presentSaveImportPickerForTitle:(NSString *)titleID
     NS_SWIFT_NAME(presentSaveImportPicker(titleID:));
 + (void)exportSaveForTitle:(NSString *)titleID NS_SWIFT_NAME(exportSave(titleID:));
++ (void)presentAllSaveImportPicker;
++ (void)exportAllSaves;
 
 /// Shows the graphics-help explainer from the library header.
 + (void)presentGraphicsHelp;

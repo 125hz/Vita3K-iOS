@@ -23,7 +23,7 @@ struct LibraryView: View {
     /// The carousel is the landscape presentation of grid mode. List mode
     /// stays a list in both orientations.
     private var showsCarousel: Bool {
-        !library.isListMode && verticalSizeClass == .compact && !library.games.isEmpty
+        !library.isListMode && verticalSizeClass == .compact && !library.orderedGames.isEmpty
     }
 
     var body: some View {
@@ -116,7 +116,7 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var content: some View {
-        if library.games.isEmpty {
+        if library.orderedGames.isEmpty {
             ScrollView {
                 ContentUnavailableView {
                     Label("No Games", systemImage: "gamecontroller")
@@ -150,7 +150,7 @@ struct LibraryView: View {
         GeometryReader { proxy in
             ScrollView(.vertical) {
                 CoverCarousel(
-                    games: library.games,
+                    games: library.orderedGames,
                     dimmed: !library.firmwareReady,
                     padFocusedTitleID: carouselFocus,
                     stepAccumulator: library.carouselStepAccumulator,
@@ -184,7 +184,7 @@ struct LibraryView: View {
         // ScrollViewReader so the pad can bring its focused row into view;
         // List's own scrolling has no other way to be driven programmatically.
         ScrollViewReader { scroller in
-            List(library.games) { game in
+            List(library.orderedGames) { game in
                 listRow(game)
                     // Tighter insets in compact mode so the smaller rows pack
                     // closer together, which is the point of the density.
@@ -229,7 +229,7 @@ struct LibraryView: View {
     private var gridScroll: some View {
         ScrollView {
             LazyVGrid(columns: Self.gridColumns, spacing: 18) {
-                ForEach(library.games) { game in
+                ForEach(library.orderedGames) { game in
                     gridCell(game)
                 }
             }

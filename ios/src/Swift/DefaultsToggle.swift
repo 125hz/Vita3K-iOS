@@ -60,6 +60,28 @@ enum NormalListArtwork: String, CaseIterable, Identifiable {
     }
 }
 
+/// Ordering applied consistently to every library presentation and controller
+/// focus path.
+enum LibrarySortOption: String, CaseIterable, Identifiable {
+    static let defaultsKey = "tsubomi.librarySort"
+
+    case alphabetical
+    case titleID
+    case playtime
+    case recentlyPlayed
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .alphabetical: "Alphabetical"
+        case .titleID: "Title ID"
+        case .playtime: "Playtime"
+        case .recentlyPlayed: "Recently Played"
+        }
+    }
+}
+
 /// A `Toggle` backed directly by UserDefaults.
 ///
 /// These settings are read by the Objective-C++ side on demand rather than

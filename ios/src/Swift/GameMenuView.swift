@@ -32,14 +32,6 @@ struct GameMenuView: View {
                         subtitle: "Reposition controls, visibility, scale and opacity",
                         symbol: "gamecontroller.fill",
                         action: onEditLayout)
-                    row("Trophies",
-                        subtitle: "Progress and unlock dates",
-                        symbol: "trophy.fill",
-                        action: onTrophies)
-                    row("Performance Overlay",
-                        subtitle: "FPS, frametime, memory and battery",
-                        symbol: "gauge.with.dots.needle.67percent",
-                        action: onPerformanceHUD)
                     Toggle("Orientation Lock", isOn: $orientationLockEnabled)
                         .foregroundStyle(.tint)
                         .onChange(of: orientationLockEnabled) { _, enabled in
@@ -57,6 +49,14 @@ struct GameMenuView: View {
                             Bridge.applyOrientationLock(newValue)
                         }
                     }
+                    row("Trophies",
+                        subtitle: "Progress and unlock dates",
+                        symbol: "trophy.fill",
+                        action: onTrophies)
+                    row("Performance Overlay",
+                        subtitle: "FPS, frametime, memory and battery",
+                        symbol: "gauge.with.dots.needle.67percent",
+                        action: onPerformanceHUD)
                     row("Hide Menu Button",
                         subtitle: "Restore it with a three-finger tap",
                         symbol: "eye.slash.fill",
