@@ -23,6 +23,9 @@
 #include <fmt/format.h>
 #include <pugixml.hpp>
 
+#include <algorithm>
+#include <string_view>
+
 namespace np::trophy {
 namespace {
 
@@ -96,6 +99,7 @@ bool load_collection(const CollectionSource &source, const std::string &np_com_i
 
     initialize_locked_progress(loaded.context);
 
+    bool progress_loaded = false;
     if (fs::exists(dat_path)) {
         const SceUID fh = open_file(*source.io,
             loaded.context.trophy_progress_output_file_path.c_str(),
@@ -103,7 +107,7 @@ bool load_collection(const CollectionSource &source, const std::string &np_com_i
         if (fh < 0) {
             LOG_WARN("Failed to open TROPUSR.DAT for {}; showing all trophies as locked", np_com_id);
         } else {
-            const bool progress_loaded = loaded.context.load_trophy_progress_file(fh);
+            progress_loaded = loaded.context.load_trophy_progress_file(fh);
             close_file(*source.io, fh, "trophy_collection");
             if (!progress_loaded) {
                 LOG_WARN("Failed to parse TROPUSR.DAT for {}; showing all trophies as locked", np_com_id);
@@ -127,6 +131,32 @@ bool load_collection(const CollectionSource &source, const std::string &np_com_i
 
     const auto root = doc.child("trophyconf");
     loaded.title = root.child("title-name").text().as_string();
+
+    // Before the game creates TROPUSR.DAT, derive the metadata needed to write
+    // a complete first progress file from the installed SFM.
+    if (!progress_loaded) {
+        for (const auto &node : root) {
+            if (node.name() == std::string_view("group")
+                && node.attribute("id").as_uint() > 0)
+                loaded.context.group_count++;
+            if (node.name() != std::string_view("trophy"))
+                continue;
+            const int id = node.attribute("id").as_int();
+            if (!is_valid_trophy_id(id))
+                continue;
+            const auto grade = static_cast<SceNpTrophyGrade>(
+                parse_grade(node.attribute("ttype").as_string()[0]));
+            loaded.context.trophy_kinds[static_cast<size_t>(id)] = grade;
+            if (grade == SceNpTrophyGrade::SCE_NP_TROPHY_GRADE_PLATINUM)
+                loaded.context.platinum_trophy_id = id;
+            if (node.attribute("hidden").as_string()[0] == 'y')
+                loaded.context.trophy_availability[id >> 5] |= 1u << (id & 31);
+            const auto group = node.attribute("gid").as_uint();
+            if (group < loaded.context.trophy_count_by_group.size())
+                loaded.context.trophy_count_by_group[group]++;
+            loaded.context.trophy_count++;
+        }
+    }
 
     const auto localized_icon = fmt::format("ICON0_{:0>2d}.PNG", source.lang);
     loaded.icon_path = fs::exists(conf_path / localized_icon)
@@ -164,6 +194,40 @@ bool load_collection(const CollectionSource &source, const std::string &np_com_i
 
     loaded.total = static_cast<int>(loaded.trophies.size());
     snapshot = std::move(loaded);
+    return true;
+}
+
+bool set_trophy_earned(const CollectionSource &source, const std::string &np_com_id,
+    const int trophy_id, const bool earned) {
+    CollectionSnapshot snapshot;
+    if (!is_valid_trophy_id(trophy_id)
+        || !load_collection(source, np_com_id, snapshot))
+        return false;
+    const auto record = std::find_if(snapshot.trophies.begin(), snapshot.trophies.end(),
+        [trophy_id](const TrophyRecord &item) { return item.id == trophy_id; });
+    if (record == snapshot.trophies.end())
+        return false;
+    if (record->earned == earned)
+        return true;
+
+    boost::system::error_code directory_error;
+    fs::create_directories(trophy_base_path(source) / "data" / np_com_id,
+        directory_error);
+    if (directory_error) {
+        LOG_ERROR("Failed to create trophy progress directory for {}: {}",
+            np_com_id, directory_error.message());
+        return false;
+    }
+
+    if (earned) {
+        NpTrophyError error = NpTrophyError::TROPHY_ERROR_NONE;
+        // This path represents an explicit user edit, including platinum.
+        return snapshot.context.unlock_trophy(trophy_id, &error, true);
+    }
+
+    snapshot.context.trophy_progress[trophy_id >> 5] &= ~(1u << (trophy_id & 31));
+    snapshot.context.unlock_timestamps[static_cast<size_t>(trophy_id)] = 0;
+    snapshot.context.save_trophy_progress_file();
     return true;
 }
 

@@ -8,8 +8,9 @@ final class TrophyHost: NSObject {
 
     @objc(trophyViewControllerForCollection:)
     static func trophyViewController(for collection: TrophyCollection) -> UIViewController {
+        TrophyState.shared.update(collection)
         let box = ControllerBox()
-        let view = TrophyListView(collection: collection) {
+        let view = TrophyListView {
             box.controller?.dismiss(animated: true) {
                 // Opened from the in-game menu, dismissing returns there. The
                 // UIKit screen did this in viewDidDisappear, which also fired

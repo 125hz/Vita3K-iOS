@@ -66,9 +66,12 @@ NS_SWIFT_NAME(GameEntry)
 @property(nonatomic, readonly, copy) NSString *titleID;
 /// The user's rename override when set, otherwise the title from the package.
 @property(nonatomic, readonly, copy) NSString *displayTitle;
-/// Cover art path — the custom cover when one has been set, else the packaged
-/// icon. Empty when neither exists.
+/// Packaged square icon0.png. Empty when neither packaged art file exists.
 @property(nonatomic, readonly, copy) NSString *iconPath;
+/// Packaged widescreen pic0.png. Empty when it is unavailable.
+@property(nonatomic, readonly, copy) NSString *wideArtPath;
+/// Directory containing template.xml and the packaged Live Area artwork.
+@property(nonatomic, readonly, copy) NSString *liveAreaContentsPath;
 /// "v1.01", or "Unknown version".
 @property(nonatomic, readonly, copy) NSString *versionText;
 /// "3h 12m", "<1m", or "0m".
@@ -103,6 +106,8 @@ NS_SWIFT_NAME(Trophy)
 NS_SWIFT_NAME(TrophyCollection)
 @interface TsubomiTrophyCollection : NSObject
 @property(nonatomic, readonly, copy) NSString *title;
+@property(nonatomic, readonly, copy) NSString *trophySetID;
+@property(nonatomic, readonly) BOOL canEdit;
 /// "12 of 51 unlocked", or an explanation when no trophy data is installed.
 @property(nonatomic, readonly, copy) NSString *progressText;
 @property(nonatomic, readonly, copy) NSArray<TsubomiTrophy *> *trophies;
@@ -178,6 +183,12 @@ NS_SWIFT_NAME(Bridge)
 
 /// Load and show this title's trophies.
 + (void)requestTrophiesForTitle:(NSString *)titleID NS_SWIFT_NAME(requestTrophies(titleID:));
+
+/// Change one trophy's stored progress and refresh the open trophy sheet.
++ (void)setTrophy:(NSInteger)trophyID
+           earned:(BOOL)earned
+     collectionID:(NSString *)collectionID
+    NS_SWIFT_NAME(setTrophy(_:earned:collectionID:));
 
 /// Document pickers. Each returns immediately; results arrive as a status
 /// toast or an alert.

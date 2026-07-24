@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The game library: the app's home screen.
 ///
@@ -15,6 +16,9 @@ struct LibraryView: View {
     @State private var renameTarget: GameEntry?
     /// Delete confirmation target.
     @State private var deleteTarget: GameEntry?
+    /// Live Area sheet target and a launch deferred until that sheet closes.
+    @State private var liveAreaTarget: GameEntry?
+    @State private var pendingLiveAreaLaunch: GameEntry?
 
     /// The carousel is the landscape presentation of grid mode. List mode
     /// stays a list in both orientations.
@@ -53,7 +57,15 @@ struct LibraryView: View {
                         }
                     }
                     .toolbar { toolbarContent }
-                    .safeAreaInset(edge: .top, spacing: 0) { banners }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        LibraryJITBanner(library: library)
+                    }
+                    // Transient notices float above the library. Unlike a
+                    // safe-area inset they never move the games when appearing
+                    // or disappearing.
+                    .overlay(alignment: .top) {
+                        LibraryStatusToast(library: library)
+                    }
                     .overlay { busyOverlay }
                     // Keep the state's idea of the presentation in step with
                     // what is actually drawn, so pad D-pad movement matches
@@ -75,6 +87,12 @@ struct LibraryView: View {
         .modifier(PadActionsDialog(target: $library.padActionsTarget, menu: gameMenu(for:)))
         .sheet(item: $renameTarget) { game in
             RenameSheet(game: game) { library.refreshAfterRename() }
+        }
+        .sheet(item: $liveAreaTarget, onDismiss: launchFromLiveAreaIfNeeded) { game in
+            LiveAreaView(game: game, onStart: {
+                pendingLiveAreaLaunch = game
+                liveAreaTarget = nil
+            })
         }
         .modifier(DeleteConfirmationDialog(target: $deleteTarget))
     }
@@ -310,13 +328,6 @@ struct LibraryView: View {
         }
     }
 
-    // Its own View so a toast appearing or auto-dismissing invalidates only
-    // this bar, not the whole library body (which would otherwise re-derive
-    // the grid/list/carousel content on every toast timeout).
-    private var banners: some View {
-        LibraryBanners(library: library)
-    }
-
     @ViewBuilder
     private var busyOverlay: some View {
         if let message = library.busyMessage {
@@ -361,6 +372,18 @@ struct LibraryView: View {
             Bridge.requestTrophies(titleID: game.titleID)
         } label: {
             Label("View trophies", systemImage: "trophy.fill")
+        }
+        Button {
+            liveAreaTarget = game
+        } label: {
+            Label("View Live Area", systemImage: "rectangle.inset.filled")
+        }
+        Button {
+            UIPasteboard.general.string =
+                "\(game.displayTitle) [\(game.titleID)]"
+            library.showCopiedGameInfoToast()
+        } label: {
+            Label("Copy game info", systemImage: "doc.on.doc")
         }
         Button {
             Bridge.presentSettings(forTitle: game.titleID, displayName: game.displayTitle)
@@ -430,6 +453,12 @@ struct LibraryView: View {
         HomeSoundEffects.play(.press)
         Bridge.launch(titleID: game.titleID)
     }
+
+    private func launchFromLiveAreaIfNeeded() {
+        guard let game = pendingLiveAreaLaunch else { return }
+        pendingLiveAreaLaunch = nil
+        launch(game)
+    }
 }
 
 // The two item-driven dialogs are modifiers rather than inline calls on `body`.
@@ -483,38 +512,48 @@ private struct DeleteConfirmationDialog: ViewModifier {
     }
 }
 
-/// The JIT-warning banner and status toast, split out of LibraryView so a
-/// toast timing out re-renders only this bar rather than the whole library.
+/// Persistent warning reserves room because covering the first game forever
+/// would make it unreachable.
 @MainActor
-private struct LibraryBanners: View {
+private struct LibraryJITBanner: View {
     var library: LibraryState
 
     var body: some View {
-        VStack(spacing: 8) {
-            if !library.jitAvailable {
-                // Yellow-tinted glass: adaptive tinting marks a single urgent
-                // element, and a warning nobody can act around is exactly that.
-                Label(
-                    "JIT not active",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.black)
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .glassEffect(.regular.tint(.yellow), in: .rect(cornerRadius: 16, style: .continuous))
-            }
+        if !library.jitAvailable {
+            Label(
+                "JIT not active",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.black)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassEffect(.regular.tint(.yellow), in: .rect(cornerRadius: 16, style: .continuous))
+            .padding(.horizontal, 16)
+        }
+        .animation(.snappy, value: library.jitAvailable)
+    }
+}
+
+/// Short-lived notifications are a true overlay, so the list/grid never
+/// changes its layout when one arrives or times out.
+@MainActor
+private struct LibraryStatusToast: View {
+    var library: LibraryState
+
+    var body: some View {
+        Group {
             if let status = library.statusMessage {
                 Text(status)
                     .font(.subheadline)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .glassEffect(.regular, in: .capsule)
-                    .transition(.opacity)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .allowsHitTesting(false)
             }
         }
-        .padding(.horizontal, 16)
         .animation(.snappy, value: library.statusMessage)
-        .animation(.snappy, value: library.jitAvailable)
     }
 }

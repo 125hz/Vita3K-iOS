@@ -16,6 +16,10 @@ struct GameMenuView: View {
     let onQuit: () -> Void
 
     @State private var confirmingQuit = false
+    @AppStorage("tsubomi.orientationLockEnabled")
+    private var orientationLockEnabled = false
+    @AppStorage("tsubomi.orientationLock")
+    private var orientationLock = "portrait"
 
     var body: some View {
         NavigationStack {
@@ -36,6 +40,9 @@ struct GameMenuView: View {
                         subtitle: "FPS, frametime, memory and battery",
                         symbol: "gauge.with.dots.needle.67percent",
                         action: onPerformanceHUD)
+                    Toggle(isOn: portraitLock) {
+                        Label("Portrait Lock", systemImage: "iphone")
+                    }
                     row("Hide Menu Button",
                         subtitle: "Restore it with a three-finger tap",
                         symbol: "eye.slash.fill",
@@ -100,5 +107,21 @@ struct GameMenuView: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var portraitLock: Binding<Bool> {
+        Binding(
+            get: {
+                orientationLockEnabled && orientationLock == "portrait"
+            },
+            set: { enabled in
+                if enabled {
+                    orientationLock = "portrait"
+                    Bridge.applyOrientationLock("portrait")
+                }
+                orientationLockEnabled = enabled
+                Bridge.setOrientationLockEnabled(enabled)
+            }
+        )
     }
 }

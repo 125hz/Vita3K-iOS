@@ -25,16 +25,25 @@ struct GameCover: View {
     let game: GameEntry
     var cornerRadius: CGFloat = 18
     /// Whether this placement may adopt the cover's natural (wide) aspect when
-    /// the Wide cover art setting is on. Grid and carousel cells pass true;
-    /// list rows stay square because their layout depends on it.
+    /// the Wide cover art setting is on. Grid, carousel, and regular list pass
+    /// true; Compact list explicitly forces the square icon.
     var allowsWide: Bool = false
+    /// Compact list always uses icon0.png, regardless of the global wide-art
+    /// preference.
+    var forcesIcon: Bool = false
     @State private var image: UIImage?
     @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
 
     /// The Vita banner art (pic0.png) is wider than tall, so square-cropping
-    /// loses its sides. In wide mode a grid cover takes the image's own aspect
-    /// and shows all of it; otherwise it is cropped to a square.
+    /// loses its sides. In wide mode the cover uses a fixed 16:9 frame;
+    /// otherwise it uses icon0.png in a square.
     private var wide: Bool { allowsWide && wideCoverArt }
+    private var artPath: String {
+        if forcesIcon || !wide {
+            return game.iconPath
+        }
+        return game.wideArtPath.isEmpty ? game.iconPath : game.wideArtPath
+    }
 
     var body: some View {
         // Color.clear defines the frame; the art is an overlay on top of it.
@@ -53,8 +62,8 @@ struct GameCover: View {
             .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
             // Keyed on path and art generation: the path alone does not change
             // when an install/license makes art appear.
-            .task(id: "\(game.iconPath)#\(LibraryState.shared.artGeneration)#\(wideCoverArt)") {
-                image = await CoverImageLoader.image(atPath: game.iconPath)
+            .task(id: "\(artPath)#\(LibraryState.shared.artGeneration)#\(wideCoverArt)") {
+                image = await CoverImageLoader.image(atPath: artPath)
             }
     }
 
@@ -113,7 +122,7 @@ private struct GameMetadata: View {
                 // Text concatenation rather than an HStack of Image + Text so
                 // the glyph shares the digits' baseline at every Dynamic Type
                 // size, while keeping its own colour.
-                (Text(Image(systemName: "trophy.fill")).foregroundColor(.yellow)
+                (Text(Image(systemName: "trophy.fill")).foregroundColor(.secondary)
                     + Text(" \(game.trophiesUnlocked)/\(game.trophiesTotal)"))
                     .lineLimit(1)
             }
@@ -181,6 +190,7 @@ struct GameRow: View {
     @AppStorage(DefaultsKey.showTitleIDs.rawValue) private var showTitleIDs = true
     @AppStorage(DefaultsKey.showGameSize.rawValue) private var showSize = true
     @AppStorage(DefaultsKey.compactList.rawValue) private var compact = false
+    @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
 
     var body: some View {
         if compact {
@@ -192,8 +202,8 @@ struct GameRow: View {
 
     private var regularRow: some View {
         HStack(alignment: .top, spacing: 12) {
-            GameCover(game: game, cornerRadius: 10)
-                .frame(width: 72, height: 72)
+            GameCover(game: game, cornerRadius: 10, allowsWide: true)
+                .frame(width: wideCoverArt ? 96 : 72)
                 // The row's text can be three lines tall; without this the
                 // cover is asked to match that height and stops being square.
                 .fixedSize()
@@ -217,7 +227,7 @@ struct GameRow: View {
 
     private var compactRow: some View {
         HStack(spacing: 10) {
-            GameCover(game: game, cornerRadius: 7)
+            GameCover(game: game, cornerRadius: 7, forcesIcon: true)
                 .frame(width: 40, height: 40)
                 .fixedSize()
             VStack(alignment: .leading, spacing: 1) {
@@ -247,7 +257,7 @@ struct GameRow: View {
         if game.trophiesTotal > 0 {
             line = line
                 + Text("  ")
-                + Text(Image(systemName: "trophy.fill")).foregroundColor(.yellow)
+                + Text(Image(systemName: "trophy.fill")).foregroundColor(.secondary)
                 + Text(" \(game.trophiesUnlocked)/\(game.trophiesTotal)")
         }
         return line

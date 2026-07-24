@@ -43,6 +43,13 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.40.0", notes: [
+            "Transient home notifications now float above the library without moving the games.",
+            "Wide artwork is used in the regular list as well as cards and carousel; Compact list always uses each game's square icon0.png.",
+            "The in-game menu now includes Portrait Lock, and trophy symbols use an adaptive grey instead of gold.",
+            "Hold a trophy in the home trophy browser to lock or unlock it; the open list and library count update after the progress file is saved.",
+            "Game menus can copy “Game name [Title ID]” and open a package-backed Live Area with its authored background, gate, frames, text, and Start action.",
+        ]),
         Release(version: "0.39.0", notes: [
             "Orientation lock can now be enabled in General settings, with Portrait, Landscape, and flipped Landscape directions.",
             "The JIT warning is shorter and stays legible in both appearances.",

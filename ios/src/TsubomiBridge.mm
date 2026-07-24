@@ -68,6 +68,8 @@ NSString *trophy_grade_name(int grade) {
     _displayTitle = vita3k_ios_internal::display_title_for(_titleID, title);
 
     _iconPath = to_ns(entry.icon_path);
+    _wideArtPath = to_ns(entry.wide_art_path);
+    _liveAreaContentsPath = to_ns(entry.live_area_contents_path);
     _hasSettingsOverrides = vita3k_ios_internal::title_has_settings(_titleID);
 
     NSString *version = to_ns(entry.version);
@@ -152,6 +154,8 @@ NSString *trophy_grade_name(int grade) {
         return nil;
     NSString *title = to_ns(collection.title);
     _title = title.length ? title : @"Trophies";
+    _trophySetID = to_ns(collection.trophy_id);
+    _canEdit = collection.can_edit;
     _progressText = collection.total > 0
         ? [NSString stringWithFormat:@"%d of %d unlocked", collection.unlocked, collection.total]
         : @"No trophy data is installed for this title yet.";
@@ -386,6 +390,17 @@ id bridge_games() {
     action.title_id = game->title;
     action.app_path = game->title_id;
     action.trophy_id = game->trophy_id;
+    vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
++ (void)setTrophy:(NSInteger)trophyID
+           earned:(BOOL)earned
+     collectionID:(NSString *)collectionID {
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::SetTrophyState;
+    action.trophy_id = to_std(collectionID);
+    action.trophy_entry_id = static_cast<int>(trophyID);
+    action.trophy_earned = earned;
     vita3k_ios_internal::queue_frontend_action(std::move(action));
 }
 

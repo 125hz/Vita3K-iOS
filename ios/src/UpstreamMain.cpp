@@ -252,7 +252,7 @@ np::trophy::CollectionSource trophy_source(EmuEnvState &emuenv) {
     };
 }
 
-void show_trophies(EmuEnvState &emuenv, const std::string &requested_id,
+Vita3KIOSTrophyCollection load_trophies(EmuEnvState &emuenv, const std::string &requested_id,
     const std::string &fallback_title, const std::string &title_id) {
     std::string trophy_id = safe_identifier(requested_id) ? requested_id : std::string{};
     if (trophy_id.empty() && safe_identifier(title_id, 16))
@@ -289,6 +289,15 @@ void show_trophies(EmuEnvState &emuenv, const std::string &requested_id,
             return left.earned != right.earned ? left.earned > right.earned : left.id < right.id;
         });
     }
+    return collection;
+}
+
+void show_trophies(EmuEnvState &emuenv, const std::string &requested_id,
+    const std::string &fallback_title, const std::string &title_id,
+    const bool can_edit = true) {
+    auto collection =
+        load_trophies(emuenv, requested_id, fallback_title, title_id);
+    collection.can_edit = can_edit;
     vita3k_ios_present_trophies(collection);
 }
 
@@ -1127,6 +1136,15 @@ std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
         const fs::path art_directory = emuenv.vita_fs_path / "ux0/app" / entry.title_id / "sce_sys";
         const fs::path icon = art_directory / "icon0.png";
         const fs::path banner = art_directory / "pic0.png";
+        fs::path live_area_contents =
+            art_directory / "retail/livearea/contents";
+        if (!fs::exists(live_area_contents / "template.xml"))
+            live_area_contents = art_directory / "livearea/contents";
+        if (!fs::exists(live_area_contents / "template.xml"))
+            live_area_contents = emuenv.vita_fs_path
+                / "vs0/data/internal/livearea/default/sce_sys/livearea/contents";
+        if (!fs::exists(live_area_contents / "template.xml"))
+            live_area_contents.clear();
         // util/fs.h maps fs:: to boost::filesystem, whose non-throwing
         // overloads take boost::system::error_code, not std::error_code.
         boost::system::error_code icon_error;
@@ -1135,7 +1153,6 @@ std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
         const bool banner_exists = fs::exists(banner, banner_error);
         LOG_INFO("iOS library art: title_id={} icon='{}' exists={} pic0='{}' exists={}",
             entry.title_id, icon, icon_exists, banner, banner_exists);
-        const fs::path selected_art = banner_exists ? banner : icon;
         const auto time_it = user_times.find(entry.path.empty() ? entry.title_id : entry.path);
         const app::AppTime *app_time = time_it == user_times.end() ? nullptr : &time_it->second;
         const std::uint64_t installed_size = directory_size(emuenv.vita_fs_path / "ux0/app" / entry.title_id)
@@ -1156,7 +1173,15 @@ std::vector<Vita3KIOSGameEntry> native_games(EmuEnvState &emuenv) {
             .title_id = entry.title_id,
             .category = entry.category,
             .app_path = entry.path.empty() ? entry.title_id : entry.path,
-            .icon_path = fs_utils::path_to_utf8(selected_art),
+            .icon_path = icon_exists
+                ? fs_utils::path_to_utf8(icon)
+                : (banner_exists ? fs_utils::path_to_utf8(banner) : std::string{}),
+            .wide_art_path = banner_exists
+                ? fs_utils::path_to_utf8(banner)
+                : (icon_exists ? fs_utils::path_to_utf8(icon) : std::string{}),
+            .live_area_contents_path = live_area_contents.empty()
+                ? std::string{}
+                : fs_utils::path_to_utf8(live_area_contents),
             .version = normalize_app_version(installed_version_for_title(emuenv, entry.title_id, entry.app_ver)),
             .trophy_id = trophy_id,
             .size_bytes = installed_size,
@@ -1411,6 +1436,23 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
             case Vita3KIOSFrontendActionKind::ShowTrophies:
                 show_trophies(emuenv, action->trophy_id, action->title_id, action->app_path);
                 break;
+            case Vita3KIOSFrontendActionKind::SetTrophyState: {
+                const bool changed = safe_identifier(action->trophy_id)
+                    && np::trophy::set_trophy_earned(trophy_source(emuenv),
+                        action->trophy_id, action->trophy_entry_id,
+                        action->trophy_earned);
+                if (!changed) {
+                    vita3k_ios_report_import_result(
+                        "Trophy progress could not be changed", false);
+                    break;
+                }
+                const auto updated = load_trophies(
+                    emuenv, action->trophy_id, "Trophies", {});
+                vita3k_ios_update_trophies(updated);
+                games = native_games(emuenv);
+                vita3k_ios_update_library(games, native_settings(emuenv));
+                break;
+            }
             case Vita3KIOSFrontendActionKind::DeleteGame: {
                 if (!safe_identifier(action->title_id, 16)) {
                     vita3k_ios_report_import_result("Delete rejected an invalid title ID", false);
@@ -1943,7 +1985,8 @@ int main(int argc, char *argv[]) {
 
         if (auto action = vita3k_ios_take_frontend_action()) {
             if (action->kind == Vita3KIOSFrontendActionKind::ShowTrophies)
-                show_trophies(*emuenv, g_current_trophy_id, g_current_title, g_current_title_id);
+                show_trophies(*emuenv, g_current_trophy_id, g_current_title,
+                    g_current_title_id, false);
         }
 
         if (auto request = emuenv->take_app_launch_request()) {

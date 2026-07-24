@@ -1349,6 +1349,14 @@ void vita3k_ios_present_trophies(const Vita3KIOSTrophyCollection &collection) {
     });
 }
 
+void vita3k_ios_update_trophies(const Vita3KIOSTrophyCollection &collection) {
+    TsubomiTrophyCollection *bridged =
+        vita3k_ios_internal::bridge_trophies(collection);
+    perform_on_main(^{
+        [TsubomiTrophyStateBridge updateWithCollection:bridged];
+    });
+}
+
 void vita3k_ios_share_file(const std::string &path) {
     NSString *filePath = [NSString stringWithUTF8String:path.c_str()];
     perform_on_main(^{

@@ -159,6 +159,10 @@ final class LibraryState {
         showStatus("Saved settings", duration: .seconds(2))
     }
 
+    func showCopiedGameInfoToast() {
+        showStatus("Copied game info", duration: .seconds(2))
+    }
+
     fileprivate func bumpArtGeneration() {
         artGeneration &+= 1
     }

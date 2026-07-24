@@ -15,7 +15,12 @@ struct Vita3KIOSGameEntry {
     std::string title_id;
     std::string category;
     std::string app_path;
+    // icon0.png: always used by Compact list and whenever wide art is off.
     std::string icon_path;
+    // pic0.png: used by wide grid, carousel, and regular-list covers.
+    std::string wide_art_path;
+    // Directory containing template.xml and the packaged Live Area assets.
+    std::string live_area_contents_path;
     std::string version;
     std::string trophy_id;
     std::uint64_t size_bytes = 0;
@@ -42,6 +47,7 @@ struct Vita3KIOSTrophyCollection {
     std::string trophy_id;
     int unlocked = 0;
     int total = 0;
+    bool can_edit = true;
     std::vector<Vita3KIOSTrophyEntry> trophies;
 };
 
@@ -103,6 +109,7 @@ enum class Vita3KIOSFrontendActionKind {
     ImportSave,
     ExportSave,
     ShowTrophies,
+    SetTrophyState,
     // title_id carries the title to remove from ux0 (app/patch/addcont).
     DeleteGame,
     Quit,
@@ -113,6 +120,8 @@ struct Vita3KIOSFrontendAction {
     std::string app_path;
     std::string title_id;
     std::string trophy_id;
+    int trophy_entry_id = 0;
+    bool trophy_earned = false;
     Vita3KIOSSettings settings;
     // Launch only: `settings` carries this title's per-game overrides and must
     // be applied for the session (without persisting to the global config).
@@ -136,6 +145,7 @@ int vita3k_ios_load_fps_limit();
 // than a permanent override: once it has run, the user's own choice sticks.
 bool vita3k_ios_consume_double_buffer_default_migration();
 void vita3k_ios_present_trophies(const Vita3KIOSTrophyCollection &collection);
+void vita3k_ios_update_trophies(const Vita3KIOSTrophyCollection &collection);
 void vita3k_ios_share_file(const std::string &path);
 void vita3k_ios_request_current_trophies();
 

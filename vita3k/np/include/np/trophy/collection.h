@@ -63,5 +63,7 @@ struct CollectionSource {
 
 std::vector<std::string> list_collection_ids(const CollectionSource &source);
 bool load_collection(const CollectionSource &source, const std::string &np_com_id, CollectionSnapshot &snapshot);
+bool set_trophy_earned(const CollectionSource &source, const std::string &np_com_id,
+    int trophy_id, bool earned);
 
 } // namespace np::trophy

@@ -1,4 +1,27 @@
 import SwiftUI
+import Observation
+
+@Observable
+@MainActor
+final class TrophyState {
+    static let shared = TrophyState()
+    var collection: TrophyCollection?
+
+    private init() {}
+
+    func update(_ collection: TrophyCollection) {
+        self.collection = collection
+    }
+}
+
+@objc(TsubomiTrophyStateBridge)
+@MainActor
+final class TrophyStateBridge: NSObject {
+    @objc(updateWithCollection:)
+    static func update(collection: TrophyCollection) {
+        TrophyState.shared.update(collection)
+    }
+}
 
 /// Trophy list for one title.
 ///
@@ -9,7 +32,7 @@ import SwiftUI
 /// UIKit table stutter on first scroll.
 @MainActor
 struct TrophyListView: View {
-    let collection: TrophyCollection
+    @State private var state = TrophyState.shared
     let onFinish: () -> Void
 
     /// Non-nil while a trophy's art is shown full screen.
@@ -17,29 +40,49 @@ struct TrophyListView: View {
 
     var body: some View {
         NavigationStack {
-            List(collection.trophies) { trophy in
-                TrophyRow(trophy: trophy)
-                    .contentShape(.rect)
-                    .onTapGesture {
-                        // Only art worth showing opens the viewer.
-                        if !trophy.iconPath.isEmpty {
-                            zoomedTrophy = trophy
-                        }
+            Group {
+                if let collection = state.collection {
+                    List(collection.trophies) { trophy in
+                        TrophyRow(trophy: trophy)
+                            .contentShape(.rect)
+                            .onTapGesture {
+                                // Only art worth showing opens the viewer.
+                                if !trophy.iconPath.isEmpty {
+                                    zoomedTrophy = trophy
+                                }
+                            }
+                            .contextMenu {
+                                if collection.canEdit {
+                                    Button(role: trophy.earned ? .destructive : nil) {
+                                        Bridge.setTrophy(
+                                            trophy.trophyID,
+                                            earned: !trophy.earned,
+                                            collectionID: collection.trophySetID
+                                        )
+                                    } label: {
+                                        Label(
+                                            trophy.earned ? "Lock trophy" : "Unlock trophy",
+                                            systemImage: trophy.earned ? "lock.fill" : "lock.open.fill"
+                                        )
+                                    }
+                                }
+                            }
                     }
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle(collection.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .safeAreaInset(edge: .top) {
-                // The UIKit screen used navigationItem.prompt for this. There
-                // is no SwiftUI equivalent, and a subtitle bar reads better
-                // than folding the count into the title.
-                Text(collection.progressText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(.bar)
+                    .listStyle(.insetGrouped)
+                    .navigationTitle(collection.title)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .safeAreaInset(edge: .top) {
+                        Text(collection.progressText)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(.bar)
+                    }
+                } else {
+                    ProgressView()
+                        .navigationTitle("Trophies")
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -91,7 +134,7 @@ private struct TrophyIcon: View {
                 // no art, so there is never an empty hole in the row.
                 Image(systemName: trophy.earned ? "trophy.fill" : "lock.fill")
                     .font(.title2)
-                    .foregroundStyle(trophy.earned ? AnyShapeStyle(.yellow) : AnyShapeStyle(.tertiary))
+                    .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
