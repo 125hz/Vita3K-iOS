@@ -43,6 +43,11 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.38.2", notes: [
+            "The home controls are compact again in one system-managed Liquid Glass toolbar, with list/card view on the left, Add centered, and Settings on the right.",
+            "List/card switching and reopening Settings after saving now use the native toolbar interaction path.",
+            "The recessed library keeps rounded corners during interactive sheet drags, and its depth animation is synchronized with UIKit to remove the opening jump.",
+        ]),
         Release(version: "0.38.1", notes: [
             "The home controls now share one continuous Liquid Glass capsule, with list/card view on the left, Add centered, and Settings on the right.",
             "Opening a home modal now recesses and dims the library more deeply, synchronized with the system sheet transition; in-game screens and confirmation alerts are unchanged.",

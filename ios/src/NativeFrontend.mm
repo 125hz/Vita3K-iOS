@@ -112,12 +112,15 @@ void animate_modal_depth(
         return;
     }
     if (coordinator) {
-        [coordinator animateAlongsideTransition:
-                         ^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
-                             apply_modal_depth(view);
-                         }
-                                           completion:nil];
-        return;
+        const BOOL registered = [coordinator
+            animateAlongsideTransitionInView:view
+                                   animation:
+                                       ^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+                                           apply_modal_depth(view);
+                                       }
+                                  completion:nil];
+        if (registered)
+            return;
     }
     [UIView animateWithDuration:0.5
                      delay:0
@@ -137,8 +140,6 @@ void restore_modal_depth(UIView *view, BOOL animated,
         return;
     }
     if ([objc_getAssociatedObject(view, kTsubomiDepthRestoringKey) boolValue]) {
-        if (didFinish)
-            didFinish();
         return;
     }
     NSValue *transform = objc_getAssociatedObject(view, kTsubomiDepthTransformKey);
@@ -157,11 +158,14 @@ void restore_modal_depth(UIView *view, BOOL animated,
     void (^restore)(void) = ^{
         view.transform = transform.CGAffineTransformValue;
         view.layer.cornerRadius = radius.doubleValue;
-        view.layer.masksToBounds = masks.boolValue;
-        view.layer.cornerCurve = curve;
         shade.alpha = 0;
     };
     void (^cleanup)(void) = ^{
+        // Keep clipping enabled until an interactive dismissal actually
+        // finishes. masksToBounds is a Boolean and would otherwise snap off
+        // on the first drag frame, making the still-rounded layer look square.
+        view.layer.masksToBounds = masks.boolValue;
+        view.layer.cornerCurve = curve;
         [shade removeFromSuperview];
         objc_setAssociatedObject(view, kTsubomiDepthTransformKey, nil, OBJC_ASSOCIATION_ASSIGN);
         objc_setAssociatedObject(view, kTsubomiDepthRadiusKey, nil, OBJC_ASSOCIATION_ASSIGN);
@@ -174,21 +178,32 @@ void restore_modal_depth(UIView *view, BOOL animated,
     };
     if (animated && !UIAccessibilityIsReduceMotionEnabled()) {
         if (coordinator) {
-            [coordinator animateAlongsideTransition:
-                             ^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
-                                 restore();
-                             }
-                                               completion:
-                                                   ^(id<UIViewControllerTransitionCoordinatorContext> context) {
-                                                       if (context.isCancelled) {
-                                                           apply_modal_depth(view);
-                                                           objc_setAssociatedObject(view,
-                                                               kTsubomiDepthRestoringKey, nil,
-                                                               OBJC_ASSOCIATION_ASSIGN);
-                                                       } else {
-                                                           cleanup();
-                                                       }
-                                                   }];
+            const BOOL registered = [coordinator
+                animateAlongsideTransitionInView:view
+                                       animation:
+                                           ^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
+                                               restore();
+                                           }
+                                      completion:
+                                          ^(id<UIViewControllerTransitionCoordinatorContext> context) {
+                                              if (context.isCancelled) {
+                                                  apply_modal_depth(view);
+                                                  objc_setAssociatedObject(view,
+                                                      kTsubomiDepthRestoringKey, nil,
+                                                      OBJC_ASSOCIATION_ASSIGN);
+                                              } else {
+                                                  cleanup();
+                                              }
+                                          }];
+            if (!registered) {
+                [UIView animateWithDuration:0.5
+                                 delay:0
+                               options:UIViewAnimationOptionBeginFromCurrentState
+                                   | UIViewAnimationOptionAllowUserInteraction
+                                   | UIViewAnimationOptionCurveEaseInOut
+                            animations:restore
+                            completion:^(__unused BOOL finished) { cleanup(); }];
+            }
         } else {
             [UIView animateWithDuration:0.5
                              delay:0

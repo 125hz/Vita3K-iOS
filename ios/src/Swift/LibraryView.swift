@@ -52,8 +52,8 @@ struct LibraryView: View {
                                 .font(.title2.weight(.bold))
                         }
                     }
+                    .toolbar { toolbarContent }
                     .safeAreaInset(edge: .top, spacing: 0) { banners }
-                    .safeAreaInset(edge: .bottom, spacing: 8) { homeBar }
                     .overlay { busyOverlay }
                     // Keep the state's idea of the presentation in step with
                     // what is actually drawn, so pad D-pad movement matches
@@ -256,20 +256,21 @@ struct LibraryView: View {
 
     // MARK: - Chrome
 
-    private var homeBar: some View {
-        // One custom plane instead of three ToolbarItems: iOS 26 gives each
-        // toolbar item its own glass island, while the requested design is one
-        // continuous capsule. Equal-width slots keep Add exactly centered.
-        HStack(spacing: 0) {
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        // Keep all three controls in one logical system group. iOS supplies a
+        // compact shared Liquid Glass background and the native toolbar owns
+        // hit testing, safe-area placement, and modal reactivation.
+        ToolbarItemGroup(placement: .bottomBar) {
             Button {
                 HomeSoundEffects.play(.press)
                 library.isListMode.toggle()
             } label: {
-                Image(systemName: library.isListMode ? "square.grid.2x2" : "list.bullet")
-                    .frame(maxWidth: .infinity, minHeight: 48)
+                Label(
+                    library.isListMode ? "Grid view" : "List view",
+                    systemImage: library.isListMode ? "square.grid.2x2" : "list.bullet"
+                )
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(library.isListMode ? "Grid view" : "List view")
 
             Menu {
                 Button {
@@ -293,11 +294,8 @@ struct LibraryView: View {
                     Label("Import firmware (.PUP)", systemImage: "cpu")
                 }
             } label: {
-                Image(systemName: "plus")
-                    .frame(maxWidth: .infinity, minHeight: 48)
+                Label("Add", systemImage: "plus")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Add")
             .simultaneousGesture(
                 TapGesture().onEnded {
                     HomeSoundEffects.play(.press)
@@ -307,17 +305,9 @@ struct LibraryView: View {
             Button {
                 Bridge.presentGlobalSettings()
             } label: {
-                Image(systemName: "gearshape.fill")
-                    .frame(maxWidth: .infinity, minHeight: 48)
+                Label("Settings", systemImage: "gearshape.fill")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
         }
-        .font(.title3.weight(.semibold))
-        .frame(maxWidth: 360)
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 4)
     }
 
     // Its own View so a toast appearing or auto-dismissing invalidates only
