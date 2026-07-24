@@ -1617,6 +1617,10 @@ int main(int argc, char *argv[]) {
     // wait on audio playback position freeze).
     vita3k_ios_configure_audio_session();
 
+    // SDL must advertise every orientation before initialization. Tsubomi's
+    // persisted single-orientation policy narrows the UIKit root controller
+    // at runtime and requests the corresponding window-scene geometry.
+    vita3k_ios_install_orientation_policy();
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "Portrait LandscapeLeft LandscapeRight");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         LOG_ERROR("SDL_Init failed: {}", SDL_GetError());
@@ -1649,6 +1653,7 @@ int main(int argc, char *argv[]) {
         LOG_ERROR("SDL_CreateWindowWithProperties failed: {}", SDL_GetError());
         return -1;
     }
+    vita3k_ios_apply_orientation_lock();
 
     const bool initial_jit_available = ios_jit_available();
     vita3k_ios_set_jit_available(initial_jit_available);

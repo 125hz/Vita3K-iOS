@@ -15,6 +15,10 @@ import SwiftUI
 @MainActor
 struct SettingsView: View {
     @State private var model: SettingsModel
+    @AppStorage("tsubomi.orientationLockEnabled")
+    private var orientationLockEnabled = false
+    @AppStorage("tsubomi.orientationLock")
+    private var orientationLock = OrientationLockOption.portrait.rawValue
     /// Invoked when the user is done; the host controller dismisses.
     private let onFinish: () -> Void
 
@@ -73,6 +77,20 @@ struct SettingsView: View {
     private var generalSection: some View {
         Section("General") {
             DefaultsToggle("Interface sound effects", key: .soundEffects)
+            Toggle("Orientation lock", isOn: $orientationLockEnabled)
+                .onChange(of: orientationLockEnabled) { _, isEnabled in
+                    Bridge.setOrientationLockEnabled(isEnabled)
+                }
+            if orientationLockEnabled {
+                Picker("Locked orientation", selection: $orientationLock) {
+                    ForEach(OrientationLockOption.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                .onChange(of: orientationLock) { _, newValue in
+                    Bridge.applyOrientationLock(newValue)
+                }
+            }
         }
     }
 
@@ -203,8 +221,11 @@ struct SettingsView: View {
             NavigationLink("What's New") {
                 ChangelogView()
             }
-            Button("Report a bug") {
+            Button {
                 Bridge.openBugReportForm()
+            } label: {
+                Text("Report a bug")
+                    .foregroundStyle(.red)
             }
             Button("Forked from Vita3K") {
                 Bridge.open(urlString: "https://github.com/Vita3K/Vita3K")
@@ -236,6 +257,25 @@ struct SettingsView: View {
             }
         } footer: {
             Text("These settings apply only to this game and take effect the next time it launches.")
+        }
+    }
+}
+
+/// Raw values are shared with NativeFrontend.mm. The lock is off by default;
+/// once enabled, Portrait is its initial choice. Both landscape directions
+/// remain explicit so controls and cables can sit on the user's preferred side.
+private enum OrientationLockOption: String, CaseIterable, Identifiable {
+    case portrait
+    case landscape
+    case landscapeFlipped
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .portrait: "Portrait"
+        case .landscape: "Landscape"
+        case .landscapeFlipped: "Landscape (Flipped)"
         }
     }
 }

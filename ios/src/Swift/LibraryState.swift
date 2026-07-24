@@ -152,6 +152,13 @@ final class LibraryState {
         showStatus("Library refreshed", duration: .seconds(2))
     }
 
+    /// Shown only after the settings sheet finishes dismissing, so the compact
+    /// acknowledgement is not hidden behind the sheet or mostly spent during
+    /// its closing animation.
+    func showSavedSettingsToast() {
+        showStatus("Saved settings", duration: .seconds(2))
+    }
+
     fileprivate func bumpArtGeneration() {
         artGeneration &+= 1
     }

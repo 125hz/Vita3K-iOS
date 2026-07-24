@@ -495,10 +495,11 @@ private struct LibraryBanners: View {
                 // Yellow-tinted glass: adaptive tinting marks a single urgent
                 // element, and a warning nobody can act around is exactly that.
                 Label(
-                    "JIT is not ready — open StikDebug, enable JIT, and keep it attached until Tsubomi finishes Preparing JIT.",
+                    "JIT not active",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.black)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glassEffect(.regular.tint(.yellow), in: .rect(cornerRadius: 16, style: .continuous))

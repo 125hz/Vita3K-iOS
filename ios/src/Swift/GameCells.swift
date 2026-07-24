@@ -68,11 +68,14 @@ struct GameCover: View {
     @ViewBuilder
     private var artwork: some View {
         if let image {
-            // Wide: fit the whole cover. Square: fill and crop, as before.
+            // Overscan wide banners by one percent. Some packaged pic0 images
+            // carry square edge pixels that peek through the continuous mask;
+            // this tiny crop hides them without visibly changing composition.
             Image(uiImage: image)
                 .resizable()
-                .aspectRatio(contentMode: wide ? .fit : .fill)
+                .aspectRatio(contentMode: .fill)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scaleEffect(wide ? 1.01 : 1)
                 .background(.fill.secondary)
         } else {
             Image(systemName: "gamecontroller.fill")
@@ -233,9 +236,11 @@ struct GameRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// One line: play time, optional size, and the trophy count folded in.
+    /// One line: play time and last-played date first, followed by optional
+    /// size and trophy count. The requested history remains visible before
+    /// lower-priority metadata is truncated on narrow screens.
     private var compactSubtitle: Text {
-        var line = Text(game.playedTimeText)
+        var line = Text("\(game.playedTimeText)  ·  \(game.lastPlayedText)")
         if showSize {
             line = line + Text("  ·  \(game.sizeText)")
         }

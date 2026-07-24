@@ -112,8 +112,13 @@ void animate_modal_depth(
         return;
     }
     if (coordinator) {
+        // Coordinate in the stable container, not in the view whose transform
+        // is changing. Using the recessed view as the transition coordinate
+        // space briefly rebased its UIKit geometry and produced a one-frame
+        // upward hop at the start of the sheet presentation.
+        UIView *container = view.superview ?: view.window ?: view;
         const BOOL registered = [coordinator
-            animateAlongsideTransitionInView:view
+            animateAlongsideTransitionInView:container
                                    animation:
                                        ^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
                                            apply_modal_depth(view);
@@ -178,8 +183,9 @@ void restore_modal_depth(UIView *view, BOOL animated,
     };
     if (animated && !UIAccessibilityIsReduceMotionEnabled()) {
         if (coordinator) {
+            UIView *container = view.superview ?: view.window ?: view;
             const BOOL registered = [coordinator
-                animateAlongsideTransitionInView:view
+                animateAlongsideTransitionInView:container
                                        animation:
                                            ^(__unused id<UIViewControllerTransitionCoordinatorContext> context) {
                                                restore();
@@ -374,6 +380,48 @@ UIWindow *active_window() {
     // Session teardown can briefly leave no key window; the library must still
     // find a home instead of silently not appearing (black screen after quit).
     return fallback;
+}
+
+NSString *const kTsubomiOrientationLockKey = @"tsubomi.orientationLock";
+NSString *const kTsubomiOrientationLockEnabledKey = @"tsubomi.orientationLockEnabled";
+BOOL g_orientation_policy_installed = NO;
+IMP g_sdl_supported_orientations = nullptr;
+
+BOOL orientation_lock_enabled() {
+    return [NSUserDefaults.standardUserDefaults
+        boolForKey:kTsubomiOrientationLockEnabledKey];
+}
+
+UIInterfaceOrientationMask orientation_lock_mask() {
+    NSString *value =
+        [NSUserDefaults.standardUserDefaults stringForKey:kTsubomiOrientationLockKey]
+        ?: @"portrait";
+    if ([value isEqualToString:@"landscape"])
+        return UIInterfaceOrientationMaskLandscapeRight;
+    if ([value isEqualToString:@"landscapeFlipped"])
+        return UIInterfaceOrientationMaskLandscapeLeft;
+    return UIInterfaceOrientationMaskPortrait;
+}
+
+UIInterfaceOrientationMask tsubomi_sdl_supported_orientations(
+    id controller, SEL command) {
+    if (orientation_lock_enabled())
+        return orientation_lock_mask();
+    if (g_sdl_supported_orientations) {
+        using SupportedOrientations = UIInterfaceOrientationMask (*)(id, SEL);
+        return reinterpret_cast<SupportedOrientations>(
+            g_sdl_supported_orientations)(controller, command);
+    }
+    return UIInterfaceOrientationMaskAllButUpsideDown;
+}
+
+void invalidate_orientation_policy(UIViewController *controller) {
+    if (!controller)
+        return;
+    [controller setNeedsUpdateOfSupportedInterfaceOrientations];
+    for (UIViewController *child in controller.childViewControllers)
+        invalidate_orientation_policy(child);
+    invalidate_orientation_policy(controller.presentedViewController);
 }
 
 void perform_on_main(dispatch_block_t block) {
@@ -576,6 +624,48 @@ void store_game_settings(NSString *titleId, const Vita3KIOSSettings &settings) {
 }
 
 } // namespace
+
+void vita3k_ios_install_orientation_policy() {
+    if (g_orientation_policy_installed)
+        return;
+
+    // SDL's iOS root controller implements this method itself, so changing
+    // UIViewController's base implementation would never reach it. Replace
+    // only SDL's implementation and leave every SwiftUI/UIKit modal alone.
+    Class controllerClass = NSClassFromString(@"SDL_uikitviewcontroller");
+    Method supported = class_getInstanceMethod(
+        controllerClass, @selector(supportedInterfaceOrientations));
+    if (!controllerClass || !supported) {
+        LOG_ERROR("Could not install iOS orientation policy: SDL root controller is unavailable");
+        return;
+    }
+    g_sdl_supported_orientations = method_setImplementation(
+        supported, reinterpret_cast<IMP>(tsubomi_sdl_supported_orientations));
+    g_orientation_policy_installed = YES;
+}
+
+void vita3k_ios_apply_orientation_lock() {
+    perform_on_main(^{
+        vita3k_ios_install_orientation_policy();
+        UIWindow *window = active_window();
+        UIWindowScene *scene = window.windowScene;
+        if (!window || !scene)
+            return;
+
+        invalidate_orientation_policy(window.rootViewController);
+        const UIInterfaceOrientationMask mask = orientation_lock_enabled()
+            ? orientation_lock_mask()
+            : window.rootViewController.supportedInterfaceOrientations;
+        UIWindowSceneGeometryPreferencesIOS *preferences =
+            [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
+        [scene requestGeometryUpdateWithPreferences:preferences
+                                      errorHandler:^(NSError *error) {
+                                          LOG_WARN("iOS orientation request was declined: {}",
+                                              error.localizedDescription.UTF8String
+                                                  ?: "unknown UIKit error");
+                                      }];
+    });
+}
 
 namespace {
 // Defined further down the file, past this block.

@@ -40,6 +40,7 @@ final class SettingsHost: NSObject {
         let box = ControllerBox()
         let view = SettingsView(scope: scope) {
             box.controller?.dismiss(animated: true) {
+                LibraryState.shared.showSavedSettingsToast()
                 onDismiss()
             }
         }

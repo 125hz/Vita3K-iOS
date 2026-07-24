@@ -223,6 +223,14 @@ NS_SWIFT_NAME(Bridge)
 /// visible again, matching the in-game HUD panel's behaviour.
 + (void)performanceOverlayDidEnableMetric;
 
+/// Persist and immediately apply the app orientation selected in Settings.
++ (void)applyOrientationLock:(NSString *)orientation
+    NS_SWIFT_NAME(applyOrientationLock(_:));
+
+/// Enable or disable the app orientation lock and apply the new policy.
++ (void)setOrientationLockEnabled:(BOOL)enabled
+    NS_SWIFT_NAME(setOrientationLockEnabled(_:));
+
 /// Opens a URL in the browser (About links).
 + (void)openURLString:(NSString *)urlString NS_SWIFT_NAME(open(urlString:));
 

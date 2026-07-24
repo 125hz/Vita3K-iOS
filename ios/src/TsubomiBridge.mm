@@ -444,6 +444,18 @@ id bridge_games() {
     [NSUserDefaults.standardUserDefaults setBool:NO forKey:@"vita3k.perf.hidden"];
 }
 
++ (void)applyOrientationLock:(NSString *)orientation {
+    [NSUserDefaults.standardUserDefaults setObject:orientation
+                                           forKey:@"tsubomi.orientationLock"];
+    vita3k_ios_apply_orientation_lock();
+}
+
++ (void)setOrientationLockEnabled:(BOOL)enabled {
+    [NSUserDefaults.standardUserDefaults setBool:enabled
+                                          forKey:@"tsubomi.orientationLockEnabled"];
+    vita3k_ios_apply_orientation_lock();
+}
+
 + (void)openURLString:(NSString *)urlString {
     NSURL *url = [NSURL URLWithString:urlString];
     if (url)

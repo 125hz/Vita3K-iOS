@@ -43,6 +43,12 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.39.0", notes: [
+            "Orientation lock can now be enabled in General settings, with Portrait, Landscape, and flipped Landscape directions.",
+            "The JIT warning is shorter and stays legible in both appearances.",
+            "Opening Settings no longer nudges the recessed library upward, and wide covers slightly overscan their rounded frame so square source edges cannot show.",
+            "Done now confirms Saved settings, compact list rows include the last-played date and time, and Report a bug is highlighted in red.",
+        ]),
         Release(version: "0.38.2", notes: [
             "The home controls are compact again in one system-managed Liquid Glass toolbar, with list/card view on the left, Add centered, and Settings on the right.",
             "List/card switching and reopening Settings after saving now use the native toolbar interaction path.",

@@ -160,6 +160,12 @@ void vita3k_ios_pump_runloop(double seconds);
 // clocks, music sync) freeze. Safe to call once at startup.
 void vita3k_ios_configure_audio_session();
 
+// Installs and applies the persisted app-orientation policy on SDL's UIKit
+// root controller. Install before SDL creates its window; apply after window
+// creation and whenever Settings changes the selected orientation.
+void vita3k_ios_install_orientation_policy();
+void vita3k_ios_apply_orientation_lock();
+
 // In-game performance HUD. Called ~once per second from the frontend loop
 // with the guest frame rate; battery/RAM are sampled on the UIKit side. The
 // HUD only appears when the user enabled at least one metric in settings.
