@@ -19,6 +19,8 @@ struct SettingsView: View {
     private var orientationLockEnabled = false
     @AppStorage("tsubomi.orientationLock")
     private var orientationLock = OrientationLockOption.portrait.rawValue
+    @AppStorage(NormalListArtwork.defaultsKey)
+    private var normalListArtwork = NormalListArtwork.coverArt.rawValue
     /// Invoked when the user is done; the host controller dismisses.
     private let onFinish: () -> Void
 
@@ -193,10 +195,16 @@ struct SettingsView: View {
             DefaultsToggle("Show game size", key: .showGameSize, onChange: Bridge.reloadLibraryCells)
             DefaultsToggle("Wide cover art", key: .wideCoverArt)
             DefaultsToggle("Compact list", key: .compactList)
+            Picker("Normal list artwork", selection: $normalListArtwork) {
+                ForEach(NormalListArtwork.allCases) { option in
+                    Text(option.title).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
         } header: {
             Text("Library")
         } footer: {
-            Text("Wide cover art shows each game's widescreen artwork in full. Compact list shrinks the covers and fits more games on screen.")
+            Text("Choose cover art or the square game icon for the normal list. Compact list always uses the game icon.")
         }
     }
 
@@ -264,7 +272,7 @@ struct SettingsView: View {
 /// Raw values are shared with NativeFrontend.mm. The lock is off by default;
 /// once enabled, Portrait is its initial choice. Both landscape directions
 /// remain explicit so controls and cables can sit on the user's preferred side.
-private enum OrientationLockOption: String, CaseIterable, Identifiable {
+enum OrientationLockOption: String, CaseIterable, Identifiable {
     case portrait
     case landscape
     case landscapeFlipped

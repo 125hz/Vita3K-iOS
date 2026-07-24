@@ -29,27 +29,27 @@ struct LiveAreaView: View {
                 .ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 22) {
+                    VStack(spacing: 16) {
                         LiveAreaImage(
                             path: model.gatePath.isEmpty ? game.iconPath : model.gatePath,
                             contentMode: .fit
                         )
-                        .frame(maxWidth: 420)
+                        .frame(maxWidth: 300)
                         .aspectRatio(16 / 9, contentMode: .fit)
                         .background(.black.opacity(0.22),
-                                    in: .rect(cornerRadius: 24, style: .continuous))
-                        .clipShape(.rect(cornerRadius: 24, style: .continuous))
-                        .shadow(radius: 18, y: 8)
+                                    in: .rect(cornerRadius: 18, style: .continuous))
+                        .clipShape(.rect(cornerRadius: 18, style: .continuous))
+                        .shadow(radius: 12, y: 6)
 
                         Text(game.displayTitle)
-                            .font(.title.bold())
+                            .font(.title2.bold())
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.center)
 
                         if !model.frames.isEmpty {
                             LazyVGrid(
-                                columns: [GridItem(.adaptive(minimum: 240), spacing: 16)],
-                                spacing: 16
+                                columns: [GridItem(.adaptive(minimum: 170), spacing: 12)],
+                                spacing: 12
                             ) {
                                 ForEach(model.frames) { frame in
                                     LiveAreaFrameView(frame: frame)
@@ -57,8 +57,8 @@ struct LiveAreaView: View {
                             }
                         }
                     }
-                    .frame(maxWidth: 760)
-                    .padding(24)
+                    .frame(maxWidth: 600)
+                    .padding(18)
                     .frame(maxWidth: .infinity)
                 }
 
@@ -80,7 +80,7 @@ struct LiveAreaView: View {
                 Button(action: onStart) {
                     Label("Start", systemImage: "play.fill")
                         .font(.headline)
-                        .frame(maxWidth: 360)
+                        .frame(maxWidth: 280)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -118,9 +118,9 @@ private struct LiveAreaFrameView: View {
                 }
             }
         }
-        .frame(minHeight: 150)
+        .frame(minHeight: 110)
         .background(.black.opacity(0.24))
-        .clipShape(.rect(cornerRadius: 20, style: .continuous))
+        .clipShape(.rect(cornerRadius: 16, style: .continuous))
     }
 }
 

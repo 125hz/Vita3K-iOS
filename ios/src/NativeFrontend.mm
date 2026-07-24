@@ -38,6 +38,11 @@
 // SDL's root controller. The presentation hook needs this reference so home
 // sheets recess the library rather than the hidden Metal view below it.
 static UIViewController *g_library_controller = nil;
+// Edge constraints keep the hosting view's untransformed bounds matched to the
+// window while modal depth temporarily scales it. Frame/autoresizing math uses
+// the transformed frame during rotation and can leave the restored library
+// larger than the portrait window.
+static NSArray<NSLayoutConstraint *> *g_library_constraints = nil;
 
 // iOS 26 no longer scales the presenting screen behind a sheet. Restore that
 // depth cue for modal screens, while alerts and action-sheet confirmations dim
@@ -161,6 +166,10 @@ void restore_modal_depth(UIView *view, BOOL animated,
         view, kTsubomiDepthRestoringKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     void (^restore)(void) = ^{
+        // Resolve any window-size change that occurred while the sheet was open
+        // before removing the scale. With edge constraints this updates bounds
+        // directly instead of deriving a new frame from the 92% transform.
+        [view.superview layoutIfNeeded];
         view.transform = transform.CGAffineTransformValue;
         view.layer.cornerRadius = radius.doubleValue;
         shade.alpha = 0;
@@ -836,6 +845,27 @@ static UIViewController *g_onboarding_controller = nil;
 static UIView *library_view() {
     return g_library_controller.view;
 }
+
+static void attach_library_view(UIView *host) {
+    UIView *library = library_view();
+    if (!library || !host)
+        return;
+    if (library.superview == host && g_library_constraints.count)
+        return;
+
+    [NSLayoutConstraint deactivateConstraints:g_library_constraints ?: @[]];
+    g_library_constraints = nil;
+    [library removeFromSuperview];
+    library.translatesAutoresizingMaskIntoConstraints = NO;
+    [host addSubview:library];
+    g_library_constraints = @[
+        [library.leadingAnchor constraintEqualToAnchor:host.leadingAnchor],
+        [library.trailingAnchor constraintEqualToAnchor:host.trailingAnchor],
+        [library.topAnchor constraintEqualToAnchor:host.topAnchor],
+        [library.bottomAnchor constraintEqualToAnchor:host.bottomAnchor],
+    ];
+    [NSLayoutConstraint activateConstraints:g_library_constraints];
+}
 // Last-known JIT availability, applied whenever the library is (re)shown so the
 // banner is correct even across library rebuilds between game sessions.
 static BOOL g_jit_available = YES;
@@ -1185,18 +1215,16 @@ void vita3k_ios_show_library(const std::vector<Vita3KIOSGameEntry> &games,
         if (!g_library_controller) {
             g_library_controller = [TsubomiLibraryHost libraryViewController];
             [g_library_controller beginAppearanceTransition:YES animated:NO];
-            [host addSubview:library_view()];
+            attach_library_view(host);
             [g_library_controller endAppearanceTransition];
             if (!g_app_launch_intro_shown) {
                 playLaunchIntro = YES;
                 g_app_launch_intro_shown = YES;
             }
         } else if (library_view().superview != host) {
-            [host addSubview:library_view()];
+            attach_library_view(host);
         }
-        library_view().frame = host.bounds;
-        library_view().autoresizingMask =
-            UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [host layoutIfNeeded];
         library_view().hidden = NO;
         const BOOL animateLaunchIntro = playLaunchIntro && !UIAccessibilityIsReduceMotionEnabled();
         if (animateLaunchIntro) {
@@ -1307,6 +1335,8 @@ void vita3k_ios_hide_library() {
         // Matches the manual appearance transition in show_library; there is
         // no containment to unwind.
         [g_library_controller beginAppearanceTransition:NO animated:NO];
+        [NSLayoutConstraint deactivateConstraints:g_library_constraints ?: @[]];
+        g_library_constraints = nil;
         [library_view() removeFromSuperview];
         [g_library_controller endAppearanceTransition];
         g_library_controller = nil;

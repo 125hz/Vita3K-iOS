@@ -43,6 +43,12 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.41.0", notes: [
+            "Live Area artwork, title, frames, and Start control are smaller in both portrait and landscape.",
+            "Rotating while Live Area is open no longer leaves the library wider than the portrait window after dismissal.",
+            "Library settings can choose Cover Art or Game Icon for the normal list; Compact list continues to use game icons.",
+            "The in-game menu now has the full blue Orientation Lock control with Portrait, Landscape, and Landscape (Flipped) choices.",
+        ]),
         Release(version: "0.40.1", notes: [
             "Fixed the iPhoneOS SwiftUI compile failure in the animated JIT status banner.",
         ]),

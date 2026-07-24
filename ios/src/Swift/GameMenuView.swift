@@ -40,8 +40,22 @@ struct GameMenuView: View {
                         subtitle: "FPS, frametime, memory and battery",
                         symbol: "gauge.with.dots.needle.67percent",
                         action: onPerformanceHUD)
-                    Toggle(isOn: portraitLock) {
-                        Label("Portrait Lock", systemImage: "iphone")
+                    Toggle("Orientation Lock", isOn: $orientationLockEnabled)
+                        .foregroundStyle(.tint)
+                        .onChange(of: orientationLockEnabled) { _, enabled in
+                            Bridge.setOrientationLockEnabled(enabled)
+                        }
+                    if orientationLockEnabled {
+                        Picker("Locked Orientation", selection: $orientationLock) {
+                            ForEach(OrientationLockOption.allCases) { option in
+                                Text(option.title).tag(option.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.blue)
+                        .onChange(of: orientationLock) { _, newValue in
+                            Bridge.applyOrientationLock(newValue)
+                        }
                     }
                     row("Hide Menu Button",
                         subtitle: "Restore it with a three-finger tap",
@@ -107,21 +121,5 @@ struct GameMenuView: View {
             }
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private var portraitLock: Binding<Bool> {
-        Binding(
-            get: {
-                orientationLockEnabled && orientationLock == "portrait"
-            },
-            set: { enabled in
-                if enabled {
-                    orientationLock = "portrait"
-                    Bridge.applyOrientationLock("portrait")
-                }
-                orientationLockEnabled = enabled
-                Bridge.setOrientationLockEnabled(enabled)
-            }
-        )
     }
 }

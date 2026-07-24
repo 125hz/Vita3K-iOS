@@ -31,13 +31,18 @@ struct GameCover: View {
     /// Compact list always uses icon0.png, regardless of the global wide-art
     /// preference.
     var forcesIcon: Bool = false
+    /// Normal list can explicitly request pic0.png without inheriting the
+    /// grid/carousel Wide cover art switch.
+    var forcesWide: Bool = false
     @State private var image: UIImage?
     @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
 
     /// The Vita banner art (pic0.png) is wider than tall, so square-cropping
     /// loses its sides. In wide mode the cover uses a fixed 16:9 frame;
     /// otherwise it uses icon0.png in a square.
-    private var wide: Bool { allowsWide && wideCoverArt }
+    private var wide: Bool {
+        !forcesIcon && (forcesWide || (allowsWide && wideCoverArt))
+    }
     private var artPath: String {
         if forcesIcon || !wide {
             return game.iconPath
@@ -190,7 +195,12 @@ struct GameRow: View {
     @AppStorage(DefaultsKey.showTitleIDs.rawValue) private var showTitleIDs = true
     @AppStorage(DefaultsKey.showGameSize.rawValue) private var showSize = true
     @AppStorage(DefaultsKey.compactList.rawValue) private var compact = false
-    @AppStorage(DefaultsKey.wideCoverArt.rawValue) private var wideCoverArt = true
+    @AppStorage(NormalListArtwork.defaultsKey)
+    private var normalListArtwork = NormalListArtwork.coverArt.rawValue
+
+    private var normalListUsesCoverArt: Bool {
+        normalListArtwork != NormalListArtwork.gameIcon.rawValue
+    }
 
     var body: some View {
         if compact {
@@ -202,8 +212,13 @@ struct GameRow: View {
 
     private var regularRow: some View {
         HStack(alignment: .top, spacing: 12) {
-            GameCover(game: game, cornerRadius: 10, allowsWide: true)
-                .frame(width: wideCoverArt ? 96 : 72)
+            GameCover(
+                game: game,
+                cornerRadius: 10,
+                forcesIcon: !normalListUsesCoverArt,
+                forcesWide: normalListUsesCoverArt
+            )
+                .frame(width: normalListUsesCoverArt ? 96 : 72)
                 // The row's text can be three lines tall; without this the
                 // cover is asked to match that height and stops being square.
                 .fixedSize()

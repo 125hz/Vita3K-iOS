@@ -42,6 +42,24 @@ enum DefaultsKey: String {
     }
 }
 
+/// Artwork used by the normal-density list. Compact list deliberately ignores
+/// this preference and always uses icon0.png.
+enum NormalListArtwork: String, CaseIterable, Identifiable {
+    static let defaultsKey = "tsubomi.normalListArtwork"
+
+    case coverArt
+    case gameIcon
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .coverArt: "Cover Art"
+        case .gameIcon: "Game Icon"
+        }
+    }
+}
+
 /// A `Toggle` backed directly by UserDefaults.
 ///
 /// These settings are read by the Objective-C++ side on demand rather than
