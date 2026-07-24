@@ -43,6 +43,9 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.43.0", notes: [
+            "All-game-save archives now carry save data, trophy progress, playtime, and last-played dates, and restore each type when imported.",
+        ]),
         Release(version: "0.42.0", notes: [
             "Live Area now uses Vita3K's original 960×544 authored layouts, scaling the complete background, frames, gate, and Start control onto both portrait and landscape screens without scrolling.",
             "Orientation Lock now sits directly below Layout Options in the in-game menu.",

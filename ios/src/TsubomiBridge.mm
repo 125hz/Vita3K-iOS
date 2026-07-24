@@ -438,6 +438,23 @@ id bridge_games() {
     vita3k_ios_internal::queue_frontend_action(std::move(action));
 }
 
++ (void)presentLibraryArchiveImportPicker {
+    vita3k_ios_internal::present_library_archive_import_picker();
+}
+
++ (void)exportLibraryArchive {
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::ExportLibraryArchive;
+    vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
++ (void)exportGameArchiveForTitle:(NSString *)titleID {
+    Vita3KIOSFrontendAction action;
+    action.kind = Vita3KIOSFrontendActionKind::ExportGameArchive;
+    action.title_id = to_std(titleID);
+    vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
 + (void)presentGraphicsHelp {
     vita3k_ios_internal::show_graphics_help();
 }

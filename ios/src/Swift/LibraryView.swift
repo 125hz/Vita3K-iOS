@@ -10,6 +10,7 @@ import UIKit
 @MainActor
 struct LibraryView: View {
     @State private var library = LibraryState.shared
+    @State private var runtimeLatch = RuntimeLatch.shared
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Rename sheet target; nil when closed.
@@ -362,6 +363,13 @@ struct LibraryView: View {
             Bridge.exportSave(titleID: game.titleID)
         } label: {
             Label("Export save", systemImage: "square.and.arrow.up")
+        }
+        if runtimeLatch.revealed {
+            Button {
+                Bridge.exportGameArchive(titleID: game.titleID)
+            } label: {
+                Label("Export game", systemImage: "shippingbox.and.arrow.backward")
+            }
         }
         Button {
             renameTarget = game

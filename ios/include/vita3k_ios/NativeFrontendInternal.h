@@ -80,6 +80,7 @@ void present_game_picker();
 void present_license_import_picker();
 void present_save_import_picker(NSString *title_id);
 void present_all_save_import_picker();
+void present_library_archive_import_picker();
 
 // The library's firmware gate: presents an explanatory alert and returns false
 // when the three official packages are not all installed.

@@ -202,6 +202,10 @@ NS_SWIFT_NAME(Bridge)
 + (void)exportSaveForTitle:(NSString *)titleID NS_SWIFT_NAME(exportSave(titleID:));
 + (void)presentAllSaveImportPicker;
 + (void)exportAllSaves;
++ (void)presentLibraryArchiveImportPicker;
++ (void)exportLibraryArchive;
++ (void)exportGameArchiveForTitle:(NSString *)titleID
+    NS_SWIFT_NAME(exportGameArchive(titleID:));
 
 /// Shows the graphics-help explainer from the library header.
 + (void)presentGraphicsHelp;

@@ -15,6 +15,7 @@ import SwiftUI
 @MainActor
 struct SettingsView: View {
     @State private var model: SettingsModel
+    @State private var runtimeLatch = RuntimeLatch.shared
     @AppStorage("tsubomi.orientationLockEnabled")
     private var orientationLockEnabled = false
     @AppStorage("tsubomi.orientationLock")
@@ -27,6 +28,7 @@ struct SettingsView: View {
     private let onFinish: () -> Void
 
     @State private var showingResetConfirmation = false
+    @State private var showingRuntimeNotice = false
 
     init(scope: SettingsModel.Scope, onFinish: @escaping () -> Void) {
         _model = State(initialValue: SettingsModel(scope: scope))
@@ -36,6 +38,9 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if !model.isPerGame && runtimeLatch.revealed {
+                    runtimeSection
+                }
                 if !model.isPerGame {
                     generalSection
                     librarySection
@@ -73,6 +78,9 @@ struct SettingsView: View {
                     }
                 }
             }
+            .alert("Developer mode enabled", isPresented: $showingRuntimeNotice) {
+                Button("OK", role: .cancel) {}
+            }
         }
     }
 
@@ -94,6 +102,21 @@ struct SettingsView: View {
                 .onChange(of: orientationLock) { _, newValue in
                     Bridge.applyOrientationLock(newValue)
                 }
+            }
+        }
+    }
+
+    private var runtimeSection: some View {
+        Section("Developer") {
+            Button {
+                Bridge.exportLibraryArchive()
+            } label: {
+                Label("Export games", systemImage: "square.and.arrow.up")
+            }
+            Button {
+                Bridge.presentLibraryArchiveImportPicker()
+            } label: {
+                Label("Import games…", systemImage: "square.and.arrow.down")
             }
         }
     }
@@ -225,7 +248,7 @@ struct SettingsView: View {
         } header: {
             Text("Library")
         } footer: {
-            Text("Choose cover art or the square game icon for the normal list. Compact list always uses the game icon. Import replaces saves for games included in the archive; saves for other games remain unchanged.")
+            Text("Choose cover art or the square game icon for the normal list. Compact list always uses the game icon. All-save archives include save data, trophy progress, playtime, and last-played dates. Import replaces included progress; other games remain unchanged.")
         }
     }
 
@@ -240,6 +263,12 @@ struct SettingsView: View {
                 Text(model.firmwareVersion.isEmpty ? "Not installed" : model.firmwareVersion)
                     .foregroundStyle(.secondary)
             }
+            .contentShape(.rect)
+            .onTapGesture {
+                if runtimeLatch.record(0x6D4E_13B7) {
+                    showingRuntimeNotice = true
+                }
+            }
             if !model.firmwareReady && !model.missingFirmware.isEmpty {
                 // A plain label, not an alert: this is steady-state
                 // information, and the library already blocks launching.
@@ -247,6 +276,12 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             LabeledContent("Version", value: AppInfo.versionDisplay)
+                .contentShape(.rect)
+                .onTapGesture {
+                    if runtimeLatch.record(0xA29C_508D) {
+                        showingRuntimeNotice = true
+                    }
+                }
             NavigationLink("What's New") {
                 ChangelogView()
             }

@@ -1023,6 +1023,51 @@ fs::path all_saves_path(const EmuEnvState &emuenv) {
     return emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id / "savedata";
 }
 
+bool add_directory_to_zip(mz_zip_archive &zip, const fs::path &root,
+    const std::string &prefix, std::size_t &files) {
+    boost::system::error_code exists_error;
+    if (!fs::exists(root, exists_error))
+        return !exists_error;
+    if (exists_error || !fs::is_directory(root, exists_error) || exists_error)
+        return false;
+    if (fs::is_symlink(fs::symlink_status(root, exists_error)) || exists_error)
+        return false;
+
+    boost::system::error_code error;
+    for (fs::recursive_directory_iterator it(root, error), end;
+         it != end && !error; it.increment(error)) {
+        if (fs::is_symlink(fs::symlink_status(it->path(), error)) || error)
+            return false;
+        if (!fs::is_regular_file(it->path(), error) || error)
+            continue;
+        std::string relative = fs_utils::path_to_utf8(fs::relative(it->path(), root));
+        std::replace(relative.begin(), relative.end(), '\\', '/');
+        const std::string archived = prefix + relative;
+        const std::string disk_path = fs_utils::path_to_utf8(it->path());
+        if (!safe_save_archive_path(archived)
+            || !mz_zip_writer_add_file(&zip, archived.c_str(), disk_path.c_str(),
+                nullptr, 0, MZ_DEFAULT_COMPRESSION))
+            return false;
+        ++files;
+    }
+    return !error;
+}
+
+bool add_playtime_to_zip(mz_zip_archive &zip, const std::string &title_id,
+    const app::AppTime &time, std::size_t &files) {
+    if (!safe_identifier(title_id, 16))
+        return false;
+    const std::string meta = "time_used=" + std::to_string(time.time_used)
+        + "\nlast_time_used="
+        + std::to_string(static_cast<int64_t>(time.last_time_used)) + "\n";
+    const std::string name = "meta/playtime/" + title_id + ".txt";
+    if (!mz_zip_writer_add_mem(&zip, name.c_str(), meta.data(), meta.size(),
+            MZ_DEFAULT_COMPRESSION))
+        return false;
+    ++files;
+    return true;
+}
+
 void start_all_saves_export(EmuEnvState &emuenv) {
     if (g_import_job && !g_import_job->done.load()) {
         vita3k_ios_report_import_result("Another file operation is still running", false);
@@ -1032,53 +1077,68 @@ void start_all_saves_export(EmuEnvState &emuenv) {
     job->rescan_apps = false;
     g_import_job = job;
     std::thread([job, &emuenv] {
-        const fs::path source = all_saves_path(emuenv);
         const fs::path export_dir = emuenv.log_path / "exports";
         const fs::path output = export_dir / "Tsubomi-all-game-saves.zip";
         try {
-            if (!fs::exists(source) || fs::is_empty(source)) {
-                job->message = "No game saves exist to export";
+            fs::create_directories(export_dir);
+            mz_zip_archive zip{};
+            const std::string output_text = fs_utils::path_to_utf8(output);
+            if (!mz_zip_writer_init_file(&zip, output_text.c_str(), 0)) {
+                job->message = "Could not create the all-saves archive";
             } else {
-                fs::create_directories(export_dir);
-                mz_zip_archive zip{};
-                const std::string output_text = fs_utils::path_to_utf8(output);
-                if (!mz_zip_writer_init_file(&zip, output_text.c_str(), 0)) {
-                    job->message = "Could not create the all-saves archive";
-                } else {
-                    bool ok = true;
-                    std::size_t files = 0;
-                    boost::system::error_code error;
-                    for (fs::recursive_directory_iterator it(source, error), end;
-                         it != end && !error; it.increment(error)) {
-                        if (!fs::is_regular_file(it->path(), error) || error)
+                bool ok = true;
+                std::size_t files = 0;
+                const fs::path save_root = all_saves_path(emuenv);
+                const fs::path trophy_root =
+                    emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id / "trophy/data";
+
+                const auto add_identifier_directories =
+                    [&](const fs::path &root, const std::string &prefix) {
+                        boost::system::error_code error;
+                        if (!fs::exists(root, error))
+                            return !error;
+                        for (fs::directory_iterator it(root, error), end;
+                             it != end && !error; it.increment(error)) {
+                            if (!fs::is_directory(it->path(), error) || error)
+                                continue;
+                            const std::string identifier =
+                                fs_utils::path_to_utf8(it->path().filename());
+                            if (!safe_identifier(identifier, 16)
+                                || !add_directory_to_zip(zip, it->path(),
+                                    prefix + identifier + "/", files))
+                                return false;
+                        }
+                        return !error;
+                    };
+
+                ok = add_identifier_directories(save_root, "savedata/");
+                if (ok)
+                    ok = add_identifier_directories(trophy_root, "trophy/");
+                if (ok) {
+                    const auto times = app::get_user_app_times(emuenv);
+                    for (const auto &[app_path, time] : times) {
+                        if (!safe_identifier(app_path, 16))
                             continue;
-                        const std::string relative =
-                            fs_utils::path_to_utf8(fs::relative(it->path(), source));
-                        const auto slash = relative.find('/');
-                        const std::string title_id = relative.substr(0, slash);
-                        const std::string archived = "savedata/" + relative;
-                        const std::string disk_path = fs_utils::path_to_utf8(it->path());
-                        if (slash == std::string::npos
-                            || !safe_identifier(title_id, 16)
-                            || !safe_save_archive_path(archived)
-                            || !mz_zip_writer_add_file(&zip, archived.c_str(), disk_path.c_str(),
-                                nullptr, 0, MZ_DEFAULT_COMPRESSION)) {
+                        if (!add_playtime_to_zip(zip, app_path, time, files)) {
                             ok = false;
                             break;
                         }
-                        ++files;
                     }
-                    ok = ok && !error && files > 0 && mz_zip_writer_finalize_archive(&zip);
-                    mz_zip_writer_end(&zip);
-                    if (ok) {
-                        job->success = true;
-                        job->message = "All game saves exported";
-                        job->share_path = output_text;
-                    } else {
-                        boost::system::error_code cleanup_error;
-                        fs::remove(output, cleanup_error);
-                        job->message = "Could not archive all game saves";
-                    }
+                }
+
+                ok = ok && files > 0 && mz_zip_writer_finalize_archive(&zip);
+                mz_zip_writer_end(&zip);
+                if (ok) {
+                    job->success = true;
+                    job->message =
+                        "All saves, trophy progress, and play time exported";
+                    job->share_path = output_text;
+                } else {
+                    boost::system::error_code cleanup_error;
+                    fs::remove(output, cleanup_error);
+                    job->message = files == 0
+                        ? "No saves, trophy progress, or play time exist to export"
+                        : "Could not archive all game saves";
                 }
             }
         } catch (const std::exception &error) {
@@ -1086,6 +1146,66 @@ void start_all_saves_export(EmuEnvState &emuenv) {
         }
         job->done.store(true);
     }).detach();
+}
+
+std::size_t restore_playtimes_from_directory(EmuEnvState &emuenv,
+    const fs::path &directory) {
+    boost::system::error_code error;
+    if (!fs::exists(directory, error) || error)
+        return 0;
+
+    const auto apps = app::get_apps(emuenv);
+    std::vector<app::AppTime> imported;
+    for (fs::directory_iterator it(directory, error), end;
+         it != end && !error; it.increment(error)) {
+        if (!fs::is_regular_file(it->path(), error) || error
+            || it->path().extension() != ".txt")
+            continue;
+        const std::string title_id = fs_utils::path_to_utf8(it->path().stem());
+        if (!safe_identifier(title_id, 16))
+            continue;
+        int64_t time_used = 0;
+        std::time_t last_time_used = 0;
+        fs::ifstream in(it->path());
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.starts_with("time_used="))
+                time_used = std::max<int64_t>(0, std::atoll(line.c_str() + 10));
+            else if (line.starts_with("last_time_used="))
+                last_time_used = static_cast<std::time_t>(
+                    std::max<int64_t>(0, std::atoll(line.c_str() + 15)));
+        }
+        std::string app_path = title_id;
+        const auto app_it = std::find_if(apps.begin(), apps.end(),
+            [&](const auto &entry) { return entry.title_id == title_id; });
+        if (app_it != apps.end() && !app_it->path.empty())
+            app_path = app_it->path;
+        imported.push_back({ app_path, last_time_used, time_used });
+    }
+    if (error || imported.empty())
+        return 0;
+
+    {
+        auto &apps_list = emuenv.app.apps_list;
+        const std::lock_guard<std::mutex> lock(apps_list.mutex);
+        auto &times = apps_list.app_times[emuenv.io.user_id];
+        for (const auto &value : imported) {
+            const auto existing = std::find_if(times.begin(), times.end(),
+                [&](const app::AppTime &time) {
+                    return time.app_path == value.app_path;
+                });
+            if (existing == times.end()) {
+                times.push_back(value);
+            } else {
+                existing->time_used =
+                    std::max(existing->time_used, value.time_used);
+                existing->last_time_used =
+                    std::max(existing->last_time_used, value.last_time_used);
+            }
+        }
+    }
+    app::save_app_times(emuenv);
+    return imported.size();
 }
 
 void start_all_saves_import(EmuEnvState &emuenv, const std::string &archive_path) {
@@ -1098,11 +1218,27 @@ void start_all_saves_import(EmuEnvState &emuenv, const std::string &archive_path
     g_import_job = job;
     std::thread([job, archive_path, &emuenv] {
         const fs::path save_root = all_saves_path(emuenv);
-        const fs::path staging = save_root.parent_path() / "savedata.importing-all";
-        const fs::path backup_root = save_root.parent_path() / "savedata.backup-all";
-        std::vector<std::string> title_ids;
-        std::vector<std::string> installed;
+        const fs::path trophy_root =
+            emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id / "trophy/data";
+        const fs::path staging = save_root.parent_path() / "transfer.importing";
+        const fs::path backup_root = save_root.parent_path() / "transfer.backup";
+        std::vector<std::string> save_ids;
+        std::vector<std::string> trophy_ids;
+        struct InstalledDirectory {
+            fs::path destination;
+            fs::path backup;
+        };
+        std::vector<InstalledDirectory> installed;
         mz_zip_archive zip{};
+        const auto rollback = [&] {
+            for (auto it = installed.rbegin(); it != installed.rend(); ++it) {
+                boost::system::error_code error;
+                fs::remove_all(it->destination, error);
+                error.clear();
+                if (fs::exists(it->backup, error) && !error)
+                    fs::rename(it->backup, it->destination, error);
+            }
+        };
         try {
             const std::string archive_text = fs_utils::path_to_utf8(fs::path(archive_path));
             if (!mz_zip_reader_init_file(&zip, archive_text.c_str(), 0)) {
@@ -1117,6 +1253,8 @@ void start_all_saves_import(EmuEnvState &emuenv, const std::string &archive_path
                 if (!error)
                     fs::create_directories(backup_root, error);
                 bool ok = !error;
+                bool has_playtime = false;
+                bool has_payload = false;
                 std::uint64_t total_size = 0;
                 const mz_uint entries = mz_zip_reader_get_num_files(&zip);
                 if (entries == 0 || entries > 250000)
@@ -1129,24 +1267,55 @@ void start_all_saves_import(EmuEnvState &emuenv, const std::string &archive_path
                         break;
                     }
                     const std::string_view name(stat.m_filename);
-                    constexpr std::string_view prefix = "savedata/";
-                    if (!name.starts_with(prefix) || !safe_save_archive_path(name)) {
+                    if (!safe_save_archive_path(name)) {
                         ok = false;
                         break;
                     }
-                    const std::string_view relative = name.substr(prefix.size());
-                    const auto slash = relative.find('/');
-                    if (slash == std::string_view::npos) {
+
+                    std::vector<std::string> *identifiers = nullptr;
+                    std::string_view relative;
+                    if (name.starts_with("savedata/")) {
+                        identifiers = &save_ids;
+                        relative = name.substr(std::string_view("savedata/").size());
+                    } else if (name.starts_with("trophy/")) {
+                        identifiers = &trophy_ids;
+                        relative = name.substr(std::string_view("trophy/").size());
+                    } else if (name.starts_with("meta/playtime/")) {
+                        const std::string_view filename =
+                            name.substr(std::string_view("meta/playtime/").size());
+                        if (!filename.ends_with(".txt")
+                            || filename.find('/') != std::string_view::npos
+                            || !safe_identifier(
+                                std::string(filename.substr(0, filename.size() - 4)), 16)) {
+                            ok = false;
+                            break;
+                        }
+                        if (stat.m_uncomp_size > 4096) {
+                            ok = false;
+                            break;
+                        }
+                        has_playtime = true;
+                        has_payload = true;
+                    } else {
                         ok = false;
                         break;
                     }
-                    const std::string title_id(relative.substr(0, slash));
-                    if (!safe_identifier(title_id, 16)) {
-                        ok = false;
-                        break;
+                    if (identifiers) {
+                        const auto slash = relative.find('/');
+                        if (slash == std::string_view::npos) {
+                            ok = false;
+                            break;
+                        }
+                        const std::string identifier(relative.substr(0, slash));
+                        if (!safe_identifier(identifier, 16)) {
+                            ok = false;
+                            break;
+                        }
+                        if (std::find(identifiers->begin(), identifiers->end(), identifier)
+                            == identifiers->end())
+                            identifiers->push_back(identifier);
+                        has_payload = true;
                     }
-                    if (std::find(title_ids.begin(), title_ids.end(), title_id) == title_ids.end())
-                        title_ids.push_back(title_id);
 
                     const unsigned unix_type = (stat.m_external_attr >> 16) & 0170000;
                     if (unix_type == 0120000 || stat.m_uncomp_size > (64ULL << 30)
@@ -1155,7 +1324,7 @@ void start_all_saves_import(EmuEnvState &emuenv, const std::string &archive_path
                         break;
                     }
                     total_size += stat.m_uncomp_size;
-                    const fs::path output = staging / fs::path(std::string(relative));
+                    const fs::path output = staging / fs::path(std::string(name));
                     if (mz_zip_reader_is_file_a_directory(&zip, index)) {
                         fs::create_directories(output, error);
                     } else {
@@ -1170,21 +1339,22 @@ void start_all_saves_import(EmuEnvState &emuenv, const std::string &archive_path
                 }
                 mz_zip_reader_end(&zip);
 
-                if (ok && !title_ids.empty()) {
-                    fs::create_directories(save_root, error);
-                    if (error)
-                        ok = false;
-                    for (const auto &title_id : title_ids) {
-                        if (!ok)
-                            break;
-                        const fs::path source = staging / title_id;
-                        const fs::path destination = save_root / title_id;
-                        const fs::path backup = backup_root / title_id;
+                const auto install_directories = [&](const std::vector<std::string> &identifiers,
+                                                     const fs::path &source_root,
+                                                     const fs::path &destination_root,
+                                                     const fs::path &kind_backup) {
+                    for (const auto &identifier : identifiers) {
+                        const fs::path source = source_root / identifier;
+                        const fs::path destination = destination_root / identifier;
+                        const fs::path backup = kind_backup / identifier;
+                        fs::create_directories(destination.parent_path(), error);
+                        if (!error)
+                            fs::create_directories(backup.parent_path(), error);
+                        if (error)
+                            return false;
                         fs::remove_all(backup, error);
-                        if (error) {
-                            ok = false;
-                            break;
-                        }
+                        if (error)
+                            return false;
                         if (fs::exists(destination, error) && !error)
                             fs::rename(destination, backup, error);
                         if (!error)
@@ -1195,33 +1365,45 @@ void start_all_saves_import(EmuEnvState &emuenv, const std::string &archive_path
                                 fs::remove_all(destination, rollback_error);
                                 fs::rename(backup, destination, rollback_error);
                             }
-                            ok = false;
-                            break;
+                            return false;
                         }
-                        installed.push_back(title_id);
+                        installed.push_back({ destination, backup });
                     }
-                } else {
+                    return true;
+                };
+
+                if (ok && !has_payload)
                     ok = false;
-                }
+                if (ok)
+                    ok = install_directories(save_ids, staging / "savedata",
+                        save_root, backup_root / "savedata");
+                if (ok)
+                    ok = install_directories(trophy_ids, staging / "trophy",
+                        trophy_root, backup_root / "trophy");
 
                 if (!ok) {
-                    for (auto it = installed.rbegin(); it != installed.rend(); ++it) {
-                        boost::system::error_code rollback_error;
-                        const fs::path destination = save_root / *it;
-                        const fs::path backup = backup_root / *it;
-                        fs::remove_all(destination, rollback_error);
-                        if (fs::exists(backup, rollback_error))
-                            fs::rename(backup, destination, rollback_error);
-                    }
+                    rollback();
                     boost::system::error_code backup_cleanup_error;
                     fs::remove_all(backup_root, backup_cleanup_error);
                     job->message =
-                        "All-saves import was rejected; existing game saves were left unchanged";
+                        "All-saves import was rejected; existing progress was left unchanged";
                 } else {
-                    fs::remove_all(backup_root, error);
-                    job->success = true;
-                    job->message = "Imported saves for " + std::to_string(installed.size())
-                        + (installed.size() == 1 ? " game" : " games");
+                    const std::size_t playtimes = has_playtime
+                        ? restore_playtimes_from_directory(emuenv, staging / "meta/playtime")
+                        : 0;
+                    if (has_playtime && playtimes == 0) {
+                        rollback();
+                        job->message =
+                            "All-saves import could not restore play time; existing progress was left unchanged";
+                    } else {
+                        fs::remove_all(backup_root, error);
+                        job->success = true;
+                        job->refresh_library = !trophy_ids.empty() || playtimes > 0;
+                        job->message = "Imported " + std::to_string(save_ids.size())
+                            + " save sets, " + std::to_string(trophy_ids.size())
+                            + " trophy sets, and " + std::to_string(playtimes)
+                            + " playtime records";
+                    }
                 }
                 boost::system::error_code cleanup_error;
                 fs::remove_all(staging, cleanup_error);
@@ -1229,14 +1411,396 @@ void start_all_saves_import(EmuEnvState &emuenv, const std::string &archive_path
         } catch (const std::exception &error) {
             job->message = std::string("All-saves import failed: ") + error.what();
             mz_zip_reader_end(&zip);
-            for (auto it = installed.rbegin(); it != installed.rend(); ++it) {
-                boost::system::error_code rollback_error;
-                const fs::path destination = save_root / *it;
-                const fs::path backup = backup_root / *it;
-                fs::remove_all(destination, rollback_error);
-                if (fs::exists(backup, rollback_error))
-                    fs::rename(backup, destination, rollback_error);
+            rollback();
+            boost::system::error_code cleanup_error;
+            fs::remove_all(staging, cleanup_error);
+            fs::remove_all(backup_root, cleanup_error);
+        }
+        boost::system::error_code cleanup_error;
+        fs::remove(fs::path(archive_path), cleanup_error);
+        job->done.store(true);
+    }).detach();
+}
+
+void start_library_archive_export(EmuEnvState &emuenv,
+    const std::string &requested_title_id) {
+    if (!requested_title_id.empty() && !safe_identifier(requested_title_id, 16)) {
+        vita3k_ios_report_import_result("Game export rejected an invalid title ID", false);
+        return;
+    }
+    if (g_import_job && !g_import_job->done.load()) {
+        vita3k_ios_report_import_result("Another file operation is still running", false);
+        return;
+    }
+    auto job = std::make_shared<ImportJob>();
+    job->rescan_apps = false;
+    g_import_job = job;
+    std::thread([job, requested_title_id, &emuenv] {
+        const bool all_games = requested_title_id.empty();
+        const fs::path export_dir = emuenv.log_path / "exports";
+        const fs::path output = export_dir
+            / (all_games ? "Tsubomi-library.zip"
+                         : requested_title_id + "-game.zip");
+        try {
+            const auto apps = app::get_apps(emuenv);
+            const auto times = app::get_user_app_times(emuenv);
+            std::vector<std::string> title_ids;
+            for (const auto &entry : apps) {
+                if (!safe_identifier(entry.title_id, 16)
+                    || (!all_games && entry.title_id != requested_title_id))
+                    continue;
+                title_ids.push_back(entry.title_id);
             }
+            if (title_ids.empty()) {
+                job->message = all_games
+                    ? "No installed games exist to export"
+                    : "The selected game is no longer installed";
+                job->done.store(true);
+                return;
+            }
+
+            fs::create_directories(export_dir);
+            mz_zip_archive zip{};
+            const std::string output_text = fs_utils::path_to_utf8(output);
+            if (!mz_zip_writer_init_file(&zip, output_text.c_str(), 0)) {
+                job->message = "Could not create the game archive";
+            } else {
+                static constexpr std::string_view manifest = "tsubomi-library-transfer=1\n";
+                bool ok = mz_zip_writer_add_mem(&zip, "manifest/version.txt",
+                    manifest.data(), manifest.size(), MZ_DEFAULT_COMPRESSION);
+                std::size_t files = 0;
+                std::size_t base_files = 0;
+                for (const auto &title_id : title_ids) {
+                    const auto add_root = [&](const char *root,
+                                              const char *archive_root) {
+                        const std::size_t before = files;
+                        const bool added = add_directory_to_zip(zip,
+                            emuenv.vita_fs_path / root / title_id,
+                            std::string(archive_root) + "/" + title_id + "/", files);
+                        if (std::string_view(root) == "ux0/app")
+                            base_files += files - before;
+                        return added;
+                    };
+                    ok = ok && add_root("ux0/app", "app");
+                    ok = ok && add_root("ux0/patch", "patch");
+                    ok = ok && add_root("ux0/addcont", "addcont");
+                    ok = ok && add_root("ux0/license", "license");
+                    ok = ok && add_directory_to_zip(zip,
+                        save_path_for_title(emuenv, title_id),
+                        "savedata/" + title_id + "/", files);
+
+                    const std::string np_com_id =
+                        trophy_id_for_title(emuenv, title_id);
+                    if (ok && !np_com_id.empty()) {
+                        ok = add_directory_to_zip(zip,
+                            trophy_data_path_for_id(emuenv, np_com_id),
+                            "trophy/" + np_com_id + "/", files);
+                    }
+
+                    const auto app_it = std::find_if(apps.begin(), apps.end(),
+                        [&](const auto &entry) {
+                            return entry.title_id == title_id;
+                        });
+                    const std::string app_path =
+                        app_it != apps.end() && !app_it->path.empty()
+                        ? app_it->path
+                        : title_id;
+                    const auto time_it = times.find(app_path);
+                    if (ok && time_it != times.end())
+                        ok = add_playtime_to_zip(
+                            zip, title_id, time_it->second, files);
+                    if (!ok)
+                        break;
+                }
+
+                ok = ok && base_files > 0
+                    && mz_zip_writer_finalize_archive(&zip);
+                mz_zip_writer_end(&zip);
+                if (ok) {
+                    job->success = true;
+                    job->message = all_games
+                        ? "Games, updates, add-ons, licenses, and progress exported"
+                        : "Game, license, and progress exported";
+                    job->share_path = output_text;
+                } else {
+                    boost::system::error_code cleanup_error;
+                    fs::remove(output, cleanup_error);
+                    job->message = "Could not archive the complete game library";
+                }
+            }
+        } catch (const std::exception &error) {
+            job->message = std::string("Game export failed: ") + error.what();
+        }
+        job->done.store(true);
+    }).detach();
+}
+
+void start_library_archive_import(EmuEnvState &emuenv,
+    const std::string &archive_path) {
+    if (g_import_job && !g_import_job->done.load()) {
+        vita3k_ios_report_import_result("Another file operation is still running", false);
+        return;
+    }
+    auto job = std::make_shared<ImportJob>();
+    job->rescan_apps = true;
+    g_import_job = job;
+    std::thread([job, archive_path, &emuenv] {
+        const fs::path user_root =
+            emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id;
+        const fs::path staging = user_root / "library.importing";
+        const fs::path backup_root = user_root / "library.backup";
+        std::vector<std::string> app_ids;
+        std::vector<std::string> patch_ids;
+        std::vector<std::string> addcont_ids;
+        std::vector<std::string> license_ids;
+        std::vector<std::string> save_ids;
+        std::vector<std::string> trophy_ids;
+        std::vector<std::string> playtime_ids;
+        struct InstalledDirectory {
+            fs::path destination;
+            fs::path backup;
+        };
+        std::vector<InstalledDirectory> installed;
+        mz_zip_archive zip{};
+
+        const auto rollback = [&] {
+            for (auto it = installed.rbegin(); it != installed.rend(); ++it) {
+                boost::system::error_code error;
+                fs::remove_all(it->destination, error);
+                error.clear();
+                if (fs::exists(it->backup, error) && !error)
+                    fs::rename(it->backup, it->destination, error);
+            }
+        };
+
+        try {
+            const std::string archive_text =
+                fs_utils::path_to_utf8(fs::path(archive_path));
+            if (!mz_zip_reader_init_file(&zip, archive_text.c_str(), 0)) {
+                job->message = "The selected game transfer is not a readable ZIP archive";
+            } else {
+                boost::system::error_code error;
+                fs::remove_all(staging, error);
+                if (!error)
+                    fs::remove_all(backup_root, error);
+                if (!error)
+                    fs::create_directories(staging, error);
+                if (!error)
+                    fs::create_directories(backup_root, error);
+                bool ok = !error;
+                bool has_manifest = false;
+                bool has_playtime = false;
+                std::uint64_t total_size = 0;
+                const mz_uint entries = mz_zip_reader_get_num_files(&zip);
+                if (entries == 0 || entries > 500000)
+                    ok = false;
+
+                for (mz_uint index = 0; ok && index < entries; ++index) {
+                    mz_zip_archive_file_stat stat{};
+                    if (!mz_zip_reader_file_stat(&zip, index, &stat)) {
+                        ok = false;
+                        break;
+                    }
+                    const std::string_view name(stat.m_filename);
+                    if (!safe_save_archive_path(name)) {
+                        ok = false;
+                        break;
+                    }
+
+                    std::vector<std::string> *identifiers = nullptr;
+                    std::string_view relative;
+                    const auto route = [&](std::string_view prefix,
+                                           std::vector<std::string> &values) {
+                        if (!name.starts_with(prefix))
+                            return false;
+                        identifiers = &values;
+                        relative = name.substr(prefix.size());
+                        return true;
+                    };
+                    if (name == "manifest/version.txt") {
+                        if (stat.m_uncomp_size > 128) {
+                            ok = false;
+                            break;
+                        }
+                        has_manifest = true;
+                    } else if (route("app/", app_ids)
+                        || route("patch/", patch_ids)
+                        || route("addcont/", addcont_ids)
+                        || route("license/", license_ids)
+                        || route("savedata/", save_ids)
+                        || route("trophy/", trophy_ids)) {
+                        const auto slash = relative.find('/');
+                        if (slash == std::string_view::npos) {
+                            ok = false;
+                            break;
+                        }
+                        const std::string identifier(relative.substr(0, slash));
+                        if (!safe_identifier(identifier, 16)) {
+                            ok = false;
+                            break;
+                        }
+                        if (std::find(identifiers->begin(), identifiers->end(), identifier)
+                            == identifiers->end())
+                            identifiers->push_back(identifier);
+                    } else if (name.starts_with("meta/playtime/")) {
+                        const std::string_view filename =
+                            name.substr(std::string_view("meta/playtime/").size());
+                        if (!filename.ends_with(".txt")
+                            || filename.find('/') != std::string_view::npos) {
+                            ok = false;
+                            break;
+                        }
+                        const std::string identifier(
+                            filename.substr(0, filename.size() - 4));
+                        if (!safe_identifier(identifier, 16)) {
+                            ok = false;
+                            break;
+                        }
+                        if (stat.m_uncomp_size > 4096) {
+                            ok = false;
+                            break;
+                        }
+                        if (std::find(playtime_ids.begin(), playtime_ids.end(), identifier)
+                            == playtime_ids.end())
+                            playtime_ids.push_back(identifier);
+                        has_playtime = true;
+                    } else {
+                        ok = false;
+                        break;
+                    }
+
+                    const unsigned unix_type =
+                        (stat.m_external_attr >> 16) & 0170000;
+                    if (unix_type == 0120000 || stat.m_uncomp_size > (128ULL << 30)
+                        || total_size > (256ULL << 30) - stat.m_uncomp_size) {
+                        ok = false;
+                        break;
+                    }
+                    total_size += stat.m_uncomp_size;
+                    const fs::path output =
+                        staging / fs::path(std::string(name));
+                    if (mz_zip_reader_is_file_a_directory(&zip, index)) {
+                        fs::create_directories(output, error);
+                    } else {
+                        fs::create_directories(output.parent_path(), error);
+                        const std::string output_text =
+                            fs_utils::path_to_utf8(output);
+                        if (!error
+                            && !mz_zip_reader_extract_to_file(
+                                &zip, index, output_text.c_str(), 0))
+                            ok = false;
+                    }
+                    if (error)
+                        ok = false;
+                }
+                mz_zip_reader_end(&zip);
+
+                if (ok) {
+                    fs::ifstream manifest_file(staging / "manifest/version.txt");
+                    std::string manifest;
+                    std::getline(manifest_file, manifest);
+                    ok = has_manifest && manifest == "tsubomi-library-transfer=1"
+                        && !app_ids.empty();
+                    const auto belongs_to_archive =
+                        [&](const std::vector<std::string> &identifiers) {
+                            return std::all_of(identifiers.begin(), identifiers.end(),
+                                [&](const std::string &identifier) {
+                                    return std::find(app_ids.begin(), app_ids.end(), identifier)
+                                        != app_ids.end();
+                                });
+                        };
+                    ok = ok && belongs_to_archive(patch_ids)
+                        && belongs_to_archive(addcont_ids)
+                        && belongs_to_archive(license_ids)
+                        && belongs_to_archive(save_ids)
+                        && belongs_to_archive(playtime_ids);
+                }
+
+                const auto install_directories =
+                    [&](const std::vector<std::string> &identifiers,
+                        const fs::path &source_root,
+                        const fs::path &destination_root,
+                        const fs::path &kind_backup) {
+                        for (const auto &identifier : identifiers) {
+                            const fs::path source = source_root / identifier;
+                            const fs::path destination = destination_root / identifier;
+                            const fs::path backup = kind_backup / identifier;
+                            fs::create_directories(destination.parent_path(), error);
+                            if (!error)
+                                fs::create_directories(backup.parent_path(), error);
+                            if (error)
+                                return false;
+                            fs::remove_all(backup, error);
+                            if (error)
+                                return false;
+                            if (fs::exists(destination, error) && !error)
+                                fs::rename(destination, backup, error);
+                            if (!error)
+                                fs::rename(source, destination, error);
+                            if (error) {
+                                boost::system::error_code rollback_error;
+                                if (fs::exists(backup, rollback_error)) {
+                                    fs::remove_all(destination, rollback_error);
+                                    fs::rename(backup, destination, rollback_error);
+                                }
+                                return false;
+                            }
+                            installed.push_back({ destination, backup });
+                        }
+                        return true;
+                    };
+
+                if (ok)
+                    ok = install_directories(app_ids, staging / "app",
+                        emuenv.vita_fs_path / "ux0/app", backup_root / "app");
+                if (ok)
+                    ok = install_directories(patch_ids, staging / "patch",
+                        emuenv.vita_fs_path / "ux0/patch", backup_root / "patch");
+                if (ok)
+                    ok = install_directories(addcont_ids, staging / "addcont",
+                        emuenv.vita_fs_path / "ux0/addcont", backup_root / "addcont");
+                if (ok)
+                    ok = install_directories(license_ids, staging / "license",
+                        emuenv.vita_fs_path / "ux0/license", backup_root / "license");
+                if (ok)
+                    ok = install_directories(save_ids, staging / "savedata",
+                        all_saves_path(emuenv), backup_root / "savedata");
+                if (ok)
+                    ok = install_directories(trophy_ids, staging / "trophy",
+                        user_root / "trophy/data", backup_root / "trophy");
+
+                if (!ok) {
+                    rollback();
+                    job->message =
+                        "Game transfer import was rejected; existing content was restored";
+                } else {
+                    const std::size_t playtimes = has_playtime
+                        ? restore_playtimes_from_directory(
+                            emuenv, staging / "meta/playtime")
+                        : 0;
+                    if (has_playtime && playtimes == 0) {
+                        rollback();
+                        job->message =
+                            "Game transfer could not restore play time; existing content was restored";
+                    } else {
+                        fs::remove_all(backup_root, error);
+                        job->success = true;
+                        job->refresh_library = true;
+                        job->message = "Imported "
+                            + std::to_string(app_ids.size())
+                            + (app_ids.size() == 1 ? " game" : " games")
+                            + " with data and licenses";
+                    }
+                }
+                boost::system::error_code cleanup_error;
+                fs::remove_all(staging, cleanup_error);
+                if (!job->success)
+                    fs::remove_all(backup_root, cleanup_error);
+            }
+        } catch (const std::exception &error) {
+            job->message = std::string("Game transfer import failed: ") + error.what();
+            mz_zip_reader_end(&zip);
+            rollback();
             boost::system::error_code cleanup_error;
             fs::remove_all(staging, cleanup_error);
             fs::remove_all(backup_root, cleanup_error);
@@ -1666,6 +2230,15 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                     start_all_saves_export(emuenv);
                 else
                     start_save_export(emuenv, action->title_id);
+                break;
+            case Vita3KIOSFrontendActionKind::ImportLibraryArchive:
+                start_library_archive_import(emuenv, action->app_path);
+                break;
+            case Vita3KIOSFrontendActionKind::ExportLibraryArchive:
+                start_library_archive_export(emuenv, {});
+                break;
+            case Vita3KIOSFrontendActionKind::ExportGameArchive:
+                start_library_archive_export(emuenv, action->title_id);
                 break;
             case Vita3KIOSFrontendActionKind::ShowTrophies:
                 show_trophies(emuenv, action->trophy_id, action->title_id, action->app_path);

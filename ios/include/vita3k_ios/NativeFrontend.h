@@ -108,6 +108,10 @@ enum class Vita3KIOSFrontendActionKind {
     ImportLicense,
     ImportSave,
     ExportSave,
+    // Process-lifetime support surface: full installed-content transfer.
+    ImportLibraryArchive,
+    ExportLibraryArchive,
+    ExportGameArchive,
     ShowTrophies,
     SetTrophyState,
     // title_id carries the title to remove from ux0 (app/patch/addcont).

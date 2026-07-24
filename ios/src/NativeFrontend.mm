@@ -337,6 +337,7 @@ std::vector<Vita3KIOSGameEntry> g_last_games;
 void present_import_picker(BOOL firmware);
 void present_license_picker();
 void present_save_picker(NSString *titleId);
+void present_library_archive_picker();
 void reload_library_cells();
 
 } // namespace
@@ -769,6 +770,10 @@ void present_all_save_import_picker() {
     present_save_picker(@"");
 }
 
+void present_library_archive_import_picker() {
+    present_library_archive_picker();
+}
+
 bool firmware_ready_or_alert() {
     const auto settings = current_global_settings();
     if (settings.firmware_ready)
@@ -1081,6 +1086,8 @@ static UIViewController *library_presented_controller() {
         busy = @"Importing save…";
     if (self.kind == Vita3KIOSFrontendActionKind::ImportSave && !self.titleId.length)
         busy = @"Importing all game saves...";
+    else if (self.kind == Vita3KIOSFrontendActionKind::ImportLibraryArchive)
+        busy = @"Importing games...";
     [TsubomiLibraryStateBridge setBusyMessage:busy];
     Vita3KIOSFrontendAction action;
     action.kind = self.kind;
@@ -1159,6 +1166,21 @@ void present_save_picker(NSString *titleId) {
         g_import_picker = [[Vita3KImportPicker alloc] init];
     g_import_picker.kind = Vita3KIOSFrontendActionKind::ImportSave;
     g_import_picker.titleId = titleId;
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP, UTTypeData]];
+    picker.delegate = g_import_picker;
+    picker.allowsMultipleSelection = NO;
+    [presenter presentViewController:picker animated:YES completion:nil];
+}
+
+void present_library_archive_picker() {
+    UIViewController *presenter = document_picker_presenter();
+    if (!presenter)
+        return;
+    if (!g_import_picker)
+        g_import_picker = [[Vita3KImportPicker alloc] init];
+    g_import_picker.kind = Vita3KIOSFrontendActionKind::ImportLibraryArchive;
+    g_import_picker.titleId = nil;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP, UTTypeData]];
     picker.delegate = g_import_picker;
