@@ -73,6 +73,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
@@ -496,7 +497,14 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
         fs::create_directories(root_paths.get_patch_path());
         fs::create_directories(root_paths.get_shared_path() / "textures");
 
-        if (logging::init(root_paths, true) != Success)
+        // The stdout sink only reaches anyone when a terminal or a debugger's
+        // console is on the other end. Launched from the home screen there is
+        // nothing there, and every line still pays a format and a write on the
+        // logger thread - for a whole session, in a title that warns about
+        // unimplemented imports, that is real work for no reader. The file
+        // sink is unaffected, so tsubomi.log keeps everything either way.
+        const bool console_attached = isatty(STDOUT_FILENO) != 0;
+        if (logging::init(root_paths, console_attached) != Success)
             return false;
         logging::set_log_callback([](std::string msg, int) {
             push_recent_log_line(std::move(msg));
@@ -1023,8 +1031,47 @@ fs::path all_saves_path(const EmuEnvState &emuenv) {
     return emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id / "savedata";
 }
 
+// Total bytes of the regular files under `root`, for the free-space estimate.
+// Missing directories count as zero: not every title has a patch or add-ons.
+std::uintmax_t directory_size(const fs::path &root) {
+    boost::system::error_code error;
+    if (!fs::exists(root, error) || error)
+        return 0;
+    std::uintmax_t total = 0;
+    for (fs::recursive_directory_iterator it(root, error), end;
+         it != end && !error; it.increment(error)) {
+        if (!fs::is_regular_file(it->path(), error) || error)
+            continue;
+        boost::system::error_code size_error;
+        const auto size = fs::file_size(it->path(), size_error);
+        if (!size_error)
+            total += size;
+    }
+    return total;
+}
+
+std::string human_bytes(const std::uintmax_t bytes) {
+    static constexpr const char *units[] = { "bytes", "KB", "MB", "GB", "TB" };
+    double value = static_cast<double>(bytes);
+    std::size_t unit = 0;
+    while (value >= 1024.0 && unit + 1 < std::size(units)) {
+        value /= 1024.0;
+        ++unit;
+    }
+    // Two calls rather than a chosen format string: fmt checks format strings
+    // at compile time, so a runtime-selected one does not build.
+    if (unit == 0)
+        return fmt::format("{:.0f} {}", value, units[unit]);
+    return fmt::format("{:.1f} {}", value, units[unit]);
+}
+
 bool add_directory_to_zip(mz_zip_archive &zip, const fs::path &root,
-    const std::string &prefix, std::size_t &files) {
+    const std::string &prefix, std::size_t &files,
+    // Game data is PFS-encrypted or already-compressed media, so deflating it
+    // costs minutes of CPU across a large library and saves almost nothing.
+    // Callers archiving game content pass MZ_NO_COMPRESSION; saves and text
+    // manifests, which do compress, keep the default.
+    const mz_uint compression = MZ_DEFAULT_COMPRESSION) {
     boost::system::error_code exists_error;
     if (!fs::exists(root, exists_error))
         return !exists_error;
@@ -1046,8 +1093,11 @@ bool add_directory_to_zip(mz_zip_archive &zip, const fs::path &root,
         const std::string disk_path = fs_utils::path_to_utf8(it->path());
         if (!safe_save_archive_path(archived)
             || !mz_zip_writer_add_file(&zip, archived.c_str(), disk_path.c_str(),
-                nullptr, 0, MZ_DEFAULT_COMPRESSION))
+                nullptr, 0, compression)) {
+            LOG_ERROR("Archive write failed for '{}': {}", archived,
+                mz_zip_get_error_string(mz_zip_get_last_error(&zip)));
             return false;
+        }
         ++files;
     }
     return !error;
@@ -1083,7 +1133,11 @@ void start_all_saves_export(EmuEnvState &emuenv) {
             fs::create_directories(export_dir);
             mz_zip_archive zip{};
             const std::string output_text = fs_utils::path_to_utf8(output);
-            if (!mz_zip_writer_init_file(&zip, output_text.c_str(), 0)) {
+            // Zip64 like the library export: saves are small individually, but
+            // a large enough library can still push the total past miniz's
+            // 4 GB non-zip64 ceiling.
+            if (!mz_zip_writer_init_file_v2(&zip, output_text.c_str(), 0,
+                    MZ_ZIP_FLAG_WRITE_ZIP64)) {
                 job->message = "Could not create the all-saves archive";
             } else {
                 bool ok = true;
@@ -1460,9 +1514,39 @@ void start_library_archive_export(EmuEnvState &emuenv,
             }
 
             fs::create_directories(export_dir);
+
+            // The archive is a second copy of everything it holds, so a library
+            // that fits on the device does not imply an export that does.
+            // Checked up front: discovering it 20 GB in means a long wait
+            // ending in a failure the player cannot interpret.
+            std::uintmax_t needed = 0;
+            for (const auto &title_id : title_ids) {
+                for (const char *root : { "ux0/app", "ux0/patch", "ux0/addcont", "ux0/license" })
+                    needed += directory_size(emuenv.vita_fs_path / root / title_id);
+                needed += directory_size(save_path_for_title(emuenv, title_id));
+            }
+            boost::system::error_code space_error;
+            const auto space = fs::space(export_dir, space_error);
+            if (!space_error && space.available < needed) {
+                job->message = fmt::format(
+                    "Not enough space to export: about {} is needed and {} is free",
+                    human_bytes(needed), human_bytes(space.available));
+                job->done.store(true);
+                return;
+            }
+            LOG_INFO("Exporting {} title(s), about {} of content", title_ids.size(),
+                human_bytes(needed));
+
             mz_zip_archive zip{};
             const std::string output_text = fs_utils::path_to_utf8(output);
-            if (!mz_zip_writer_init_file(&zip, output_text.c_str(), 0)) {
+            // Zip64. Without it miniz caps the archive at 4 GB: it only
+            // promotes automatically when a single source file is that large,
+            // which no Vita file is, so a whole-library export instead failed
+            // with ARCHIVE_TOO_LARGE at whichever file crossed the boundary.
+            // Per-game exports stayed under the cap, which is why only "Export
+            // games" was broken.
+            if (!mz_zip_writer_init_file_v2(&zip, output_text.c_str(), 0,
+                    MZ_ZIP_FLAG_WRITE_ZIP64)) {
                 job->message = "Could not create the game archive";
             } else {
                 static constexpr std::string_view manifest = "tsubomi-library-transfer=1\n";
@@ -1476,7 +1560,8 @@ void start_library_archive_export(EmuEnvState &emuenv,
                         const std::size_t before = files;
                         const bool added = add_directory_to_zip(zip,
                             emuenv.vita_fs_path / root / title_id,
-                            std::string(archive_root) + "/" + title_id + "/", files);
+                            std::string(archive_root) + "/" + title_id + "/", files,
+                            MZ_NO_COMPRESSION);
                         if (std::string_view(root) == "ux0/app")
                             base_files += files - before;
                         return added;
@@ -1525,7 +1610,13 @@ void start_library_archive_export(EmuEnvState &emuenv,
                 } else {
                     boost::system::error_code cleanup_error;
                     fs::remove(output, cleanup_error);
-                    job->message = "Could not archive the complete game library";
+                    // Almost always a full disk by this point: the zip64 fix
+                    // removed the size ceiling and the space check ran before
+                    // a byte was written, so anything left is the device
+                    // filling up while the archive was being built.
+                    job->message = all_games
+                        ? "Could not archive the complete game library - check the device has free space"
+                        : "Could not archive the game - check the device has free space";
                 }
             }
         } catch (const std::exception &error) {
@@ -2809,7 +2900,10 @@ int main(int argc, char *argv[]) {
             // Persist progress periodically, not only on a clean in-app quit.
             // iOS users commonly terminate a stalled title from the app
             // switcher, which previously discarded the whole session length.
-            if (now_ms - playtime_checkpoint_ms >= 30000) {
+            // Every two minutes rather than every thirty seconds: the worst
+            // case is two minutes of playtime lost to a force-quit, against a
+            // quarter as many flash writes across a long session.
+            if (now_ms - playtime_checkpoint_ms >= 120000) {
                 app::update_app_time_used(*emuenv, emuenv->io.app_path);
                 playtime_checkpoint_ms = now_ms;
             }

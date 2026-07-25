@@ -15,6 +15,10 @@ struct ControllerOptionsView: View {
 
     @State private var confirmingReset = false
 
+    @AppStorage("tsubomi.orientationLockEnabled") private var orientationLockEnabled = false
+    @AppStorage("tsubomi.orientationLock")
+    private var orientationLock = OrientationLockOption.portrait.rawValue
+
     /// Which layout the visibility switches apply to. Positions and visibility
     /// are stored per orientation, so editing one must not silently change the
     /// other — this makes which is being edited explicit.
@@ -66,36 +70,6 @@ struct ControllerOptionsView: View {
                 }
 
                 Section {
-                    Toggle("Dynamic Joystick", isOn: $model.dynamicSticks)
-                } header: {
-                    Text("Joystick")
-                } footer: {
-                    // Two paragraphs rather than one: the first is what the
-                    // switch does, the second is the consequence a player has
-                    // to accept, and merging them buries the second.
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Centers the joystick wherever you place your finger on screen. The on-screen sticks are hidden; the left half of the screen becomes the left stick and the right half becomes the right stick. Pressing a button never raises one.")
-                        Text("This disables the Vita touchscreen. The controller takes the whole screen, so games that ask you to touch or swipe the screen will not receive it.")
-                    }
-                }
-
-                Section {
-                    Toggle("Hide for physical controller", isOn: $model.hideWhenPhysical)
-                    Toggle("Haptic feedback", isOn: $model.haptics)
-                    Toggle("Alignment guides", isOn: $model.snapGuides)
-                    DefaultsToggle("Colored face buttons", key: .coloredFaceButtons)
-                    // The same preference as Settings › In-game appearance, as
-                    // Colored face buttons already is. Repeated here because
-                    // this is the only controls screen reachable mid-game, and
-                    // judging the trade means seeing it over the game.
-                    DefaultsToggle("Liquid Glass", key: .liquidGlassInGame)
-                } header: {
-                    Text("Behaviour")
-                } footer: {
-                    Text("Liquid Glass samples the game behind each control every frame. Turning it off draws flat shapes instead and saves battery over a long session.")
-                }
-
-                Section {
                     Button {
                         onEditLayout()
                     } label: {
@@ -110,6 +84,32 @@ struct ControllerOptionsView: View {
                     Text("Layout")
                 } footer: {
                     Text("Positions are stored separately for landscape and portrait.")
+                }
+
+                orientationSection
+
+                Section {
+                    Toggle("Dynamic Joystick", isOn: $model.dynamicSticks)
+                } header: {
+                    Text("Joystick")
+                } footer: {
+                    Text("Centers the joystick wherever you place your finger. Disables the Vita touchscreen.")
+                }
+
+                Section {
+                    Toggle("Hide for physical controller", isOn: $model.hideWhenPhysical)
+                    Toggle("Haptic feedback", isOn: $model.haptics)
+                    Toggle("Alignment guides", isOn: $model.snapGuides)
+                    DefaultsToggle("Colored face buttons", key: .coloredFaceButtons)
+                    // The same preference as Settings › General, as Colored
+                    // face buttons already is. Repeated here because this is
+                    // the only controls screen reachable mid-game, and judging
+                    // the trade means seeing it over the game.
+                    DefaultsToggle("Liquid Glass", key: .liquidGlassInGame)
+                } header: {
+                    Text("Behaviour")
+                } footer: {
+                    Text("Liquid Glass is turned off in game only.")
                 }
 
                 visibilitySection
@@ -134,6 +134,32 @@ struct ControllerOptionsView: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(.regularMaterial)
+    }
+
+    /// Moved here from the in-game menu's own list: it belongs with the other
+    /// screen-level choices rather than sitting between Layout Options and
+    /// Trophies, and the menu is shorter for it.
+    private var orientationSection: some View {
+        Section {
+            Toggle("Orientation Lock", isOn: $orientationLockEnabled)
+                .onChange(of: orientationLockEnabled) { _, enabled in
+                    Bridge.setOrientationLockEnabled(enabled)
+                }
+            if orientationLockEnabled {
+                Picker("Locked Orientation", selection: $orientationLock) {
+                    ForEach(OrientationLockOption.allCases) { option in
+                        Text(option.title).tag(option.rawValue)
+                    }
+                }
+                .onChange(of: orientationLock) { _, newValue in
+                    Bridge.applyOrientationLock(newValue)
+                }
+            }
+        } header: {
+            Text("Orientation")
+        } footer: {
+            Text("Holds the app in one orientation while a game is running.")
+        }
     }
 
     private var visibilitySection: some View {

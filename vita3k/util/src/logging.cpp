@@ -32,6 +32,11 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #endif
 
+#if defined(VITA3K_PLATFORM_IOS)
+#include <pthread.h>
+#include <sys/qos.h>
+#endif
+
 #include <chrono>
 #include <functional>
 #include <iostream>
@@ -173,7 +178,17 @@ ExitCode add_sink(const fs::path &log_path) {
 
 void rebuild_default_logger() {
     std::call_once(s_async_logging_once, []() {
+#if defined(VITA3K_PLATFORM_IOS)
+        // The logger thread formats messages and writes them to disk. Nothing
+        // waits on it, so on an Apple SoC it has no business competing with
+        // emulation for a performance core - utility QoS parks it on the
+        // efficiency cores instead, where the same work costs far less power.
+        spdlog::init_thread_pool(ASYNC_LOG_QUEUE_SIZE, 1, []() {
+            pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+        });
+#else
         spdlog::init_thread_pool(ASYNC_LOG_QUEUE_SIZE, 1);
+#endif
     });
 
     auto duplicate_filter = std::make_shared<spdlog::sinks::dup_filter_sink_mt>(std::chrono::seconds(2), spdlog::level::info);

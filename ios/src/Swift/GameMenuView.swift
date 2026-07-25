@@ -16,10 +16,6 @@ struct GameMenuView: View {
     let onQuit: () -> Void
 
     @State private var confirmingQuit = false
-    @AppStorage("tsubomi.orientationLockEnabled")
-    private var orientationLockEnabled = false
-    @AppStorage("tsubomi.orientationLock")
-    private var orientationLock = "portrait"
 
     var body: some View {
         NavigationStack {
@@ -29,26 +25,9 @@ struct GameMenuView: View {
                 }
                 Section {
                     row("Layout Options",
-                        subtitle: "Reposition controls, visibility, scale and opacity",
+                        subtitle: "Controls, orientation lock, scale and opacity",
                         symbol: "gamecontroller.fill",
                         action: onEditLayout)
-                    Toggle("Orientation Lock", isOn: $orientationLockEnabled)
-                        .foregroundStyle(.tint)
-                        .onChange(of: orientationLockEnabled) { _, enabled in
-                            Bridge.setOrientationLockEnabled(enabled)
-                        }
-                    if orientationLockEnabled {
-                        Picker("Locked Orientation", selection: $orientationLock) {
-                            ForEach(OrientationLockOption.allCases) { option in
-                                Text(option.title).tag(option.rawValue)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(.blue)
-                        .onChange(of: orientationLock) { _, newValue in
-                            Bridge.applyOrientationLock(newValue)
-                        }
-                    }
                     row("Trophies",
                         subtitle: "Progress and unlock dates",
                         symbol: "trophy.fill",

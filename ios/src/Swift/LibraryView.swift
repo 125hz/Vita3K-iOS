@@ -533,12 +533,17 @@ private struct LibraryJITBanner: View {
                     "JIT not active",
                     systemImage: "exclamationmark.triangle.fill"
                 )
-                .font(.subheadline.weight(.semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(.black)
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .glassEffect(.regular.tint(.yellow), in: .rect(cornerRadius: 16, style: .continuous))
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                // Sized to its text and centred, rather than a full-width bar.
+                // It is a standing condition, not an alert to be dismissed, so
+                // it should read as a small badge under the title instead of
+                // claiming a whole row of the library.
+                .glassEffect(.regular.tint(.yellow), in: .capsule)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 4)
             }
         }
         .animation(.snappy, value: library.jitAvailable)

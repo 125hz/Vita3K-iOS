@@ -43,6 +43,14 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.46.0", notes: [
+            "Export games now works for a whole library. The archive was capped at 4 GB, so it failed at whichever file crossed that line; exports are zip64 now and can be any size.",
+            "Exporting no longer deflates game data that cannot compress, which makes a large export dramatically faster, and it checks there is room for the archive first instead of failing partway through.",
+            "Orientation Lock has moved out of the in-game menu into Layout Options, and Layout now sits directly below Appearance there.",
+            "Liquid Glass has moved to Settings › General.",
+            "The JIT warning is a small centered badge instead of a full-width bar.",
+            "Less background work while a game runs: the log console is skipped when nothing is reading it, the logger thread runs on the efficiency cores, and playtime is checkpointed every two minutes instead of every thirty seconds.",
+        ]),
         Release(version: "0.45.0", notes: [
             "Settings and Layout Options can turn off Liquid Glass in game. The controls, menu button, performance overlay and live log are drawn as flat translucent shapes instead, which removes a per-frame backdrop sample for every one of them. The library, onboarding and settings keep Liquid Glass either way.",
             "The performance tick no longer wakes the main thread once a second when every metric is switched off.",
