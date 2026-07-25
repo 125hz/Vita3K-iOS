@@ -45,7 +45,7 @@ enum Changelog {
     static let releases: [Release] = [
         Release(version: "0.46.3", notes: [
             "Fixed exports failing at the update directory. A title with no update could abort the whole export; an absent optional directory is now simply absent.",
-            "An update, add-on, license, save or trophy set that cannot be read no longer fails the export. It is skipped, named in the result, and logged with the reason.",
+            "An update, add-on, license, save or trophy set that exists but cannot be read no longer fails the whole export. It is skipped — and because a missing update is only discovered when a restore goes wrong, the export then reports incomplete in a dialog that names every item left out.",
         ]),
         Release(version: "0.46.2", notes: [
             "A failed export now names what it was doing and what the archiver reported, instead of blaming free space for every failure.",

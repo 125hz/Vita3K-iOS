@@ -1603,7 +1603,8 @@ void vita3k_ios_hide_perf_overlay() {
     });
 }
 
-void vita3k_ios_report_import_result(const std::string &message, const bool success) {
+void vita3k_ios_report_import_result(const std::string &message, const bool success,
+    const bool needs_attention) {
     NSString *text = [NSString stringWithUTF8String:message.c_str()] ?: @"Import finished";
     perform_on_main(^{
         [TsubomiLibraryStateBridge setBusyMessage:nil];
@@ -1628,6 +1629,12 @@ void vita3k_ios_report_import_result(const std::string &message, const bool succ
                 [TsubomiSoundEffects playNamed:@"success"];
             if ([text localizedCaseInsensitiveContainsString:@"license"])
                 present_alert(@"License installed", text);
+            // A toast times out in a few seconds. An archive that is missing a
+            // game update is something the user only finds out about when a
+            // restore goes wrong months later, so it gets a dialog they have
+            // to dismiss.
+            if (needs_attention)
+                present_alert(@"Export incomplete", text);
         } else {
             if ([text localizedCaseInsensitiveContainsString:@"needs a matching license"]
                 || [text localizedCaseInsensitiveContainsString:@"work.bin first"])

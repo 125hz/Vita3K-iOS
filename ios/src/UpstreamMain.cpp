@@ -723,6 +723,9 @@ struct ImportJob {
     // (expensive) app rescan, so the library shows updated trophy counts and
     // play time without requiring the game to be booted first.
     bool refresh_library = false;
+    /// Succeeded, but with a caveat the user must acknowledge rather than
+    /// watch scroll past in a toast.
+    bool needs_attention = false;
     std::string message;
     std::string share_path;
     // Populated for a successful game archive install so the frontend can offer
@@ -1643,15 +1646,17 @@ void start_library_archive_export(EmuEnvState &emuenv,
                             ? "Games, updates, add-ons, saves, trophies, and playtime exported"
                             : "Game, license, save, trophies, and playtime exported";
                     } else {
-                        // Naming the first few is enough to act on; the log has
-                        // the rest with the reason the filesystem gave.
+                        // Named in full, not truncated: an update missing from
+                        // a backup is discovered at restore time, and "and 4
+                        // more" is not something the reader can act on.
                         std::string detail = skipped.front();
-                        for (std::size_t i = 1; i < std::min<std::size_t>(skipped.size(), 3); ++i)
+                        for (std::size_t i = 1; i < skipped.size(); ++i)
                             detail += ", " + skipped[i];
-                        if (skipped.size() > 3)
-                            detail += fmt::format(" and {} more", skipped.size() - 3);
-                        job->message = "Exported, but could not include " + detail;
-                        LOG_WARN("Export skipped {} item(s)", skipped.size());
+                        job->message = "Exported, but could not include " + detail
+                            + ". Those will be missing if this archive is restored.";
+                        job->needs_attention = true;
+                        for (const auto &item : skipped)
+                            LOG_WARN("Export could not include {}", item);
                     }
                     job->share_path = output_text;
                 } else {
@@ -2246,6 +2251,7 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
             const bool rescan_apps = g_import_job->rescan_apps;
             const bool refresh_library = g_import_job->refresh_library;
             const bool success = g_import_job->success;
+            const bool needs_attention = g_import_job->needs_attention;
             const std::string message = g_import_job->message;
             const std::string share_path = g_import_job->share_path;
             const auto installed_applications = g_import_job->installed_applications;
@@ -2256,7 +2262,7 @@ std::optional<AppLaunchRequest> choose_boot_title(EmuEnvState &emuenv) {
                 games = native_games(emuenv);
                 vita3k_ios_update_library(games, native_settings(emuenv));
             }
-            vita3k_ios_report_import_result(message, success);
+            vita3k_ios_report_import_result(message, success, needs_attention);
             if (!share_path.empty())
                 vita3k_ios_share_file(share_path);
             if (success && rescan_apps && !was_firmware)

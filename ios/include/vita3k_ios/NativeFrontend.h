@@ -189,7 +189,11 @@ void vita3k_ios_hide_perf_overlay();
 // Dismisses the import-in-progress overlay and shows the outcome. Failures are
 // surfaced as a dismissible alert (so the precise installer detail is readable)
 // while successes use the transient status label.
-void vita3k_ios_report_import_result(const std::string &message, bool success);
+// `needs_attention` forces a modal alert even when the operation succeeded, for
+// a result the user must not scroll past - an export that completed without
+// everything it was asked to carry, say. A plain success is a toast.
+void vita3k_ios_report_import_result(const std::string &message, bool success,
+    bool needs_attention = false);
 
 // Completes a user-requested library rescan. Kept separate from the snapshot
 // push so the refresh control can distinguish a published old snapshot after a
