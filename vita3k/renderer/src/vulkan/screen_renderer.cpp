@@ -21,6 +21,7 @@
 #include "util/log.h"
 #include "vkutil/vkutil.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <exception>
 
@@ -211,29 +212,6 @@ bool ScreenRenderer::setup() {
         state.deep_stencil_use = vk::Format::eD16Unorm;
     }
 
-    // preferred order : mailbox > fifo_relaxed > fifo > whatever
-    // the only drawback for mailbox is that it draws more power, so maybe on a portable device use something else
-    // this one should always be available
-    present_mode = vk::PresentModeKHR::eImmediate;
-    const auto present_modes = state.physical_device.getSurfacePresentModesKHR(surface);
-    for (const auto &mode : present_modes) {
-        if (mode == vk::PresentModeKHR::eMailbox) {
-            present_mode = mode;
-            break;
-        }
-
-        if (mode == vk::PresentModeKHR::eFifoRelaxed) {
-            present_mode = mode;
-        }
-        if (present_mode == vk::PresentModeKHR::eFifoRelaxed)
-            continue;
-
-        if (mode == vk::PresentModeKHR::eFifo) {
-            present_mode = mode;
-        }
-    }
-    LOG_INFO("Present mode: {}", vk::to_string(present_mode));
-
     create_render_pass();
 
     create_swapchain();
@@ -247,7 +225,46 @@ bool ScreenRenderer::setup() {
     return true;
 }
 
+void ScreenRenderer::select_present_mode() {
+    const bool v_sync = static_cast<renderer::State &>(state).vsync_enabled.load(std::memory_order_relaxed);
+    const auto present_modes = state.physical_device.getSurfacePresentModesKHR(surface);
+    const auto supports = [&](const vk::PresentModeKHR mode) {
+        return std::find(present_modes.begin(), present_modes.end(), mode) != present_modes.end();
+    };
+
+    // Immediate is the last resort in both branches: it is the one mode that
+    // needs no queueing support from the driver.
+    present_mode = vk::PresentModeKHR::eImmediate;
+    if (v_sync) {
+        // With v-sync on, presentation is paced by the display. On a battery
+        // powered device that pacing is the point: fifo blocks acquire until an
+        // image is actually free, so the render thread cannot run ahead and
+        // produce frames the compositor will never show. fifo is the only mode
+        // Vulkan guarantees, so the fallbacks here are theoretical.
+        if (supports(vk::PresentModeKHR::eFifo)) {
+            present_mode = vk::PresentModeKHR::eFifo;
+        } else if (supports(vk::PresentModeKHR::eFifoRelaxed)) {
+            present_mode = vk::PresentModeKHR::eFifoRelaxed;
+        }
+    } else {
+        // v-sync off means lowest latency at the cost of power, and tearing if
+        // it comes to immediate: mailbox > fifo_relaxed > immediate.
+        if (supports(vk::PresentModeKHR::eMailbox)) {
+            present_mode = vk::PresentModeKHR::eMailbox;
+        } else if (supports(vk::PresentModeKHR::eFifoRelaxed)) {
+            present_mode = vk::PresentModeKHR::eFifoRelaxed;
+        }
+    }
+
+    LOG_INFO("Present mode: {} (v-sync {})", vk::to_string(present_mode), v_sync ? "on" : "off");
+}
+
 void ScreenRenderer::create_swapchain() {
+    // Selected here rather than once in setup(): the present mode is baked into
+    // the swapchain, and a v-sync change rebuilds the swapchain without going
+    // back through setup().
+    select_present_mode();
+
     surface_capabilities = state.physical_device.getSurfaceCapabilitiesKHR(surface);
 
     if (surface_capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {

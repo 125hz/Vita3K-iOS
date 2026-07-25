@@ -18,6 +18,7 @@
 static SDL_JoystickID g_virtual_joystick_id = 0;
 static SDL_Joystick *g_virtual_joystick = nullptr;
 static std::atomic_bool g_physical_controller_connected = false;
+static std::atomic_bool g_vita_touchscreen_enabled = true;
 static std::atomic<float> g_safe_area_top_pixels = 0.0f;
 // The SwiftUI on-screen controller (TsubomiControlsHost). Its configuration -
 // positions, sizes, visibility, opacity - lives in ControlsModel on the Swift
@@ -231,6 +232,10 @@ void vita3k_ios_hide_virtual_controller() {
         g_three_finger_tap = nil;
         [TsubomiControlsHost releaseAllInputs];
         [TsubomiControlsHost setLayoutEditing:NO];
+        // The overlay is going away, so nothing is claiming touches any more.
+        // Leaving the guest's touch panel switched off would carry a per-game
+        // controller preference into the next session.
+        vita3k_ios_set_vita_touchscreen_enabled(true);
         dismissPresentedSheet(nil);
         [g_overlay_controller.view removeFromSuperview];
         g_overlay_controller = nil;
@@ -335,6 +340,14 @@ void vita3k_ios_virtual_pad_release_all() {
         SDL_SetJoystickVirtualAxis(g_virtual_joystick, axis, 0);
     SDL_SetJoystickVirtualAxis(g_virtual_joystick, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
     SDL_SetJoystickVirtualAxis(g_virtual_joystick, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
+}
+
+void vita3k_ios_set_vita_touchscreen_enabled(const bool enabled) {
+    g_vita_touchscreen_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool vita3k_ios_vita_touchscreen_enabled() {
+    return g_vita_touchscreen_enabled.load(std::memory_order_relaxed);
 }
 
 void vita3k_ios_set_physical_controller_connected(bool connected) {

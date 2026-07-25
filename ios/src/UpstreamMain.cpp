@@ -2649,6 +2649,9 @@ int main(int argc, char *argv[]) {
         uint64_t last_setframe_seen = emuenv->display.last_setframe_vblank_count.load();
         Uint64 last_setframe_change_ms = watchdog_start_ms;
         Uint64 next_stall_dump_ms = watchdog_start_ms + 8000;
+        // Per session, not a function-local static: a static carried the
+        // previous title's timestamp into the next launch.
+        Uint64 last_mem_log_ms = 0;
 
         LOG_INFO("iOS guest watchdog started: first snapshot at {}ms", scheduled_dump_at_ms[0]);
 
@@ -2665,10 +2668,9 @@ int main(int argc, char *argv[]) {
                 last_setframe_change_ms = now_ms;
             }
 
-            // Sample the OS memory headroom every ~10s. If a freeze is really a
-            // jetsam kill, the log shows this number collapsing toward zero
+            // Sample the OS memory headroom periodically. If a freeze is really
+            // a jetsam kill, the log shows this number collapsing toward zero
             // right before the process dies (no signal is delivered for jetsam).
-            static Uint64 last_mem_log_ms = 0;
             if (now_ms - last_mem_log_ms >= 10000) {
                 last_mem_log_ms = now_ms;
                 LOG_INFO("iOS memory headroom: {} MiB available before jetsam",
@@ -2685,6 +2687,18 @@ int main(int argc, char *argv[]) {
             if (now_ms - last_setframe_change_ms >= 8000 && now_ms >= next_stall_dump_ms) {
                 app::dump_guest_state(*emuenv, "no sceDisplaySetFrameBuf progress for 8s");
                 next_stall_dump_ms = now_ms + 30000;
+            }
+
+            // Retire once the scheduled snapshots are done and the title is
+            // presenting: everything this thread exists to catch happens during
+            // boot. A session is played for hours, and a wake-up every second
+            // for all of it - each one touching the log - is a battery cost
+            // paid for a diagnostic that has already answered its question.
+            if (next_scheduled_dump >= std::size(scheduled_dump_at_ms)
+                && last_setframe_seen != 0
+                && now_ms - last_setframe_change_ms < 8000) {
+                LOG_INFO("iOS guest watchdog retiring: boot diagnostics complete, title is presenting frames");
+                break;
             }
         }
     });
@@ -2730,6 +2744,17 @@ int main(int argc, char *argv[]) {
             case SDL_EVENT_FINGER_DOWN:
             case SDL_EVENT_FINGER_MOTION:
             case SDL_EVENT_FINGER_UP: {
+                if (!vita3k_ios_vita_touchscreen_enabled()) {
+                    // The dynamic joystick owns the whole screen, so the
+                    // overlay normally swallows these before SDL ever sees
+                    // them. One can still arrive from a finger that was
+                    // already down when the mode changed, or from outside the
+                    // overlay's bounds; drop it, and drop any contact the
+                    // guest is still holding, so the panel reads as untouched.
+                    if (emuenv->touch.finger_count != 0)
+                        emuenv->touch.finger_count = 0;
+                    break;
+                }
                 handle_touch_event(emuenv->touch, event.tfinger);
                 if (event.type != SDL_EVENT_FINGER_MOTION) {
                     LOG_DEBUG("iOS Vita touch {}: finger={} x={:.4f} y={:.4f} active={}",

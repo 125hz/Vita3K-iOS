@@ -66,24 +66,65 @@ final class ControlsModel {
 
     var opacity: Double = 0.58 { didSet { scheduleSave() } }
     var scale: Double = 1.0 { didSet { scheduleSave() } }
-    var hideWhenPhysical = true { didSet { scheduleSave() } }
+    /// Also republishes the touchscreen state: with a pad attached this decides
+    /// whether the overlay is on screen at all, and so whether floating sticks
+    /// are still claiming every touch.
+    var hideWhenPhysical = true {
+        didSet {
+            guard hideWhenPhysical != oldValue else { return }
+            endDynamicSticks()
+            publishTouchscreenState()
+            scheduleSave()
+        }
+    }
     var haptics = true { didSet { scheduleSave() } }
     var snapGuides = true { didSet { scheduleSave() } }
+
+    /// Floating sticks: the fixed sticks disappear and each half of the screen
+    /// becomes a stick that centres itself wherever the finger lands.
+    ///
+    /// Off by default. Turning it on hands the whole screen to the controller,
+    /// which means Vita touchscreen input can no longer reach the game - see
+    /// `publishTouchscreenState()`.
+    var dynamicSticks = false {
+        didSet {
+            guard dynamicSticks != oldValue else { return }
+            endDynamicSticks()
+            publishTouchscreenState()
+            scheduleSave()
+        }
+    }
 
     /// Placements per orientation key ("portrait" / "landscape").
     private(set) var layouts: [String: [String: ControlPlacement]] = [:]
 
     /// True while the user is dragging controls around.
-    var isEditing = false
+    var isEditing = false {
+        didSet {
+            guard isEditing != oldValue else { return }
+            endDynamicSticks()
+            publishTouchscreenState()
+        }
+    }
     /// Set while a physical controller is attached; with `hideWhenPhysical`
     /// this hides the overlay.
-    var physicalControllerConnected = false
+    var physicalControllerConnected = false {
+        didSet {
+            guard physicalControllerConnected != oldValue else { return }
+            endDynamicSticks()
+            publishTouchscreenState()
+        }
+    }
 
     /// Controls currently held down, for the pressed tint. Touch identity is
     /// owned by the touch surface; this is presentation only.
     var pressedControls: Set<String> = []
     /// Live thumb offsets for the sticks, normalized to -1...1.
     var stickOffsets: [String: CGPoint] = [:]
+    /// Where each floating stick was placed, in overlay coordinates. A key is
+    /// present only while that stick's finger is down, so this doubles as the
+    /// "is this zone taken" test.
+    var dynamicStickCenters: [String: CGPoint] = [:]
 
     /// Guide lines shown while dragging, in overlay coordinates. Nil when the
     /// dragged control is not aligned with anything.
@@ -153,19 +194,110 @@ final class ControlsModel {
         return CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
     }
 
+    /// True when the on-screen pad is stood down for an attached physical
+    /// controller. The menu button is unaffected; it is chrome, not an input.
+    var touchControlsHidden: Bool {
+        hideWhenPhysical && physicalControllerConnected && !isEditing
+    }
+
     /// Controls that should be drawn and hit-tested, in draw order. Excludes
     /// the menu button, which is always shown and is rendered separately (it is
     /// the way back to the in-game menu, so it must survive both the
     /// physical-controller hide and the touch surface's control filtering).
     func visibleControls(in size: CGSize) -> [ControlDefinition] {
-        if hideWhenPhysical && physicalControllerConnected && !isEditing {
+        if touchControlsHidden {
             return []
         }
         return Self.definitions.filter { definition in
             guard definition.kind != .menu else { return false }
+            // The fixed sticks have no place on screen once each half of the
+            // screen is a stick of its own.
+            if dynamicSticks, case .stick = definition.kind { return false }
             guard let placement = placement(definition.id, in: size) else { return false }
             return placement.visible
         }
+    }
+
+    // MARK: - Floating sticks
+
+    static let leftStickID = "left_stick"
+    static let rightStickID = "right_stick"
+
+    /// Whether a touch on empty screen should raise a floating stick right now.
+    ///
+    /// Editing is excluded: the editor needs every touch for dragging, and a
+    /// stick raised under the finger would fight the drag.
+    var dynamicSticksActive: Bool {
+        dynamicSticks && !touchControlsHidden && !isEditing
+    }
+
+    /// Which floating stick a touch at `point` belongs to: the left half of the
+    /// screen drives the left stick, the right half the right stick. Nil when
+    /// floating sticks are off or that zone already has a finger in it.
+    func dynamicStickID(at point: CGPoint, in size: CGSize) -> String? {
+        guard dynamicSticksActive, size.width > 0 else { return nil }
+        let id = point.x < size.width / 2 ? Self.leftStickID : Self.rightStickID
+        // One finger per zone: a second one would fight the first for the same
+        // pair of axes.
+        return dynamicStickCenters[id] == nil ? id : nil
+    }
+
+    /// Diameter of a floating stick, matching the fixed stick it replaces so
+    /// the Size slider still means the same thing.
+    var dynamicStickDiameter: CGFloat {
+        (Self.definition(for: Self.leftStickID)?.baseSize.width ?? 96) * scale
+    }
+
+    /// The menu button's rect, when it is on screen. Its own view handles the
+    /// tap, so both the touch surface and the overlay's root must leave this
+    /// area alone even when floating sticks claim everything else.
+    func menuFrame(in size: CGSize) -> CGRect? {
+        guard let menu = Self.definition(for: "menu"), isVisible(menu.id, in: size) else { return nil }
+        return frame(for: menu, in: size)
+    }
+
+    /// Whether the overlay owns a touch at `point`, or whether it must fall
+    /// through to the Metal view below - which is how Vita touchscreen input
+    /// reaches the game.
+    ///
+    /// The single answer used by both the overlay's root hit test and the touch
+    /// surface's `point(inside:)`, so the two cannot disagree about what is
+    /// passthrough and what is a control.
+    func claimsTouch(at point: CGPoint, in size: CGSize) -> Bool {
+        if isEditing { return true }
+        if controlFrames(in: size).contains(where: { $0.contains(point) }) { return true }
+        if menuFrame(in: size)?.contains(point) == true { return true }
+        // Floating sticks own every remaining point, which is exactly why they
+        // disable the Vita touchscreen.
+        return dynamicSticksActive
+    }
+
+    private func controlFrames(in size: CGSize) -> [CGRect] {
+        visibleControls(in: size).compactMap { frame(for: $0, in: size) }
+    }
+
+    /// Drops any raised floating stick and centres its axes. Used whenever the
+    /// mode itself changes underneath a finger that is still down.
+    func endDynamicSticks() {
+        guard !dynamicStickCenters.isEmpty else { return }
+        for id in dynamicStickCenters.keys {
+            guard case .stick(let xAxis, let yAxis)? = Self.definition(for: id)?.kind else { continue }
+            ControllerInput.setAxis(xAxis, value: 0)
+            ControllerInput.setAxis(yAxis, value: 0)
+            stickOffsets[id] = .zero
+        }
+        dynamicStickCenters.removeAll()
+    }
+
+    /// Tells the core whether Vita front-touchscreen input is still reachable.
+    ///
+    /// With floating sticks on, the overlay claims every touch, so no finger
+    /// ever reaches SDL. The core is told as well rather than relying on that
+    /// alone: a finger already down when the mode flips, or a touch that began
+    /// outside the overlay, would otherwise leave a phantom contact on the
+    /// guest's touch panel.
+    func publishTouchscreenState() {
+        ControllerInput.setVitaTouchscreenEnabled(!dynamicSticksActive)
     }
 
     // MARK: - Performance overlay position
@@ -303,6 +435,7 @@ final class ControlsModel {
         hideWhenPhysical = root["hideWhenPhysical"] as? Bool ?? hideWhenPhysical
         haptics = root["haptics"] as? Bool ?? haptics
         snapGuides = root["snapGuides"] as? Bool ?? snapGuides
+        dynamicSticks = root["dynamicSticks"] as? Bool ?? dynamicSticks
 
         // Merge rather than replace: a layout saved by an older build may not
         // contain every control, and those must keep their built-in position
@@ -345,6 +478,7 @@ final class ControlsModel {
             "hideWhenPhysical": hideWhenPhysical,
             "haptics": haptics,
             "snapGuides": snapGuides,
+            "dynamicSticks": dynamicSticks,
             // Kept for compatibility with the layout migration the UIKit
             // overlay wrote; nothing reads it any more.
             "layoutVersion": 4,

@@ -297,6 +297,14 @@ NS_SWIFT_NAME(VirtualPad)
 /// down, so nothing stays stuck on.
 + (void)releaseAllInputs;
 
+/// Whether SDL finger events still reach the guest's front touch panel.
+///
+/// Turned off while the dynamic joystick is on: the overlay then claims every
+/// touch, so a finger would either never arrive or arrive as a phantom contact
+/// left over from before the mode changed.
++ (void)setVitaTouchscreenEnabled:(BOOL)enabled
+    NS_SWIFT_NAME(setVitaTouchscreenEnabled(_:));
+
 /// The overlay's measured top safe-area inset, in pixels. The core reads this
 /// to letterbox the guest image below the notch, and cannot ask SwiftUI for it.
 + (void)reportSafeAreaTopPixels:(float)pixels

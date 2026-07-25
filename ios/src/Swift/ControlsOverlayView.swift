@@ -43,6 +43,12 @@ struct ControlsOverlayView: View {
                 }
                 .opacity(model.isEditing ? 1 : model.opacity)
 
+                // Outside the glass container: a stick that appears anywhere
+                // and moves has nothing stable to merge its highlights with,
+                // and the container's morph would fight its fade.
+                floatingSticks(in: size)
+                    .opacity(model.opacity)
+
                 // Positioned separately so it can be dragged in the editor and
                 // so it is not affected by the controls' opacity.
                 performanceOverlay(in: size)
@@ -92,6 +98,25 @@ struct ControlsOverlayView: View {
         default:
             ControlFace(definition: definition, model: model)
         }
+    }
+
+    // MARK: - Floating sticks
+
+    /// Both floating sticks, always present in the hierarchy and each hiding
+    /// itself when its finger is up.
+    ///
+    /// Kept out of this view's own body deliberately: if the parent read the
+    /// centres, every touch-down and lift would rebuild the whole overlay,
+    /// including the glass container. Each leaf reads its own centre instead.
+    private func floatingSticks(in size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            FloatingStick(id: ControlsModel.leftStickID, model: model)
+            FloatingStick(id: ControlsModel.rightStickID, model: model)
+        }
+        .frame(width: size.width, height: size.height)
+        // The touch surface above owns these fingers; the drawing is a
+        // readout of where the stick was raised, never a target.
+        .allowsHitTesting(false)
     }
 
     // MARK: - Menu button
@@ -342,19 +367,57 @@ private struct StickControl: View {
         // this stick, not the whole overlay.
         let offset = model.stickOffsets[definition.id] ?? .zero
         return GeometryReader { proxy in
-            let side = min(proxy.size.width, proxy.size.height)
-            let thumbSide = side * 0.46
-            let travel = (side - thumbSide) / 2
-            ZStack {
-                Circle()
-                    .fill(.clear)
-                    .glassEffect(.regular, in: .circle)
-                Circle()
-                    .fill(.thinMaterial)
-                    .frame(width: thumbSide, height: thumbSide)
-                    .offset(x: offset.x * travel, y: offset.y * travel)
-                    // No animation: the thumb must track the finger exactly.
+            StickFace(side: min(proxy.size.width, proxy.size.height), offset: offset)
+        }
+    }
+}
+
+/// A stick raised under the finger, at the point it landed.
+///
+/// Present in the hierarchy whether or not it is up, so raising one never
+/// invalidates the overlay around it - only this leaf.
+private struct FloatingStick: View {
+    let id: String
+    var model: ControlsModel
+
+    var body: some View {
+        let center = model.dynamicStickCenters[id]
+        return ZStack {
+            if let center {
+                StickFace(side: model.dynamicStickDiameter,
+                          offset: model.stickOffsets[id] ?? .zero)
+                    .position(x: center.x, y: center.y)
+                    // Materialises rather than snapping in, which is what the
+                    // material does everywhere else in the app.
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Scoped to the centre: the thumb's own movement must stay unanimated
+        // so it tracks the finger exactly.
+        .animation(.easeOut(duration: 0.12), value: center)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The shared face of both stick kinds: a glass well with a thumb in it.
+private struct StickFace: View {
+    let side: CGFloat
+    let offset: CGPoint
+
+    var body: some View {
+        let thumbSide = side * 0.46
+        let travel = (side - thumbSide) / 2
+        return ZStack {
+            Circle()
+                .fill(.clear)
+                .glassEffect(.regular, in: .circle)
+            Circle()
+                .fill(.thinMaterial)
+                .frame(width: thumbSide, height: thumbSide)
+                .offset(x: offset.x * travel, y: offset.y * travel)
+                // No animation: the thumb must track the finger exactly.
+        }
+        .frame(width: side, height: side)
     }
 }

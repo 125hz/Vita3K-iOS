@@ -63,8 +63,15 @@ struct ControlTouchSurface: UIViewRepresentable {
         /// Only points inside a visible control belong to this view; everything
         /// else falls through to the Metal view underneath, which is how the
         /// game receives Vita touchscreen input.
+        ///
+        /// With floating sticks on there is no "everything else": the empty
+        /// screen is the sticks, so this claims all of it apart from the menu
+        /// button, whose own view handles the tap.
         override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-            control(at: point) != nil
+            guard let model else { return false }
+            if control(at: point) != nil { return true }
+            guard model.dynamicSticksActive else { return false }
+            return model.menuFrame(in: bounds.size)?.contains(point) != true
         }
 
         private func control(at point: CGPoint) -> ControlDefinition? {
@@ -84,7 +91,13 @@ struct ControlTouchSurface: UIViewRepresentable {
             guard let model else { return }
             for touch in touches {
                 let location = touch.location(in: self)
-                guard let definition = control(at: location) else { continue }
+                guard let definition = control(at: location) else {
+                    // Empty screen. A control was not hit, so this is either a
+                    // floating stick or nothing at all - which is why pressing
+                    // a button never raises one.
+                    beginDynamicStick(touch: touch, at: location, model: model)
+                    continue
+                }
                 activeTouches[ObjectIdentifier(touch)] = definition.id
                 press(definition, at: location)
                 if model.haptics, case .button = definition.kind {
@@ -104,6 +117,15 @@ struct ControlTouchSurface: UIViewRepresentable {
                 // the finger slides, matching a physical pad.
                 updateStick(definition, touch: touch, model: model)
             }
+        }
+
+        /// Raises a floating stick centred exactly where the finger landed, so
+        /// the first movement from that point is the deflection - no jump.
+        private func beginDynamicStick(touch: UITouch, at location: CGPoint, model: ControlsModel) {
+            guard let id = model.dynamicStickID(at: location, in: bounds.size) else { return }
+            activeTouches[ObjectIdentifier(touch)] = id
+            model.dynamicStickCenters[id] = location
+            model.stickOffsets[id] = .zero
         }
 
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -131,6 +153,9 @@ struct ControlTouchSurface: UIViewRepresentable {
                     ControllerInput.setAxis(xAxis, value: 0)
                     ControllerInput.setAxis(yAxis, value: 0)
                     model.stickOffsets[id] = .zero
+                    // Lowers the floating stick and frees its half of the
+                    // screen for the next touch. A no-op for a fixed stick.
+                    model.dynamicStickCenters[id] = nil
                 case .menu:
                     model.pressedControls.remove(id)
                     onMenuTap?()
@@ -155,13 +180,23 @@ struct ControlTouchSurface: UIViewRepresentable {
         }
 
         private func updateStick(_ definition: ControlDefinition, touch: UITouch, model: ControlsModel) {
-            guard case .stick(let xAxis, let yAxis) = definition.kind,
-                  let frame = model.frame(for: definition, in: bounds.size)
-            else { return }
+            guard case .stick(let xAxis, let yAxis) = definition.kind else { return }
+            // A floating stick pivots around wherever it was raised; a fixed
+            // one around its place in the layout.
+            let center: CGPoint
+            let radius: CGFloat
+            if let dynamicCenter = model.dynamicStickCenters[definition.id] {
+                center = dynamicCenter
+                radius = model.dynamicStickDiameter / 2
+            } else if let frame = model.frame(for: definition, in: bounds.size) {
+                center = CGPoint(x: frame.midX, y: frame.midY)
+                radius = frame.width / 2
+            } else {
+                return
+            }
             let location = touch.location(in: self)
-            let radius = frame.width / 2
-            var dx = (location.x - frame.midX) / radius
-            var dy = (location.y - frame.midY) / radius
+            var dx = (location.x - center.x) / radius
+            var dy = (location.y - center.y) / radius
             // Clamp to the unit circle so a diagonal is not stronger than a
             // cardinal direction, which is what an analogue stick does.
             let magnitude = (dx * dx + dy * dy).squareRoot()
@@ -199,6 +234,12 @@ enum ControllerInput {
     /// Drops every input, for when a session pauses with controls held.
     static func releaseAll() {
         VirtualPad.releaseAllInputs()
+    }
+
+    /// Whether finger events still reach the guest's front touch panel. Turned
+    /// off while floating sticks own the whole screen.
+    static func setVitaTouchscreenEnabled(_ enabled: Bool) {
+        VirtualPad.setVitaTouchscreenEnabled(enabled)
     }
 }
 

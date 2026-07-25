@@ -68,6 +68,15 @@ struct VKState : public renderer::State {
         screen_renderer.need_rebuild = true;
     }
 
+    // The present mode is baked into the swapchain, so a v-sync change only
+    // takes effect once the swapchain is rebuilt.
+    void set_vsync_state(bool enable) override {
+        const bool changed = vsync_enabled.load(std::memory_order_relaxed) != enable;
+        renderer::State::set_vsync_state(enable);
+        if (changed)
+            request_screen_rebuild();
+    }
+
     // Used for memory allocation and general query later.
     vk::PhysicalDevice physical_device;
     vk::PhysicalDeviceProperties physical_device_properties;

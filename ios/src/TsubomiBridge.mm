@@ -290,6 +290,10 @@ id bridge_games() {
     vita3k_ios_virtual_pad_release_all();
 }
 
++ (void)setVitaTouchscreenEnabled:(BOOL)enabled {
+    vita3k_ios_set_vita_touchscreen_enabled(enabled);
+}
+
 + (void)reportSafeAreaTopPixels:(float)pixels {
     vita3k_ios_report_safe_area_top_pixels(pixels);
 }

@@ -33,6 +33,13 @@ void vita3k_ios_virtual_pad_set_button(int button, bool pressed);
 void vita3k_ios_virtual_pad_set_axis(int axis, short value);
 void vita3k_ios_virtual_pad_release_all();
 
+// Vita front-touchscreen passthrough. The dynamic joystick turns this off: the
+// on-screen controller then owns every touch, and a finger that still reached
+// SDL would land on the guest's touch panel as a contact the player never
+// intended. Read from the iOS event loop, written from the main thread.
+void vita3k_ios_set_vita_touchscreen_enabled(bool enabled);
+bool vita3k_ios_vita_touchscreen_enabled();
+
 // Re-opens the floating in-game menu (no-op when no game overlay is active).
 // Used by sub-screens (controller options, trophies, performance HUD) so
 // their Back action returns to the menu instead of dropping to the game.

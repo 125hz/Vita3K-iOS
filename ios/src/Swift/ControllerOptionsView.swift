@@ -65,6 +65,20 @@ struct ControllerOptionsView: View {
                     Text("Changes apply live to the controls behind this sheet.")
                 }
 
+                Section {
+                    Toggle("Dynamic Joystick", isOn: $model.dynamicSticks)
+                } header: {
+                    Text("Joystick")
+                } footer: {
+                    // Two paragraphs rather than one: the first is what the
+                    // switch does, the second is the consequence a player has
+                    // to accept, and merging them buries the second.
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Centers the joystick wherever you place your finger on screen. The on-screen sticks are hidden; the left half of the screen becomes the left stick and the right half becomes the right stick. Pressing a button never raises one.")
+                        Text("This disables the Vita touchscreen. The controller takes the whole screen, so games that ask you to touch or swipe the screen will not receive it.")
+                    }
+                }
+
                 Section("Behaviour") {
                     Toggle("Hide for physical controller", isOn: $model.hideWhenPhysical)
                     Toggle("Haptic feedback", isOn: $model.haptics)
@@ -124,12 +138,22 @@ struct ControllerOptionsView: View {
 
             ForEach(ControlsModel.definitions) { definition in
                 Toggle(definition.accessibilityLabel, isOn: visibilityBinding(for: definition))
+                    // A stick's own switch means nothing while the screen
+                    // halves are the sticks.
+                    .disabled(isStick(definition) && model.dynamicSticks)
             }
         } header: {
             Text("Visible Controls")
         } footer: {
-            Text("Turn off any control a game does not use. The Vita touchscreen still works through the gaps between controls.")
+            Text(model.dynamicSticks
+                ? "Turn off any control a game does not use. The stick switches are unavailable while Dynamic Joystick is on."
+                : "Turn off any control a game does not use. The Vita touchscreen still works through the gaps between controls.")
         }
+    }
+
+    private func isStick(_ definition: ControlDefinition) -> Bool {
+        if case .stick = definition.kind { return true }
+        return false
     }
 
     private func visibilityBinding(for definition: ControlDefinition) -> Binding<Bool> {

@@ -43,6 +43,12 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.44.0", notes: [
+            "Layout Options can turn on Dynamic Joystick: the on-screen sticks are hidden, and each half of the screen becomes a stick that centers itself wherever you place your finger and lifts when you let go. Pressing a button never raises one.",
+            "Dynamic Joystick disables the Vita touchscreen, because the controller then owns the whole screen. The setting says so before you turn it on, and turning it back off restores touch input.",
+            "V-Sync now chooses the Vulkan present mode instead of being ignored. Left on, the renderer is paced by the display rather than running ahead of it, which cuts battery drain over a long session.",
+            "The boot diagnostic watchdog retires once a game is running, instead of waking the CPU every second and writing to the log for the rest of the session.",
+        ]),
         Release(version: "0.43.0", notes: [
             "All-game-save archives now carry save data, trophy progress, playtime, and last-played dates, and restore each type when imported.",
         ]),

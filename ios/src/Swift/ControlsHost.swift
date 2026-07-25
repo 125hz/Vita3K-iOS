@@ -33,28 +33,14 @@ private final class ControlsHostingController<Content: View>: UIHostingControlle
 /// makes true sibling-view passthrough possible.
 private final class ControlsPassthroughView: UIView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let model = ControlsModel.shared
-        if model.isEditing {
-            return super.hitTest(point, with: event)
+        // One shared answer with ControlTouchSurface's point(inside:), so the
+        // root and the surface can never disagree about what passes through.
+        guard ControlsModel.shared.claimsTouch(at: point, in: bounds.size) else {
+            // Returning nil from the top-level overlay, rather than only from a
+            // descendant, lets UIWindow continue hit-testing the SDL/Metal view.
+            return nil
         }
-
-        let size = bounds.size
-        let hitsControl = model.visibleControls(in: size).contains { definition in
-            model.frame(for: definition, in: size)?.contains(point) == true
-        }
-        if hitsControl {
-            return super.hitTest(point, with: event)
-        }
-
-        if model.isVisible("menu", in: size),
-           let menu = ControlsModel.definition(for: "menu"),
-           model.frame(for: menu, in: size)?.contains(point) == true {
-            return super.hitTest(point, with: event)
-        }
-
-        // Returning nil from the top-level overlay, rather than only from a
-        // descendant, lets UIWindow continue hit-testing the SDL/Metal view.
-        return nil
+        return super.hitTest(point, with: event)
     }
 }
 
@@ -92,6 +78,10 @@ final class ControlsHost: NSObject {
 
     @objc(controlsViewControllerWithMenuHandler:)
     static func controlsViewController(onMenuTap: @escaping () -> Void) -> UIViewController {
+        // The overlay is going up over a live game: tell the core now whether
+        // Vita touchscreen input can still reach it, rather than waiting for
+        // the first change to the floating-stick setting.
+        ControlsModel.shared.publishTouchscreenState()
         let controller = ControlsContainerController(rootView: ControlsOverlayView(onMenuTap: onMenuTap))
         // The overlay is chrome over a live drawable: it must never paint a
         // background of its own, or the game disappears behind it.
@@ -127,6 +117,7 @@ final class ControlsHost: NSObject {
     @objc static func releaseAllInputs() {
         ControlsModel.shared.pressedControls.removeAll()
         ControlsModel.shared.stickOffsets.removeAll()
+        ControlsModel.shared.dynamicStickCenters.removeAll()
         ControllerInput.releaseAll()
     }
 

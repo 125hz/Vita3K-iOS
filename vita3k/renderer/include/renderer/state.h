@@ -128,6 +128,10 @@ struct State {
 
     std::atomic<bool> async_flip_requested{ false };
     std::atomic<int> pending_vsync{ -1 };
+    // Current v-sync preference. pending_vsync above is a one-shot the OpenGL
+    // backend consumes; this is the durable state, which Vulkan reads when it
+    // picks a swapchain present mode.
+    std::atomic<bool> vsync_enabled{ true };
 
     std::unique_ptr<std::thread> render_thread;
     std::atomic<bool> render_abort{ false };
@@ -196,7 +200,8 @@ struct State {
     void set_surface_sync_state(bool disable) {
         disable_surface_sync = disable;
     }
-    void set_vsync_state(bool enable) {
+    virtual void set_vsync_state(bool enable) {
+        vsync_enabled.store(enable, std::memory_order_relaxed);
         pending_vsync.store(enable ? 1 : 0, std::memory_order_relaxed);
     }
     void set_stretch_display(bool enable) {
