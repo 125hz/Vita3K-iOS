@@ -112,9 +112,9 @@ struct SettingsView: View {
     }
 
     private var runtimeSection: some View {
-        Section("Developer") {
+        Section {
             Button {
-                Bridge.exportLibraryArchive()
+                exportGames()
             } label: {
                 Label("Export games", systemImage: "square.and.arrow.up")
             }
@@ -123,7 +123,22 @@ struct SettingsView: View {
             } label: {
                 Label("Import games…", systemImage: "square.and.arrow.down")
             }
+        } header: {
+            Text("Developer")
+        } footer: {
+            Text("Exporting a large library takes a few minutes. A share sheet opens when the archive is ready.")
         }
+    }
+
+    /// Export runs on a background thread and reports through the library's
+    /// busy overlay and status toast - both of which live *behind* this sheet.
+    /// So this closes Settings first, exactly as Done does, and the work is
+    /// visible instead of appearing to do nothing at all.
+    private func exportGames() {
+        model.save()
+        onFinish()
+        LibraryStateBridge.setBusy("Exporting games…")
+        Bridge.exportLibraryArchive()
     }
 
     private var videoSection: some View {
@@ -241,6 +256,11 @@ struct SettingsView: View {
                 LibraryState.shared.setSortOption(rawValue: newValue)
             }
             Button {
+                // Same reason as exportGames(): the progress lives behind this
+                // sheet, so close it first.
+                model.save()
+                onFinish()
+                LibraryStateBridge.setBusy("Exporting saves…")
                 Bridge.exportAllSaves()
             } label: {
                 Label("Export all game saves", systemImage: "square.and.arrow.up")

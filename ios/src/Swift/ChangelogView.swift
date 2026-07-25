@@ -43,6 +43,9 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.46.1", notes: [
+            "Exporting games or saves now closes Settings and shows progress. It ran silently behind the sheet before, so a long export looked like the button had done nothing.",
+        ]),
         Release(version: "0.46.0", notes: [
             "Export games now works for a whole library. The archive was capped at 4 GB, so it failed at whichever file crossed that line; exports are zip64 now and can be any size.",
             "Exporting no longer deflates game data that cannot compress, which makes a large export dramatically faster, and it checks there is room for the archive first instead of failing partway through.",

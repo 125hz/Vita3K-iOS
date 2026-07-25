@@ -360,12 +360,16 @@ struct LibraryView: View {
             Label("Import save", systemImage: "square.and.arrow.down")
         }
         Button {
+            // No sheet to close here, but the archive still takes long enough
+            // that a silent menu dismissal reads as nothing having happened.
+            LibraryStateBridge.setBusy("Exporting save…")
             Bridge.exportSave(titleID: game.titleID)
         } label: {
             Label("Export save", systemImage: "square.and.arrow.up")
         }
         if runtimeLatch.revealed {
             Button {
+                LibraryStateBridge.setBusy("Exporting \(game.displayTitle)…")
                 Bridge.exportGameArchive(titleID: game.titleID)
             } label: {
                 Label("Export game", systemImage: "shippingbox.and.arrow.backward")
