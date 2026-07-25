@@ -1031,26 +1031,10 @@ fs::path all_saves_path(const EmuEnvState &emuenv) {
     return emuenv.vita_fs_path / "ux0/user" / emuenv.io.user_id / "savedata";
 }
 
-// Total bytes of the regular files under `root`, for the free-space estimate.
-// Missing directories count as zero: not every title has a patch or add-ons.
-std::uintmax_t directory_size(const fs::path &root) {
-    boost::system::error_code error;
-    if (!fs::exists(root, error) || error)
-        return 0;
-    std::uintmax_t total = 0;
-    for (fs::recursive_directory_iterator it(root, error), end;
-         it != end && !error; it.increment(error)) {
-        if (!fs::is_regular_file(it->path(), error) || error)
-            continue;
-        boost::system::error_code size_error;
-        const auto size = fs::file_size(it->path(), size_error);
-        if (!size_error)
-            total += size;
-    }
-    return total;
-}
-
-std::string human_bytes(const std::uintmax_t bytes) {
+// Byte counts for the free-space estimate go through directory_size() above,
+// which already sums a tree's regular files and treats a missing directory as
+// zero - not every title has a patch or add-ons.
+std::string human_bytes(const std::uint64_t bytes) {
     static constexpr const char *units[] = { "bytes", "KB", "MB", "GB", "TB" };
     double value = static_cast<double>(bytes);
     std::size_t unit = 0;
@@ -1519,7 +1503,7 @@ void start_library_archive_export(EmuEnvState &emuenv,
             // that fits on the device does not imply an export that does.
             // Checked up front: discovering it 20 GB in means a long wait
             // ending in a failure the player cannot interpret.
-            std::uintmax_t needed = 0;
+            std::uint64_t needed = 0;
             for (const auto &title_id : title_ids) {
                 for (const char *root : { "ux0/app", "ux0/patch", "ux0/addcont", "ux0/license" })
                     needed += directory_size(emuenv.vita_fs_path / root / title_id);
