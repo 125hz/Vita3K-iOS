@@ -489,6 +489,16 @@ UIVisualEffect *glass_effect(const BOOL interactive = YES) {
     return interactive ? live : stat;
 }
 
+// Whether surfaces drawn over a running game still use Liquid Glass.
+//
+// Mirrors DefaultsKey.liquidGlassInGame on the Swift side, including its
+// default: an absent key means the material is on, so a missing value must not
+// read as NO the way -boolForKey: would.
+BOOL in_game_liquid_glass_enabled() {
+    NSNumber *value = [NSUserDefaults.standardUserDefaults objectForKey:@"tsubomi.liquidGlassInGame"];
+    return value == nil ? YES : value.boolValue;
+}
+
 // Tinted glass for the one element per screen that should stand out. Callers
 // pass `interactive` only for a control the user actually presses; static
 // banners leave it off so they cost a single composite instead of a live
@@ -1456,6 +1466,14 @@ void vita3k_ios_request_current_trophies() {
 // that HUD itself is shown.
 static UIVisualEffectView *g_log_hud = nil;
 static UITextView *g_log_text = nil;
+// Which material the panel was built with, so a change to the setting rebuilds
+// it rather than leaving a glass backdrop up until the next session.
+static BOOL g_log_hud_is_glass = YES;
+// What the last perf tick put on screen. Read and written only from the
+// emulator loop, and only so a tick that has nothing to show can skip the hop
+// to the main thread without stranding views that were up a moment ago.
+static BOOL g_perf_overlay_shown = NO;
+static BOOL g_perf_log_shown = NO;
 
 static void update_log_overlay(UIWindow *window) {
     const BOOL show_log = [NSUserDefaults.standardUserDefaults boolForKey:@"vita3k.perf.log"];
@@ -1463,10 +1481,22 @@ static void update_log_overlay(UIWindow *window) {
         g_log_hud.hidden = YES;
         return;
     }
+    // The one remaining UIKit surface that sits over a live game, so it follows
+    // the same in-game material preference the SwiftUI overlay does: a glass
+    // backdrop here is re-sampled on every frame the game draws.
+    const BOOL liquid_glass = in_game_liquid_glass_enabled();
+    if (g_log_hud && g_log_hud_is_glass != liquid_glass) {
+        [g_log_hud removeFromSuperview];
+        g_log_hud = nil;
+        g_log_text = nil;
+    }
     if (!g_log_hud) {
         // Non-interactive: never intercepts the game's touch controls, which
         // stay above it in the window's subview order.
-        g_log_hud = [[UIVisualEffectView alloc] initWithEffect:glass_effect(NO)];
+        g_log_hud = [[UIVisualEffectView alloc] initWithEffect:liquid_glass ? glass_effect(NO) : nil];
+        g_log_hud_is_glass = liquid_glass;
+        if (!liquid_glass)
+            g_log_hud.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.55];
         round_continuous(g_log_hud, 10);
         g_log_hud.clipsToBounds = YES;
         g_log_hud.userInteractionEnabled = NO;
@@ -1515,16 +1545,29 @@ void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime
     // UIKit and is updated below.
     const float fps = guest_fps;
     const float ft = frametime_ms;
+
+    // Decide whether there is anything to do *before* hopping threads.
+    // NSUserDefaults is thread-safe, and most players run with every metric
+    // off: dispatching to the main thread once a second for the whole session
+    // just to discover that is a wake-up per second for an overlay nobody
+    // enabled. The last state is remembered so the switch-off still gets one
+    // final hop to take the views down.
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    const BOOL any = [defaults boolForKey:@"vita3k.perf.fps"]
+        || [defaults boolForKey:@"vita3k.perf.frametime"]
+        || [defaults boolForKey:@"vita3k.perf.frametimeGraph"]
+        || [defaults boolForKey:@"vita3k.perf.ram"]
+        || [defaults boolForKey:@"vita3k.perf.battery"];
+    const BOOL visible = any && ![defaults boolForKey:@"vita3k.perf.hidden"];
+    const BOOL show_log = [defaults boolForKey:@"vita3k.perf.log"];
+    if (!visible && !show_log && !g_perf_overlay_shown && !g_perf_log_shown)
+        return;
+    g_perf_overlay_shown = visible;
+    g_perf_log_shown = show_log;
+
     perform_on_main(^{
-        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
         update_log_overlay(active_window());
 
-        const BOOL any = [defaults boolForKey:@"vita3k.perf.fps"]
-            || [defaults boolForKey:@"vita3k.perf.frametime"]
-            || [defaults boolForKey:@"vita3k.perf.frametimeGraph"]
-            || [defaults boolForKey:@"vita3k.perf.ram"]
-            || [defaults boolForKey:@"vita3k.perf.battery"];
-        const BOOL visible = any && ![defaults boolForKey:@"vita3k.perf.hidden"];
         [TsubomiPerformanceStateBridge setVisible:visible];
         if (!visible)
             return;
@@ -1550,6 +1593,8 @@ void vita3k_ios_update_perf_overlay(const float guest_fps, const float frametime
 }
 
 void vita3k_ios_hide_perf_overlay() {
+    g_perf_overlay_shown = NO;
+    g_perf_log_shown = NO;
     perform_on_main(^{
         [TsubomiPerformanceStateBridge setVisible:NO];
         [g_log_hud removeFromSuperview];

@@ -79,11 +79,20 @@ struct ControllerOptionsView: View {
                     }
                 }
 
-                Section("Behaviour") {
+                Section {
                     Toggle("Hide for physical controller", isOn: $model.hideWhenPhysical)
                     Toggle("Haptic feedback", isOn: $model.haptics)
                     Toggle("Alignment guides", isOn: $model.snapGuides)
                     DefaultsToggle("Colored face buttons", key: .coloredFaceButtons)
+                    // The same preference as Settings › In-game appearance, as
+                    // Colored face buttons already is. Repeated here because
+                    // this is the only controls screen reachable mid-game, and
+                    // judging the trade means seeing it over the game.
+                    DefaultsToggle("Liquid Glass", key: .liquidGlassInGame)
+                } header: {
+                    Text("Behaviour")
+                } footer: {
+                    Text("Liquid Glass samples the game behind each control every frame. Turning it off draws flat shapes instead and saves battery over a long session.")
                 }
 
                 Section {

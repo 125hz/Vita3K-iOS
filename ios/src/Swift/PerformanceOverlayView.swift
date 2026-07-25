@@ -97,8 +97,9 @@ struct PerformanceOverlayView: View {
             .padding(.vertical, 8)
             // Non-interactive glass: this sits over a 60fps drawable, and an
             // interactive variant would run a live refraction pass every frame
-            // for a readout nobody touches.
-            .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
+            // for a readout nobody touches. Follows the in-game material
+            // setting, so turning glass off leaves no backdrop read at all.
+            .overlaySurface(.rect(cornerRadius: 16, style: .continuous))
             .overlay {
                 if editingProxy {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)

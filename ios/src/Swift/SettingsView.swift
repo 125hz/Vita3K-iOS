@@ -50,6 +50,7 @@ struct SettingsView: View {
                 audioSection
                 if !model.isPerGame {
                     controlsSection
+                    inGameAppearanceSection
                     performanceOverlaySection
                     firmwareSection
                 }
@@ -195,6 +196,20 @@ struct SettingsView: View {
             Text("Controls")
         } footer: {
             Text("Virtual controls covers opacity, scale, layout, visibility, and physical-pad auto-hide. Colored face buttons tint the on-screen ✕ ○ □ △ glyphs. Some third-party controllers report face buttons in Xbox-style positions; remap them if the wrong button responds.")
+        }
+    }
+
+    private var inGameAppearanceSection: some View {
+        Section {
+            DefaultsToggle("Liquid Glass", key: .liquidGlassInGame)
+        } header: {
+            Text("In-game appearance")
+        } footer: {
+            // Says what it costs rather than just what it looks like: this is
+            // a battery setting wearing an appearance setting's clothes, and a
+            // player deciding whether to give up the material deserves the
+            // actual reason.
+            Text("The on-screen controls, the menu button and the performance overlay are Liquid Glass, which samples the game behind them on every frame it draws. Turning this off draws them as flat translucent shapes instead, which costs nothing to composite and noticeably less battery over a long session. The library and the rest of the app keep Liquid Glass either way.")
         }
     }
 

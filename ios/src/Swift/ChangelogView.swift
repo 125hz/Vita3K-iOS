@@ -43,6 +43,10 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.45.0", notes: [
+            "Settings and Layout Options can turn off Liquid Glass in game. The controls, menu button, performance overlay and live log are drawn as flat translucent shapes instead, which removes a per-frame backdrop sample for every one of them. The library, onboarding and settings keep Liquid Glass either way.",
+            "The performance tick no longer wakes the main thread once a second when every metric is switched off.",
+        ]),
         Release(version: "0.44.0", notes: [
             "Layout Options can turn on Dynamic Joystick: the on-screen sticks are hidden, and each half of the screen becomes a stick that centers itself wherever you place your finger and lifts when you let go. Pressing a button never raises one.",
             "Dynamic Joystick disables the Vita touchscreen, because the controller then owns the whole screen. The setting says so before you turn it on, and turning it back off restores touch input.",

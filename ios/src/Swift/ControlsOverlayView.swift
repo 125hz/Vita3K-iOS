@@ -16,6 +16,10 @@ struct ControlsOverlayView: View {
     @State private var model = ControlsModel.shared
     let onMenuTap: () -> Void
 
+    /// Read here as well as inside `OverlaySurface` because the container and
+    /// the editor's buttons are structural choices, not backgrounds.
+    @AppStorage(DefaultsKey.liquidGlassInGame.rawValue) private var liquidGlass = true
+
     var body: some View {
         // The safe-area inset the core uses to letterbox the game is reported
         // from the hosting controller (ControlsHostingController), which reads
@@ -30,18 +34,8 @@ struct ControlsOverlayView: View {
         GeometryReader { proxy in
             let size = proxy.size
             ZStack(alignment: .topLeading) {
-                // The default spread keeps the shapes apart; the container's
-                // merge distance can stay large so adjacent glass blends its
-                // highlights the way the system intends.
-                GlassEffectContainer(spacing: 18) {
-                    ZStack(alignment: .topLeading) {
-                        ForEach(model.visibleControls(in: size)) { definition in
-                            controlView(definition, in: size)
-                        }
-                    }
-                    .frame(width: size.width, height: size.height)
-                }
-                .opacity(model.isEditing ? 1 : model.opacity)
+                controlsField(in: size)
+                    .opacity(model.isEditing ? 1 : model.opacity)
 
                 // Outside the glass container: a stick that appears anywhere
                 // and moves has nothing stable to merge its highlights with,
@@ -73,6 +67,35 @@ struct ControlsOverlayView: View {
     }
 
     // MARK: - Controls
+
+    /// Every fixed control, inside a glass container when the material is on.
+    ///
+    /// The container exists to merge the highlights of adjacent glass shapes;
+    /// with the material off there is nothing to merge, and wrapping the field
+    /// in it anyway would leave a glass effect group in the hierarchy for a
+    /// setting that says there are none.
+    @ViewBuilder
+    private func controlsField(in size: CGSize) -> some View {
+        if liquidGlass {
+            // The default spread keeps the shapes apart; the container's
+            // merge distance can stay large so adjacent glass blends its
+            // highlights the way the system intends.
+            GlassEffectContainer(spacing: 18) {
+                controlStack(in: size)
+            }
+        } else {
+            controlStack(in: size)
+        }
+    }
+
+    private func controlStack(in size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(model.visibleControls(in: size)) { definition in
+                controlView(definition, in: size)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+    }
 
     @ViewBuilder
     private func controlView(_ definition: ControlDefinition, in size: CGSize) -> some View {
@@ -127,7 +150,7 @@ struct ControlsOverlayView: View {
             .font(.system(size: 18, weight: .semibold))
             .foregroundStyle(.primary)
             .frame(width: frame.width, height: frame.height)
-            .glassEffect(.regular, in: .circle)
+            .overlaySurface(.circle)
             .overlay {
                 if model.isEditing {
                     Circle().strokeBorder(.tint, lineWidth: 1.5)
@@ -185,6 +208,29 @@ struct ControlsOverlayView: View {
 
     // MARK: - Layout editor
 
+    /// The two button styles are separate views rather than one erased style:
+    /// `.glass` and `.bordered` are distinct types, and ButtonStyle has no
+    /// type-erasing wrapper to choose between them at runtime.
+    @ViewBuilder
+    private var editorDoneButton: some View {
+        if liquidGlass {
+            Button("Done", action: finishEditing)
+                .buttonStyle(.glassProminent)
+                .controlSize(.large)
+        } else {
+            Button("Done", action: finishEditing)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+        }
+    }
+
+    private func finishEditing() {
+        model.endDrag()
+        // Through the host: an editing session started from the library with no
+        // game running has a preview overlay to tear down.
+        ControlsHost.finishLayoutEditing()
+    }
+
     @ViewBuilder
     private func editingChrome(in size: CGSize) -> some View {
         if let x = model.verticalGuideX {
@@ -203,21 +249,14 @@ struct ControlsOverlayView: View {
         }
 
         VStack {
-            Button("Done") {
-                model.endDrag()
-                // Through the host: an editing session started from the library
-                // with no game running has a preview overlay to tear down.
-                ControlsHost.finishLayoutEditing()
-            }
-            .buttonStyle(.glassProminent)
-            .controlSize(.large)
+            editorDoneButton
             Text("Drag the controls and the overlay to reposition them")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .glassEffect(.regular, in: .capsule)
+                .overlaySurface(.capsule)
             Spacer()
         }
         // Clear the notch / Dynamic Island: the overlay is full-bleed, so
@@ -346,7 +385,7 @@ private struct ControlFace: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // Pressed state tints the material itself rather than painting an
             // opaque chip over it, which is what Liquid Glass expects.
-            .glassEffect(isPressed ? .regular.tint(.accentColor) : .regular, in: shape)
+            .overlaySurface(shape, tinted: isPressed)
             .animation(.easeOut(duration: 0.08), value: isPressed)
     }
 
@@ -405,15 +444,18 @@ private struct StickFace: View {
     let side: CGFloat
     let offset: CGPoint
 
+    @AppStorage(DefaultsKey.liquidGlassInGame.rawValue) private var liquidGlass = true
+
     var body: some View {
         let thumbSide = side * 0.46
         let travel = (side - thumbSide) / 2
         return ZStack {
+            Color.clear
+                .overlaySurface(.circle)
             Circle()
-                .fill(.clear)
-                .glassEffect(.regular, in: .circle)
-            Circle()
-                .fill(.thinMaterial)
+                // The thumb is a second backdrop read on top of the well's.
+                // With the material off it is a flat disc instead.
+                .fill(liquidGlass ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(Color.white.opacity(0.3)))
                 .frame(width: thumbSide, height: thumbSide)
                 .offset(x: offset.x * travel, y: offset.y * travel)
                 // No animation: the thumb must track the finger exactly.

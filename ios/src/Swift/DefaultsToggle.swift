@@ -21,6 +21,7 @@ enum DefaultsKey: String {
     case compactList = "tsubomi.compactList"
     case coloredFaceButtons = "tsubomi.coloredFaceButtons"
     case soundEffects = "tsubomi.soundEffects"
+    case liquidGlassInGame = "tsubomi.liquidGlassInGame"
 
     /// Value used when the key has never been written.
     ///
@@ -30,7 +31,11 @@ enum DefaultsKey: String {
     /// library was still drawing the data.
     var defaultValue: Bool {
         switch self {
-        case .showTitleIDs, .showVersion, .showGameSize, .coloredFaceButtons, .wideCoverArt, .soundEffects:
+        case .showTitleIDs, .showVersion, .showGameSize, .coloredFaceButtons, .wideCoverArt, .soundEffects,
+             .liquidGlassInGame:
+            // Liquid Glass is the design the app is built around, so the
+            // overlay ships with it on; turning it off is a battery trade the
+            // player opts into.
             return true
         case .compactList:
             // The roomier list is the default; compact is opt-in.
