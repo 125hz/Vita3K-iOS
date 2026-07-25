@@ -1056,19 +1056,34 @@ bool add_directory_to_zip(mz_zip_archive &zip, const fs::path &root,
     // Callers archiving game content pass MZ_NO_COMPRESSION; saves and text
     // manifests, which do compress, keep the default.
     const mz_uint compression = MZ_DEFAULT_COMPRESSION) {
+    // Each rejection says which check refused and what the filesystem
+    // reported. Without this a false return was indistinguishable from a zip
+    // failure, and the export reported a miniz status of "no error".
+    const auto reject = [&](const char *check, const boost::system::error_code &code) {
+        LOG_ERROR("Archive skipped '{}': {} ({})", fs_utils::path_to_utf8(root), check,
+            code ? code.message() : "no filesystem error");
+        return false;
+    };
+
     boost::system::error_code exists_error;
+    // A directory that is simply not there is not a failure: most titles have
+    // no update, no add-ons and no license. Note this ignores exists_error on
+    // purpose - an optional directory the filesystem cannot even answer for is
+    // still an absent one, and it must not take a 14 GB export down with it.
     if (!fs::exists(root, exists_error))
-        return !exists_error;
-    if (exists_error || !fs::is_directory(root, exists_error) || exists_error)
-        return false;
+        return true;
+    if (!fs::is_directory(root, exists_error) || exists_error)
+        return reject("not a directory", exists_error);
     if (fs::is_symlink(fs::symlink_status(root, exists_error)) || exists_error)
-        return false;
+        return reject("root is a symlink", exists_error);
 
     boost::system::error_code error;
-    for (fs::recursive_directory_iterator it(root, error), end;
-         it != end && !error; it.increment(error)) {
+    fs::recursive_directory_iterator it(root, error);
+    if (error)
+        return reject("could not open the directory", error);
+    for (const fs::recursive_directory_iterator end; it != end && !error; it.increment(error)) {
         if (fs::is_symlink(fs::symlink_status(it->path(), error)) || error)
-            return false;
+            return reject("entry is a symlink", error);
         if (!fs::is_regular_file(it->path(), error) || error)
             continue;
         std::string relative = fs_utils::path_to_utf8(fs::relative(it->path(), root));
@@ -1084,7 +1099,9 @@ bool add_directory_to_zip(mz_zip_archive &zip, const fs::path &root,
         }
         ++files;
     }
-    return !error;
+    if (error)
+        return reject("could not walk the directory", error);
+    return true;
 }
 
 bool add_playtime_to_zip(mz_zip_archive &zip, const std::string &title_id,
@@ -1540,6 +1557,7 @@ void start_library_archive_export(EmuEnvState &emuenv,
                 // already passed by this point, so blaming storage sent the
                 // reader after the wrong thing.
                 std::string failure;
+                std::vector<std::string> skipped;
                 const auto fail = [&](const std::string &what) {
                     if (failure.empty()) {
                         failure = what + " (" + mz_zip_get_error_string(mz_zip_get_last_error(&zip)) + ")";
@@ -1566,24 +1584,35 @@ void start_library_archive_export(EmuEnvState &emuenv,
                             base_files += files - before;
                         return added;
                     };
+                    // The game itself is the only thing an archive is useless
+                    // without. An update, add-on, license, save or trophy set
+                    // that cannot be read is noted and skipped rather than
+                    // failing an export of everything else - but it is never
+                    // dropped silently, because a restore that quietly lacks
+                    // an update is worse than one that says so.
+                    const auto add_optional = [&](bool added, const std::string &what) {
+                        if (!added)
+                            skipped.push_back(what + " for " + title_id);
+                        return true;
+                    };
                     ok = ok && (add_root("ux0/app", "app") || fail("adding " + title_id));
-                    ok = ok && (add_root("ux0/patch", "patch") || fail("adding the update for " + title_id));
-                    ok = ok && (add_root("ux0/addcont", "addcont") || fail("adding add-ons for " + title_id));
-                    ok = ok && (add_root("ux0/license", "license") || fail("adding the license for " + title_id));
+                    ok = ok && add_optional(add_root("ux0/patch", "patch"), "the update");
+                    ok = ok && add_optional(add_root("ux0/addcont", "addcont"), "add-ons");
+                    ok = ok && add_optional(add_root("ux0/license", "license"), "the license");
                     // Save data, trophy progress and playtime travel with the
                     // game so a restored library resumes where it left off.
-                    ok = ok && (add_directory_to_zip(zip,
-                                    save_path_for_title(emuenv, title_id),
-                                    "savedata/" + title_id + "/", files)
-                        || fail("adding the save for " + title_id));
+                    ok = ok && add_optional(add_directory_to_zip(zip,
+                                                save_path_for_title(emuenv, title_id),
+                                                "savedata/" + title_id + "/", files),
+                        "the save");
 
                     const std::string np_com_id =
                         trophy_id_for_title(emuenv, title_id);
                     if (ok && !np_com_id.empty()) {
-                        ok = add_directory_to_zip(zip,
-                                 trophy_data_path_for_id(emuenv, np_com_id),
-                                 "trophy/" + np_com_id + "/", files)
-                            || fail("adding trophies for " + title_id);
+                        ok = add_optional(add_directory_to_zip(zip,
+                                              trophy_data_path_for_id(emuenv, np_com_id),
+                                              "trophy/" + np_com_id + "/", files),
+                            "trophies");
                     }
 
                     const auto app_it = std::find_if(apps.begin(), apps.end(),
@@ -1609,9 +1638,21 @@ void start_library_archive_export(EmuEnvState &emuenv,
                 if (ok) {
                     job->success = true;
                     LOG_INFO("Export wrote {} file(s) to {}", files, output_text);
-                    job->message = all_games
-                        ? "Games, updates, add-ons, saves, trophies, and playtime exported"
-                        : "Game, license, save, trophies, and playtime exported";
+                    if (skipped.empty()) {
+                        job->message = all_games
+                            ? "Games, updates, add-ons, saves, trophies, and playtime exported"
+                            : "Game, license, save, trophies, and playtime exported";
+                    } else {
+                        // Naming the first few is enough to act on; the log has
+                        // the rest with the reason the filesystem gave.
+                        std::string detail = skipped.front();
+                        for (std::size_t i = 1; i < std::min<std::size_t>(skipped.size(), 3); ++i)
+                            detail += ", " + skipped[i];
+                        if (skipped.size() > 3)
+                            detail += fmt::format(" and {} more", skipped.size() - 3);
+                        job->message = "Exported, but could not include " + detail;
+                        LOG_WARN("Export skipped {} item(s)", skipped.size());
+                    }
                     job->share_path = output_text;
                 } else {
                     boost::system::error_code cleanup_error;

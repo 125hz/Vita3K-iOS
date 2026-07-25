@@ -43,6 +43,10 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.46.3", notes: [
+            "Fixed exports failing at the update directory. A title with no update could abort the whole export; an absent optional directory is now simply absent.",
+            "An update, add-on, license, save or trophy set that cannot be read no longer fails the export. It is skipped, named in the result, and logged with the reason.",
+        ]),
         Release(version: "0.46.2", notes: [
             "A failed export now names what it was doing and what the archiver reported, instead of blaming free space for every failure.",
             "Export failures are titled Export failed rather than Import failed.",
