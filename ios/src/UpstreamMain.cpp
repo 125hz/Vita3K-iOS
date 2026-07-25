@@ -1531,11 +1531,27 @@ void start_library_archive_export(EmuEnvState &emuenv,
             // games" was broken.
             if (!mz_zip_writer_init_file_v2(&zip, output_text.c_str(), 0,
                     MZ_ZIP_FLAG_WRITE_ZIP64)) {
-                job->message = "Could not create the game archive";
+                job->message = std::string("Could not create the game archive: ")
+                    + mz_zip_get_error_string(mz_zip_get_last_error(&zip));
+                LOG_ERROR("{} (path {})", job->message, output_text);
             } else {
+                // Every failure below records why. The previous message
+                // asserted a full disk, which was a guess: the space check has
+                // already passed by this point, so blaming storage sent the
+                // reader after the wrong thing.
+                std::string failure;
+                const auto fail = [&](const std::string &what) {
+                    if (failure.empty()) {
+                        failure = what + " (" + mz_zip_get_error_string(mz_zip_get_last_error(&zip)) + ")";
+                        LOG_ERROR("Export failed: {}", failure);
+                    }
+                    return false;
+                };
+
                 static constexpr std::string_view manifest = "tsubomi-library-transfer=1\n";
                 bool ok = mz_zip_writer_add_mem(&zip, "manifest/version.txt",
-                    manifest.data(), manifest.size(), MZ_DEFAULT_COMPRESSION);
+                              manifest.data(), manifest.size(), MZ_DEFAULT_COMPRESSION)
+                    || fail("writing the archive manifest");
                 std::size_t files = 0;
                 std::size_t base_files = 0;
                 for (const auto &title_id : title_ids) {
@@ -1550,20 +1566,24 @@ void start_library_archive_export(EmuEnvState &emuenv,
                             base_files += files - before;
                         return added;
                     };
-                    ok = ok && add_root("ux0/app", "app");
-                    ok = ok && add_root("ux0/patch", "patch");
-                    ok = ok && add_root("ux0/addcont", "addcont");
-                    ok = ok && add_root("ux0/license", "license");
-                    ok = ok && add_directory_to_zip(zip,
-                        save_path_for_title(emuenv, title_id),
-                        "savedata/" + title_id + "/", files);
+                    ok = ok && (add_root("ux0/app", "app") || fail("adding " + title_id));
+                    ok = ok && (add_root("ux0/patch", "patch") || fail("adding the update for " + title_id));
+                    ok = ok && (add_root("ux0/addcont", "addcont") || fail("adding add-ons for " + title_id));
+                    ok = ok && (add_root("ux0/license", "license") || fail("adding the license for " + title_id));
+                    // Save data, trophy progress and playtime travel with the
+                    // game so a restored library resumes where it left off.
+                    ok = ok && (add_directory_to_zip(zip,
+                                    save_path_for_title(emuenv, title_id),
+                                    "savedata/" + title_id + "/", files)
+                        || fail("adding the save for " + title_id));
 
                     const std::string np_com_id =
                         trophy_id_for_title(emuenv, title_id);
                     if (ok && !np_com_id.empty()) {
                         ok = add_directory_to_zip(zip,
-                            trophy_data_path_for_id(emuenv, np_com_id),
-                            "trophy/" + np_com_id + "/", files);
+                                 trophy_data_path_for_id(emuenv, np_com_id),
+                                 "trophy/" + np_com_id + "/", files)
+                            || fail("adding trophies for " + title_id);
                     }
 
                     const auto app_it = std::find_if(apps.begin(), apps.end(),
@@ -1576,31 +1596,29 @@ void start_library_archive_export(EmuEnvState &emuenv,
                         : title_id;
                     const auto time_it = times.find(app_path);
                     if (ok && time_it != times.end())
-                        ok = add_playtime_to_zip(
-                            zip, title_id, time_it->second, files);
+                        ok = add_playtime_to_zip(zip, title_id, time_it->second, files)
+                            || fail("adding the playtime for " + title_id);
                     if (!ok)
                         break;
                 }
 
-                ok = ok && base_files > 0
-                    && mz_zip_writer_finalize_archive(&zip);
+                if (ok && base_files == 0)
+                    ok = fail("no game files were found to archive");
+                ok = ok && (mz_zip_writer_finalize_archive(&zip) || fail("finalizing the archive"));
                 mz_zip_writer_end(&zip);
                 if (ok) {
                     job->success = true;
+                    LOG_INFO("Export wrote {} file(s) to {}", files, output_text);
                     job->message = all_games
-                        ? "Games, updates, add-ons, licenses, and progress exported"
-                        : "Game, license, and progress exported";
+                        ? "Games, updates, add-ons, saves, trophies, and playtime exported"
+                        : "Game, license, save, trophies, and playtime exported";
                     job->share_path = output_text;
                 } else {
                     boost::system::error_code cleanup_error;
                     fs::remove(output, cleanup_error);
-                    // Almost always a full disk by this point: the zip64 fix
-                    // removed the size ceiling and the space check ran before
-                    // a byte was written, so anything left is the device
-                    // filling up while the archive was being built.
-                    job->message = all_games
-                        ? "Could not archive the complete game library - check the device has free space"
-                        : "Could not archive the game - check the device has free space";
+                    job->message = failure.empty()
+                        ? "The export could not be completed"
+                        : "Export failed while " + failure;
                 }
             }
         } catch (const std::exception &error) {

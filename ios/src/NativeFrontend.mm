@@ -1633,9 +1633,11 @@ void vita3k_ios_report_import_result(const std::string &message, const bool succ
                 || [text localizedCaseInsensitiveContainsString:@"work.bin first"])
                 [TsubomiSoundEffects playNamed:@"error"];
             // Keep the precise installer detail on screen until dismissed.
-            NSString *title = [text localizedCaseInsensitiveContainsString:@"save"]
-                ? @"Save transfer failed"
-                : @"Import failed";
+            NSString *title = @"Import failed";
+            if ([text localizedCaseInsensitiveContainsString:@"export"])
+                title = @"Export failed";
+            else if ([text localizedCaseInsensitiveContainsString:@"save"])
+                title = @"Save transfer failed";
             present_alert(title, text);
         }
     });

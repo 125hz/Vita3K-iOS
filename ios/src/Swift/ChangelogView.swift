@@ -43,6 +43,10 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.46.2", notes: [
+            "A failed export now names what it was doing and what the archiver reported, instead of blaming free space for every failure.",
+            "Export failures are titled Export failed rather than Import failed.",
+        ]),
         Release(version: "0.46.1", notes: [
             "Exporting games or saves now closes Settings and shows progress. It ran silently behind the sheet before, so a long export looked like the button had done nothing.",
         ]),
