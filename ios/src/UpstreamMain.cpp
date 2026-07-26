@@ -388,8 +388,15 @@ bool ios_jit_capability_enabled() {
 // region pool is prepared. CS_DEBUGGED survives a detach, but it is not enough
 // to service Oaknut's BRK request. Once the pool is complete, detaching is safe.
 bool ios_jit_available() {
+#if !defined(__aarch64__)
+    // x86_64 Simulator: the iOS 26 universal-JIT/debugger model does not apply.
+    // The simulator process maps its own code cache like any macOS process, so
+    // dynarmic's x64 backend needs no StikDebug session to be usable.
+    return true;
+#else
     return g_jit_pool_ready.load(std::memory_order_relaxed)
         || (ios_jit_capability_enabled() && ios_debugger_attached());
+#endif
 }
 
 fs::path ios_storage_path() {
@@ -1413,7 +1420,11 @@ void start_all_saves_import(EmuEnvState &emuenv, const std::string &archive_path
                         fs::remove_all(backup, error);
                         if (error)
                             return false;
-                        if (fs::exists(destination, error) && !error)
+                        // Same shared-error_code bug as the library import: a
+                        // save that was not already present set ENOENT here and
+                        // skipped its own move.
+                        boost::system::error_code probe;
+                        if (fs::exists(destination, probe))
                             fs::rename(destination, backup, error);
                         if (!error)
                             fs::rename(source, destination, error);
@@ -1726,23 +1737,42 @@ void start_library_archive_import(EmuEnvState &emuenv,
                     fs::create_directories(staging, error);
                 if (!error)
                     fs::create_directories(backup_root, error);
-                bool ok = !error;
+                // Every rejection below used to be an anonymous `ok = false`,
+                // so a failed import could only ever say "was rejected" - the
+                // reason was discarded. The export side already names its
+                // cause; record the first one here for the same reason.
+                std::string reason;
+                const auto reject = [&](std::string why) {
+                    if (reason.empty())
+                        reason = std::move(why);
+                    return false;
+                };
+                const auto reject_ec = [&](std::string what,
+                                           const boost::system::error_code &code) {
+                    return reject(std::move(what) + ": "
+                        + (code ? code.message() : "no filesystem error"));
+                };
+
+                bool ok = !error || reject_ec("Could not prepare the staging area", error);
                 bool has_manifest = false;
                 bool has_playtime = false;
                 std::uint64_t total_size = 0;
                 const mz_uint entries = mz_zip_reader_get_num_files(&zip);
-                if (entries == 0 || entries > 500000)
-                    ok = false;
+                if (ok && (entries == 0 || entries > 500000))
+                    ok = reject("The archive is empty or contains too many entries ("
+                        + std::to_string(entries) + ")");
 
                 for (mz_uint index = 0; ok && index < entries; ++index) {
                     mz_zip_archive_file_stat stat{};
                     if (!mz_zip_reader_file_stat(&zip, index, &stat)) {
-                        ok = false;
+                        ok = reject("Could not read entry " + std::to_string(index)
+                            + " of the archive");
                         break;
                     }
                     const std::string_view name(stat.m_filename);
                     if (!safe_save_archive_path(name)) {
-                        ok = false;
+                        ok = reject("The archive contains an unsafe path: '"
+                            + std::string(name) + "'");
                         break;
                     }
 
@@ -1804,7 +1834,13 @@ void start_library_archive_import(EmuEnvState &emuenv,
                             playtime_ids.push_back(identifier);
                         has_playtime = true;
                     } else {
-                        ok = false;
+                        // The most likely rejection in practice: an archive
+                        // that is a plain game/save ZIP, or one carrying an
+                        // entry this version does not know about. Naming it is
+                        // the difference between a fixable report and a shrug.
+                        ok = reject("The archive contains an unexpected entry: '"
+                            + std::string(name) + "'. Only a Tsubomi game "
+                              "transfer archive can be imported here.");
                         break;
                     }
 
@@ -1827,10 +1863,17 @@ void start_library_archive_import(EmuEnvState &emuenv,
                         if (!error
                             && !mz_zip_reader_extract_to_file(
                                 &zip, index, output_text.c_str(), 0))
-                            ok = false;
+                            // Running out of space lands here, which is why the
+                            // miniz status is worth repeating verbatim.
+                            ok = reject("Could not write '" + std::string(name)
+                                + "' while extracting: "
+                                + mz_zip_get_error_string(mz_zip_get_last_error(&zip))
+                                + ". Check that there is enough free space.");
                     }
                     if (error)
-                        ok = false;
+                        ok = reject_ec("Could not create a folder while extracting '"
+                                + std::string(name) + "'",
+                            error);
                 }
                 mz_zip_reader_end(&zip);
 
@@ -1838,8 +1881,11 @@ void start_library_archive_import(EmuEnvState &emuenv,
                     fs::ifstream manifest_file(staging / "manifest/version.txt");
                     std::string manifest;
                     std::getline(manifest_file, manifest);
-                    ok = has_manifest && manifest == "tsubomi-library-transfer=1"
-                        && !app_ids.empty();
+                    if (!has_manifest || manifest != "tsubomi-library-transfer=1")
+                        ok = reject("This is not a Tsubomi game transfer archive "
+                                    "(its manifest is missing or has the wrong version).");
+                    else if (app_ids.empty())
+                        ok = reject("The archive contains no games to install.");
                     const auto belongs_to_archive =
                         [&](const std::vector<std::string> &identifiers) {
                             return std::all_of(identifiers.begin(), identifiers.end(),
@@ -1848,11 +1894,15 @@ void start_library_archive_import(EmuEnvState &emuenv,
                                         != app_ids.end();
                                 });
                         };
-                    ok = ok && belongs_to_archive(patch_ids)
-                        && belongs_to_archive(addcont_ids)
-                        && belongs_to_archive(license_ids)
-                        && belongs_to_archive(save_ids)
-                        && belongs_to_archive(playtime_ids);
+                    if (ok
+                        && !(belongs_to_archive(patch_ids)
+                            && belongs_to_archive(addcont_ids)
+                            && belongs_to_archive(license_ids)
+                            && belongs_to_archive(save_ids)
+                            && belongs_to_archive(playtime_ids)))
+                        ok = reject("The archive carries an update, add-on, "
+                                    "license, save or play time for a game it does "
+                                    "not itself contain.");
                 }
 
                 const auto install_directories =
@@ -1868,11 +1918,25 @@ void start_library_archive_import(EmuEnvState &emuenv,
                             if (!error)
                                 fs::create_directories(backup.parent_path(), error);
                             if (error)
-                                return false;
+                                return reject_ec(("Could not prepare a place for '"
+                                                     + identifier + "'")
+                                        .c_str(),
+                                    error);
                             fs::remove_all(backup, error);
                             if (error)
-                                return false;
-                            if (fs::exists(destination, error) && !error)
+                                return reject_ec(("Could not clear the backup for '"
+                                                     + identifier + "'")
+                                        .c_str(),
+                                    error);
+                            // The probe needs its own error_code. Boost reports
+                            // a missing path through `error`, so sharing it
+                            // left ENOENT set whenever the game was NOT already
+                            // installed - which skipped the move below and
+                            // failed the import with "No such file or
+                            // directory". Every import into a library that did
+                            // not already contain the title hit this.
+                            boost::system::error_code probe;
+                            if (fs::exists(destination, probe))
                                 fs::rename(destination, backup, error);
                             if (!error)
                                 fs::rename(source, destination, error);
@@ -1882,7 +1946,10 @@ void start_library_archive_import(EmuEnvState &emuenv,
                                     fs::remove_all(destination, rollback_error);
                                     fs::rename(backup, destination, rollback_error);
                                 }
-                                return false;
+                                return reject_ec(("Could not move '" + identifier
+                                                     + "' into place")
+                                        .c_str(),
+                                    error);
                             }
                             installed.push_back({ destination, backup });
                         }
@@ -1910,25 +1977,34 @@ void start_library_archive_import(EmuEnvState &emuenv,
 
                 if (!ok) {
                     rollback();
-                    job->message =
-                        "Game transfer import was rejected; existing content was restored";
+                    job->message = reason.empty()
+                        ? "Game transfer import was rejected; existing content was restored"
+                        : reason + " Existing content was restored.";
                 } else {
                     const std::size_t playtimes = has_playtime
                         ? restore_playtimes_from_directory(
                             emuenv, staging / "meta/playtime")
                         : 0;
+                    // Play time is bookkeeping, not content. Discarding a
+                    // fully installed library because the clock could not be
+                    // restored throws away the entire (slow) import over the
+                    // least valuable thing in the archive, so say so and keep
+                    // the games instead of rolling back.
                     if (has_playtime && playtimes == 0) {
-                        rollback();
-                        job->message =
-                            "Game transfer could not restore play time; existing content was restored";
-                    } else {
+                        LOG_WARN("Import restored no play time from '{}'",
+                            fs_utils::path_to_utf8(staging / "meta/playtime"));
+                    }
+                    {
                         fs::remove_all(backup_root, error);
                         job->success = true;
                         job->refresh_library = true;
                         job->message = "Imported "
                             + std::to_string(app_ids.size())
                             + (app_ids.size() == 1 ? " game" : " games")
-                            + " with data and licenses";
+                            + " with data and licenses"
+                            + (has_playtime && playtimes == 0
+                                    ? ", but play time could not be restored"
+                                    : "");
                     }
                 }
                 boost::system::error_code cleanup_error;
@@ -2560,6 +2636,14 @@ constexpr std::size_t IOS_JIT_POOL_TARGET = 32;
 bool prepare_ios_jit_pool() {
     if (g_jit_pool_ready.load(std::memory_order_relaxed))
         return true;
+#if !defined(__aarch64__)
+    // x86_64 Simulator: there is no oaknut region pool and no StikDebug to
+    // attach to. Dynarmic's x64 backend maps its own code cache, so let it try
+    // rather than blocking on a debugger that cannot exist here.
+    g_jit_pool_ready.store(true, std::memory_order_relaxed);
+    vita3k_ios_set_jit_available(true);
+    return true;
+#else
     if (!ios_debugger_attached())
         return false;
 
@@ -2585,6 +2669,7 @@ bool prepare_ios_jit_pool() {
     g_jit_pool_ready.store(true, std::memory_order_relaxed);
     vita3k_ios_set_jit_available(true);
     return true;
+#endif
 }
 
 } // namespace
@@ -2949,10 +3034,10 @@ int main(int argc, char *argv[]) {
             // Persist progress periodically, not only on a clean in-app quit.
             // iOS users commonly terminate a stalled title from the app
             // switcher, which previously discarded the whole session length.
-            // Every two minutes rather than every thirty seconds: the worst
-            // case is two minutes of playtime lost to a force-quit, against a
-            // quarter as many flash writes across a long session.
-            if (now_ms - playtime_checkpoint_ms >= 120000) {
+            // Every minute: the worst case is a minute of playtime lost to a
+            // force-quit, against half as many flash writes as a thirty-second
+            // checkpoint across a long session.
+            if (now_ms - playtime_checkpoint_ms >= 60000) {
                 app::update_app_time_used(*emuenv, emuenv->io.app_path);
                 playtime_checkpoint_ms = now_ms;
             }
