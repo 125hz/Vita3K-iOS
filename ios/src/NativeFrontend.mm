@@ -776,12 +776,34 @@ void present_save_import_picker(NSString *title_id) {
     present_save_picker(title_id);
 }
 
+// Settings closes itself before asking for one of these pickers, so that the
+// install progress drawn on the library behind it is visible. UIKit drops a
+// presentation aimed at a controller that is still dismissing, so wait for the
+// sheet to finish leaving rather than racing it. The wait is bounded: if
+// something else is genuinely on screen, present over it as before instead of
+// silently doing nothing.
+void present_after_sheet_dismissal(void (^present)(void), int attempts_left = 40) {
+    UIViewController *root = active_window().rootViewController;
+    if (root.presentedViewController && attempts_left > 0) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+            dispatch_get_main_queue(), ^{
+                present_after_sheet_dismissal(present, attempts_left - 1);
+            });
+        return;
+    }
+    present();
+}
+
 void present_all_save_import_picker() {
-    present_save_picker(@"");
+    present_after_sheet_dismissal(^{
+        present_save_picker(@"");
+    });
 }
 
 void present_library_archive_import_picker() {
-    present_library_archive_picker();
+    present_after_sheet_dismissal(^{
+        present_library_archive_picker();
+    });
 }
 
 bool firmware_ready_or_alert() {

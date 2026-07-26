@@ -87,3 +87,17 @@ fastlane/readme.md
 
 # Local continuation notes stay out of the public repo
 /ios/NEXT-MILESTONE-HANDOFF.md
+
+# Local iOS build trees and their prebuilt dependencies. build-deps/ holds a
+# bootstrapped vcpkg and the MoltenVK tarballs (several GB) and must never be
+# committed; the CI workflow fetches its own copies.
+/build-ios/
+/build-ios-sim/
+/build-ios-upstream/
+/build-ios-upstream-sim/
+/build-deps/
+/artifacts/
+/build-upstream.log
+/build-sim.log
+/configure-sim.log
+/reconfigure.log

@@ -284,12 +284,21 @@ SurfaceRetrieveResult VKSurfaceCache::retrieve_color_surface_for_framebuffer(Mem
         // surface exists, and how large/what-format it is, even though we
         // can't read its GPU-side content back without memory mapping.
         static uint64_t last_cache_dump_ms = 0;
+        // Retire after the first minute, exactly like the guest watchdog does.
+        // This exists to characterise the surface cache as a title boots; once
+        // that is answered it is re-formatting and re-writing the whole cache
+        // (a dozen-odd lines) every three seconds for the entire session, which
+        // on a multi-hour play session is battery spent on a question already
+        // answered.
+        static int cache_dumps_remaining = 20;
         const uint64_t now_ms = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count());
-        if (now_ms - last_cache_dump_ms >= 3000) {
+        if (cache_dumps_remaining > 0 && now_ms - last_cache_dump_ms >= 3000) {
             last_cache_dump_ms = now_ms;
+            if (--cache_dumps_remaining == 0)
+                LOG_INFO("iOS surface-cache dump retiring: boot characterisation complete");
             static const char *const tiling_names[] = { "Linear", "Swizzled", "Tiled" };
             for (const auto &entry : color_address_lookup) {
                 const ColorSurfaceCacheInfo &info = *entry.second;

@@ -119,7 +119,7 @@ struct SettingsView: View {
                 Label("Export games", systemImage: "square.and.arrow.up")
             }
             Button {
-                Bridge.presentLibraryArchiveImportPicker()
+                importGames()
             } label: {
                 Label("Import games…", systemImage: "square.and.arrow.down")
             }
@@ -139,6 +139,18 @@ struct SettingsView: View {
         onFinish()
         LibraryStateBridge.setBusy("Exporting games…")
         Bridge.exportLibraryArchive()
+    }
+
+    /// Imports need the same treatment as exportGames(): once a file is picked,
+    /// the install progress and its result toast are drawn on the library,
+    /// behind this sheet. Leaving Settings up made a running import look like
+    /// nothing had happened until the user dragged the sheet away themselves.
+    /// The picker is presented once the sheet has actually gone - presenting
+    /// into a controller that is still dismissing is dropped by UIKit.
+    private func importGames() {
+        model.save()
+        onFinish()
+        Bridge.presentLibraryArchiveImportPicker()
     }
 
     private var videoSection: some View {
@@ -266,6 +278,10 @@ struct SettingsView: View {
                 Label("Export all game saves", systemImage: "square.and.arrow.up")
             }
             Button {
+                // Same reason as importGames(): close Settings so the import
+                // progress on the library is actually visible.
+                model.save()
+                onFinish()
                 Bridge.presentAllSaveImportPicker()
             } label: {
                 Label("Import all game saves…", systemImage: "square.and.arrow.down")
