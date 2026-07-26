@@ -41,7 +41,10 @@
 #include <iterator>
 #include <string>
 
-#if defined(__aarch64__) && defined(__APPLE__)
+// No Apple platform provides stat64; stat is already 64-bit there. This must
+// not be gated on __aarch64__, or the x86_64 iOS Simulator build fails with an
+// incomplete 'struct stat64'.
+#if defined(__APPLE__)
 #define stat64 stat
 #endif
 

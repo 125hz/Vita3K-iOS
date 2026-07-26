@@ -23,6 +23,9 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCE_LIST})
 target_include_directories(cpu PUBLIC include)
 target_link_libraries(cpu PUBLIC mem util)
 target_link_libraries(cpu PRIVATE dynarmic capstone merry::mcl)
-if(VITA3K_PLATFORM_IOS)
+# oaknut is dynarmic's arm64 assembler, so the target only exists when
+# dynarmic builds its arm64 backend. Guarding on VITA3K_PLATFORM_IOS alone
+# breaks the x86_64 iOS Simulator build, which uses dynarmic's x64 backend.
+if(VITA3K_PLATFORM_IOS AND TARGET merry::oaknut)
     target_link_libraries(cpu PRIVATE merry::oaknut)
 endif()

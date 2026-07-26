@@ -25,7 +25,10 @@
 #include <dynarmic/frontend/A32/a32_ir_emitter.h>
 #include <dynarmic/interface/A32/coprocessor.h>
 #include <dynarmic/interface/exclusive_monitor.h>
-#if defined(VITA3K_PLATFORM_IOS)
+// oaknut is dynarmic's arm64 assembler and its iOS JIT region pool only exists
+// on arm64 devices. The x86_64 Simulator uses dynarmic's x64 backend, which
+// allocates its own code cache, so every oaknut path below is arm64-only.
+#if defined(VITA3K_PLATFORM_IOS) && defined(__aarch64__)
 #include <oaknut/code_block.hpp>
 #endif
 
@@ -35,7 +38,7 @@
 #include <optional>
 #include <string>
 
-#if defined(VITA3K_PLATFORM_IOS)
+#if defined(VITA3K_PLATFORM_IOS) && defined(__aarch64__)
 namespace {
 
 void log_ios_jit_region_pool_event(oaknut::JitRegionPoolEvent event, std::size_t size, std::size_t available) {
@@ -400,7 +403,7 @@ std::unique_ptr<Dynarmic::A32::Jit> DynarmicCPU::make_jit() {
     config.optimizations = cpu_opt ? Dynarmic::all_safe_optimizations : Dynarmic::no_optimizations;
     config.enable_cycle_counting = false;
 
-#if defined(VITA3K_PLATFORM_IOS)
+#if defined(VITA3K_PLATFORM_IOS) && defined(__aarch64__)
     // StikDebug services Oaknut's BRK #0xf00d while the JIT constructor maps
     // its execution cache. Serialize this short boundary so simultaneous
     // guest-thread creation cannot issue overlapping debugger requests.
@@ -427,7 +430,7 @@ DynarmicCPU::DynarmicCPU(CPUState *state, std::size_t processor_id, bool cpu_opt
     , cp15(std::make_shared<ArmDynarmicCP15>())
     , core_id(processor_id)
     , cpu_opt(cpu_opt) {
-#if defined(VITA3K_PLATFORM_IOS)
+#if defined(VITA3K_PLATFORM_IOS) && defined(__aarch64__)
     // JIT code regions come from a fixed pool prepared while the debugger is
     // attached. Defer the allocation until this core first executes so
     // created-but-not-yet-started threads don't hold a region.

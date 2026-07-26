@@ -76,6 +76,8 @@ void set_log_mem(CPUState &state, bool log);
 bool get_log_code(CPUState &state);
 bool get_log_mem(CPUState &state);
 
-#if defined(VITA3K_PLATFORM_IOS)
+// arm64 only: the oaknut/StikDebug JIT region pool does not exist on the
+// x86_64 Simulator, where dynarmic's x64 backend allocates its own cache.
+#if defined(VITA3K_PLATFORM_IOS) && defined(__aarch64__)
 std::size_t prewarm_ios_jit_code_cache_pool(std::size_t target_count, std::size_t cache_size);
 #endif
