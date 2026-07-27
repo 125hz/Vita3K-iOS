@@ -177,10 +177,22 @@ struct OnboardingView: View {
                 .glassEffect(.regular, in: .capsule)
                 .transition(.opacity)
             } else if page.requirement != nil {
-                Button("Choose Firmware File") {
-                    Bridge.presentFirmwareImportPicker()
+                // Before the package is installed, choosing a file is the job.
+                // Once it lands, the job is to continue - so the tint moves to
+                // Next below and this steps back to plain glass. Without that
+                // the finished page still points at the button the user has
+                // already used, and Next reads as unavailable.
+                if requirementSatisfied {
+                    Button("Choose Firmware File") {
+                        Bridge.presentFirmwareImportPicker()
+                    }
+                    .buttonStyle(.glass)
+                } else {
+                    Button("Choose Firmware File") {
+                        Bridge.presentFirmwareImportPicker()
+                    }
+                    .buttonStyle(.glassProminent)
                 }
-                .buttonStyle(.glassProminent)
             }
 
             if isLastPage {
@@ -196,12 +208,17 @@ struct OnboardingView: View {
                 // No firmware button on this page, so Next is the primary.
                 Button("Next") { pageIndex += 1 }
                     .buttonStyle(.glassProminent)
+            } else if requirementSatisfied {
+                // The package is in: this is now the only thing left to do.
+                Button("Next") { pageIndex += 1 }
+                    .buttonStyle(.glassProminent)
             } else {
-                // Plain glass: "Choose Firmware File" above is the primary,
-                // and only one element per screen should carry the tint.
+                // Plain glass and disabled: "Choose Firmware File" above is
+                // the primary until its package is installed, and only one
+                // element per screen should carry the tint.
                 Button("Next") { pageIndex += 1 }
                     .buttonStyle(.glass)
-                    .disabled(!requirementSatisfied)
+                    .disabled(true)
             }
 
             progressDots

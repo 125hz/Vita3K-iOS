@@ -37,6 +37,25 @@ struct ControllerOptionsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                // Layout first: repositioning is what this sheet is opened for
+                // most often, and it used to sit below two sliders.
+                Section {
+                    Button {
+                        onEditLayout()
+                    } label: {
+                        Label("Reposition", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                    }
+                    Button(role: .destructive) {
+                        confirmingReset = true
+                    } label: {
+                        Label("Reset Layout", systemImage: "arrow.uturn.backward")
+                    }
+                } header: {
+                    Text("Layout")
+                } footer: {
+                    Text("Positions are stored separately for landscape and portrait.")
+                }
+
                 Section {
                     LabeledContent("Opacity") {
                         Text(percent(model.opacity))
@@ -67,23 +86,6 @@ struct ControllerOptionsView: View {
                     Text("Appearance")
                 } footer: {
                     Text("Changes apply live to the controls behind this sheet.")
-                }
-
-                Section {
-                    Button {
-                        onEditLayout()
-                    } label: {
-                        Label("Reposition Controls", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
-                    }
-                    Button(role: .destructive) {
-                        confirmingReset = true
-                    } label: {
-                        Label("Reset Layout", systemImage: "arrow.uturn.backward")
-                    }
-                } header: {
-                    Text("Layout")
-                } footer: {
-                    Text("Positions are stored separately for landscape and portrait.")
                 }
 
                 orientationSection

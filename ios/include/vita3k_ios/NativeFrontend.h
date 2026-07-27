@@ -54,6 +54,7 @@ struct Vita3KIOSTrophyCollection {
 struct Vita3KIOSSettings {
     float resolution_multiplier = 1.0f;
     bool v_sync = true;
+    bool shader_cache = true;
     int fps_limit = 60;
     bool cpu_opt = true;
     bool ngs_enable = true;
@@ -151,6 +152,10 @@ bool vita3k_ios_consume_double_buffer_default_migration();
 void vita3k_ios_present_trophies(const Vita3KIOSTrophyCollection &collection);
 void vita3k_ios_update_trophies(const Vita3KIOSTrophyCollection &collection);
 void vita3k_ios_share_file(const std::string &path);
+// Remembers where logging::init put tsubomi.log so Settings can share it
+// without having to rebuild the root paths.
+void vita3k_ios_set_log_file_path(const std::string &path);
+void vita3k_ios_share_log_file();
 void vita3k_ios_request_current_trophies();
 
 // Tells the library whether a JIT-enabling debugger is attached. When false,

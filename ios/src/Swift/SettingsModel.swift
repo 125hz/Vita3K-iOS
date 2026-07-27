@@ -25,6 +25,7 @@ final class SettingsModel {
 
     var resolutionMultiplier: Float
     var vSync: Bool
+    var shaderCache: Bool
     var cpuOptimizations: Bool
     var ngsAudio: Bool
     var asyncPipelineCompilation: Bool
@@ -61,6 +62,7 @@ final class SettingsModel {
 
         resolutionMultiplier = settings.resolutionMultiplier
         vSync = settings.vSync
+        shaderCache = settings.shaderCache
         cpuOptimizations = settings.cpuOptimizations
         ngsAudio = settings.ngsAudio
         asyncPipelineCompilation = settings.asyncPipelineCompilation
@@ -94,6 +96,7 @@ final class SettingsModel {
         let settings = original.copy() as! EmulatorSettings
         settings.resolutionMultiplier = resolutionMultiplier
         settings.vSync = vSync
+        settings.shaderCache = shaderCache
         settings.cpuOptimizations = cpuOptimizations
         settings.ngsAudio = ngsAudio
         settings.asyncPipelineCompilation = asyncPipelineCompilation

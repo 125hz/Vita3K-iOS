@@ -23,6 +23,7 @@ NS_SWIFT_NAME(EmulatorSettings)
 
 @property(nonatomic) float resolutionMultiplier;
 @property(nonatomic) BOOL vSync;
+@property(nonatomic) BOOL shaderCache;
 @property(nonatomic) BOOL cpuOptimizations;
 @property(nonatomic) BOOL ngsAudio;
 @property(nonatomic) BOOL asyncPipelineCompilation;
@@ -153,6 +154,9 @@ NS_SWIFT_NAME(Bridge)
 
 /// Open the bug-report form.
 + (void)openBugReportForm;
+
+/// Share tsubomi.log through the system share sheet, for bug reports.
++ (void)shareLogFile;
 
 /// Present the system document picker for an official firmware .PUP. The
 /// import runs asynchronously; completion is reported by the core updating the

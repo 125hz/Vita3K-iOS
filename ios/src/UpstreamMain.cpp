@@ -513,6 +513,8 @@ bool initialize_session(const fs::path &storage_path, Root &root_paths,
         const bool console_attached = isatty(STDOUT_FILENO) != 0;
         if (logging::init(root_paths, console_attached) != Success)
             return false;
+        vita3k_ios_set_log_file_path(
+            (root_paths.get_log_path() / "tsubomi.log").string());
         logging::set_log_callback([](std::string msg, int) {
             push_recent_log_line(std::move(msg));
         });
@@ -698,6 +700,7 @@ Vita3KIOSSettings native_settings(EmuEnvState &emuenv) {
     return {
         .resolution_multiplier = current.resolution_multiplier,
         .v_sync = current.v_sync,
+        .shader_cache = current.shader_cache,
         .fps_limit = 60,
         .cpu_opt = current.cpu_opt,
         .ngs_enable = current.ngs_enable,
@@ -2231,6 +2234,7 @@ void apply_native_settings(EmuEnvState &emuenv, const Vita3KIOSSettings &setting
     auto apply = [&](Config::CurrentConfig &current) {
         current.resolution_multiplier = settings.resolution_multiplier;
         current.v_sync = settings.v_sync;
+        current.shader_cache = settings.shader_cache;
         // The game-dependent FPS hack was removed from the iOS UI because it
         // changes guest timing. Clear any value persisted by an older build.
         current.fps_hack = false;

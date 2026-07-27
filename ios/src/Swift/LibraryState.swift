@@ -259,9 +259,17 @@ final class LibraryState {
         firmwareVersion = settings.firmwareVersion
         firmwareReady = settings.firmwareReady
         // A fresh core snapshot means the library is interactive again. Clear
-        // the launch/import shield so a completed or rejected session cannot
-        // leave an invisible full-screen blocker behind.
-        busyMessage = nil
+        // the launch shield so a completed or rejected session cannot leave an
+        // invisible full-screen blocker behind.
+        //
+        // Not while a file operation is running, though: closing Settings
+        // pushes a snapshot immediately after an export starts, which used to
+        // wipe "Exporting games…" about a second in and leave a multi-minute
+        // export looking like it had finished. Those operations clear the
+        // shield themselves when they report their result.
+        if !operationBusy {
+            busyMessage = nil
+        }
     }
 
     fileprivate func setJITAvailable(_ available: Bool) {
@@ -289,8 +297,14 @@ final class LibraryState {
         }
     }
 
+    /// Set only by import/export, which run for minutes and own the shield
+    /// until they report a result. `beginLaunch` deliberately does not set it:
+    /// a launch shield *should* be cleared by the next snapshot.
+    private var operationBusy = false
+
     fileprivate func setBusy(_ message: String?) {
         busyMessage = message
+        operationBusy = message != nil
     }
 
     /// Accept one launch intent while the library is transitioning away.

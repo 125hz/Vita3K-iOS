@@ -157,6 +157,8 @@ struct SettingsView: View {
         Section("Video") {
             Toggle("V-Sync", isOn: $model.vSync)
                 .accessibilityHint("Synchronizes presentation to the display.")
+            Toggle("Shader cache", isOn: $model.shaderCache)
+                .accessibilityHint("Reuses compiled shaders between sessions. Turn off to force regeneration when diagnosing a graphics fault.")
         }
     }
 
@@ -331,6 +333,11 @@ struct SettingsView: View {
             } label: {
                 Text("Report a bug")
                     .foregroundStyle(.red)
+            }
+            Button {
+                Bridge.shareLogFile()
+            } label: {
+                Label("Share log file", systemImage: "square.and.arrow.up")
             }
             Button("Forked from Vita3K") {
                 Bridge.open(urlString: "https://github.com/Vita3K/Vita3K")

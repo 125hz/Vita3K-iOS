@@ -609,6 +609,8 @@ Vita3KIOSSettings game_settings_or(NSString *titleId, const Vita3KIOSSettings &f
         settings.resolution_multiplier = [stored[@"resolution"] floatValue];
     if (stored[@"vsync"])
         settings.v_sync = [stored[@"vsync"] boolValue];
+    if (stored[@"shader_cache"])
+        settings.shader_cache = [stored[@"shader_cache"] boolValue];
     settings.fps_limit = 60;
     if (stored[@"cpuOpt"])
         settings.cpu_opt = [stored[@"cpuOpt"] boolValue];
@@ -633,6 +635,7 @@ void store_game_settings(NSString *titleId, const Vita3KIOSSettings &settings) {
     [NSUserDefaults.standardUserDefaults setObject:@{
         @"resolution": @(settings.resolution_multiplier),
         @"vsync": @(settings.v_sync),
+        @"shader_cache": @(settings.shader_cache),
         @"cpuOpt": @(settings.cpu_opt),
         @"ngs": @(settings.ngs_enable),
         @"asyncPipelines": @(settings.async_pipeline_compilation),
@@ -1454,20 +1457,58 @@ void vita3k_ios_update_trophies(const Vita3KIOSTrophyCollection &collection) {
     });
 }
 
+// Presents once nothing else is on screen. An export reports its result first,
+// and an incomplete one puts up an "Export incomplete" alert - presenting the
+// share sheet into that alert while it is still animating means UIKit drops it,
+// and the archive the user just waited minutes for is never offered. Waiting
+// also reads correctly: dismiss the alert, then choose where the file goes.
+static void present_share_when_clear(UIActivityViewController *share, int attempts_left) {
+    UIViewController *root = active_window().rootViewController;
+    if (!root)
+        return;
+    if (root.presentedViewController && attempts_left > 0) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+            dispatch_get_main_queue(), ^{
+                present_share_when_clear(share, attempts_left - 1);
+            });
+        return;
+    }
+    UIViewController *presenter = document_picker_presenter();
+    if (!presenter)
+        return;
+    share.popoverPresentationController.sourceView = presenter.view;
+    share.popoverPresentationController.sourceRect =
+        CGRectMake(CGRectGetMidX(presenter.view.bounds),
+            CGRectGetMidY(presenter.view.bounds), 1, 1);
+    [presenter presentViewController:share animated:YES completion:nil];
+}
+
 void vita3k_ios_share_file(const std::string &path) {
     NSString *filePath = [NSString stringWithUTF8String:path.c_str()];
     perform_on_main(^{
         NSURL *url = [NSURL fileURLWithPath:filePath];
         UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
-        UIViewController *presenter = document_picker_presenter();
-        if (!presenter)
-            return;
-        share.popoverPresentationController.sourceView = presenter.view;
-        share.popoverPresentationController.sourceRect =
-            CGRectMake(CGRectGetMidX(presenter.view.bounds),
-                CGRectGetMidY(presenter.view.bounds), 1, 1);
-        [presenter presentViewController:share animated:YES completion:nil];
+        // Two minutes of retries: the user may take a moment to read and
+        // dismiss the result alert before the sheet can appear.
+        present_share_when_clear(share, 480);
     });
+}
+
+static std::string g_log_file_path;
+
+void vita3k_ios_set_log_file_path(const std::string &path) {
+    g_log_file_path = path;
+}
+
+void vita3k_ios_share_log_file() {
+    if (g_log_file_path.empty()) {
+        perform_on_main(^{
+            present_alert(@"No log yet",
+                @"The log file has not been created for this session yet.");
+        });
+        return;
+    }
+    vita3k_ios_share_file(g_log_file_path);
 }
 
 void vita3k_ios_request_current_trophies() {

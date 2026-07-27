@@ -199,6 +199,7 @@ NSString *trophy_grade_name(int grade) {
         return nil;
     _resolutionMultiplier = core.resolution_multiplier;
     _vSync = core.v_sync;
+    _shaderCache = core.shader_cache;
     _cpuOptimizations = core.cpu_opt;
     _ngsAudio = core.ngs_enable;
     _asyncPipelineCompilation = core.async_pipeline_compilation;
@@ -227,6 +228,7 @@ NSString *trophy_grade_name(int grade) {
     Vita3KIOSSettings core;
     core.resolution_multiplier = self.resolutionMultiplier;
     core.v_sync = self.vSync;
+    core.shader_cache = self.shaderCache;
     core.fps_limit = 60; // iOS always requests 60; the limiter UI was removed.
     core.cpu_opt = self.cpuOptimizations;
     core.ngs_enable = self.ngsAudio;
@@ -430,6 +432,10 @@ id bridge_games() {
     action.kind = Vita3KIOSFrontendActionKind::ExportSave;
     action.title_id = to_std(titleID);
     vita3k_ios_internal::queue_frontend_action(std::move(action));
+}
+
++ (void)shareLogFile {
+    vita3k_ios_share_log_file();
 }
 
 + (void)presentAllSaveImportPicker {
