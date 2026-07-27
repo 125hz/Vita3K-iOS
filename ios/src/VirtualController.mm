@@ -267,8 +267,14 @@ void vita3k_ios_begin_layout_editing() {
 void vita3k_ios_finish_layout_editing() {
     performOnMainThread(^{
         [TsubomiControlsHost setLayoutEditing:NO];
-        if (!g_overlay_preview_only)
+        if (!g_overlay_preview_only) {
+            // The editor is only ever reached from Layout Options, so Done
+            // belongs back there. Dropping straight into the game discarded
+            // the place the user came from and made adjusting a layout - which
+            // usually takes a few passes - a trip through the menu each time.
+            vita3k_ios_present_controller_options();
             return;
+        }
         // A preview overlay exists only for editing; leaving it up would sit
         // an invisible touch surface on top of the library.
         [g_overlay_controller.view removeFromSuperview];

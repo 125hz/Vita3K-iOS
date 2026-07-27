@@ -47,10 +47,15 @@ struct ControlsOverlayView: View {
                 // so it is not affected by the controls' opacity.
                 performanceOverlay(in: size)
 
-                // Always shown, always draggable - the way back to the menu
-                // must survive the physical-controller hide and be movable
-                // without entering the editor.
-                menuButton(in: size)
+                // Always draggable, and it survives the physical-controller
+                // hide - the way back to the menu must not disappear with the
+                // touch controls. It does honour its own visibility flag,
+                // which is what "Hide Menu Button" sets; the three-finger tap
+                // brings it back. It stays on screen in the editor regardless,
+                // or a hidden button could never be repositioned or restored.
+                if model.isEditing || model.isVisible("menu", in: size) {
+                    menuButton(in: size)
+                }
 
                 if model.isEditing {
                     editingChrome(in: size)

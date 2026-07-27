@@ -47,6 +47,18 @@ struct GameMenuView: View {
                     } label: {
                         Label("Quit Game", systemImage: "rectangle.portrait.and.arrow.right")
                     }
+                    // Anchored to the button, not to the List. Attached higher
+                    // up, the popover pointed at whatever row happened to be
+                    // near the top of the sheet instead of at Quit Game.
+                    .confirmationDialog("Quit to the library?",
+                                        isPresented: $confirmingQuit,
+                                        titleVisibility: .visible) {
+                        Button("Quit Game", role: .destructive, action: onQuit)
+                    } message: {
+                        // Losing unsaved progress is not recoverable, so this
+                        // asks first. The UIKit menu quit immediately.
+                        Text("Any progress since your last in-game save will be lost.")
+                    }
                 } footer: {
                     Text("Quitting returns to the library. Save inside the game first — Tsubomi does not save its state for you.")
                 }
@@ -57,15 +69,6 @@ struct GameMenuView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: onResume)
                 }
-            }
-            .confirmationDialog("Quit to the library?",
-                                isPresented: $confirmingQuit,
-                                titleVisibility: .visible) {
-                Button("Quit Game", role: .destructive, action: onQuit)
-            } message: {
-                // Losing unsaved progress is not recoverable, so this asks
-                // first. The UIKit menu quit immediately.
-                Text("Any progress since your last in-game save will be lost.")
             }
         }
         .presentationDetents([.medium, .large])
