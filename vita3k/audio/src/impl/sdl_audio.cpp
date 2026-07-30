@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <limits>
 
 #define SDL_CHECK_EXT(condition, ret)                         \
     do {                                                      \
@@ -66,10 +65,24 @@ bool SDLAudioAdapter::init() {
     // audio-session preference (about 21 ms) for stable playback.
 #if defined(VITA3K_PLATFORM_IOS)
     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");
+    // Opening with no spec makes SDL fall back to the device's default spec,
+    // and its CoreAudio backend then pushes that rate onto the audio session -
+    // overriding the 48 kHz vita3k_ios_configure_audio_session() just asked
+    // for, and landing on SDL's 44.1 kHz default. Guest audio is 48 kHz, so
+    // that costs a resample down to 44.1 kHz in SDL and another back up to
+    // 48 kHz in the AudioQueue converter.
+    //
+    // SDL_HINT_AUDIO_FREQUENCY cannot fix this: PrepareAudioFormat only reads
+    // it when the incoming freq is 0, and the default spec already carries a
+    // rate. Request the rate explicitly instead. Leaving format and channels
+    // zeroed lets SDL fill in its own defaults for those, as before.
+    SDL_AudioSpec want = {};
+    want.freq = 48000;
+    device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &want);
 #else
     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
-#endif
     device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
+#endif
     SDL_CHECK_EXT(device_id > 0, false);
     return true;
 }
@@ -131,25 +144,20 @@ void SDLAudioAdapter::set_volume(AudioOutPort &out_port, float volume) {
 int SDLAudioAdapter::get_rest_sample(AudioOutPort &out_port) {
     auto &port = static_cast<SDLAudioOutPort &>(out_port);
     // sceAudioOutGetRestSample asks how many guest frames have not played yet.
-    // SDL splits those frames between unconverted source bytes (Queued) and
-    // converted device-format bytes (Available). Reporting only either side
-    // briefly returns zero whenever the resampler transfers ownership, which
-    // can make audio-gated games advance or stall incorrectly. Sum both sides
-    // and express the converted portion back in guest-rate frames.
+    // That is exactly what SDL_GetAudioStreamQueued reports: every frame put
+    // into the stream and not yet pulled by the device, still in guest format.
+    //
+    // Do not add SDL_GetAudioStreamAvailable to this. The two are not disjoint
+    // pools - Available walks the same stream->queue that Queued measures and
+    // simply expresses it in the device format, so summing them reports twice
+    // the real backlog. That both lies to audio-gated games and halves the
+    // effective cushion in audio_output()'s threshold check, which lets the
+    // queue dip below one device buffer and makes SDL pad the mix with
+    // silence (the White Album 2 stutter captured on iOS).
     const int bytes_queued = SDL_GetAudioStreamQueued(port.stream.get());
     SDL_CHECK_NEG(bytes_queued);
-    const int bytes_available = SDL_GetAudioStreamAvailable(port.stream.get());
-    SDL_CHECK_NEG(bytes_available);
-    const int guest_frame_bytes = port.channels * static_cast<int>(sizeof(int16_t));
-    const int output_sample_bytes = std::max(1, static_cast<int>(SDL_AUDIO_BITSIZE(dst_spec.format)) / 8);
-    const int output_frame_bytes = output_sample_bytes * std::max(1, static_cast<int>(dst_spec.channels));
-    const std::int64_t queued_frames = bytes_queued / std::max(1, guest_frame_bytes);
-    const std::int64_t output_frames = bytes_available / std::max(1, output_frame_bytes);
-    const std::int64_t converted_guest_frames = dst_spec.freq > 0 && port.freq > 0
-        ? output_frames * port.freq / dst_spec.freq
-        : output_frames;
-    return static_cast<int>(std::clamp<std::int64_t>(queued_frames + converted_guest_frames,
-        0, std::numeric_limits<int>::max()));
+    const int guest_frame_bytes = std::max(1, port.channels * static_cast<int>(sizeof(int16_t)));
+    return bytes_queued / guest_frame_bytes;
 }
 
 void SDLAudioAdapter::wake_all_ports() {
