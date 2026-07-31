@@ -1074,7 +1074,8 @@ static UIViewController *library_presented_controller() {
 
 @end
 
-// Presents the Files picker and hands the copied file to the emulator loop.
+// Presents the Files picker and hands a durable, app-owned copy to the
+// emulator loop.
 @interface Vita3KImportPicker : NSObject <UIDocumentPickerDelegate>
 @property(nonatomic) Vita3KIOSFrontendActionKind kind;
 @property(nonatomic, copy) NSString *titleId;
@@ -1087,48 +1088,110 @@ static UIViewController *library_presented_controller() {
     NSURL *url = urls.firstObject;
     if (!url)
         return;
-    const BOOL scoped = [url startAccessingSecurityScopedResource];
-    NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    NSString *importDir = [[documents stringByAppendingPathComponent:@"Tsubomi"] stringByAppendingPathComponent:@"import"];
-    [NSFileManager.defaultManager createDirectoryAtPath:importDir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSString *destination = [importDir stringByAppendingPathComponent:url.lastPathComponent];
-    [NSFileManager.defaultManager removeItemAtPath:destination error:nil];
-    NSError *error = nil;
-    const BOOL copied = [NSFileManager.defaultManager copyItemAtURL:url
-                                                              toURL:[NSURL fileURLWithPath:destination]
-                                                              error:&error];
-    if (scoped)
-        [url stopAccessingSecurityScopedResource];
-    if (!copied) {
-        // A common cause is an iCloud-only file whose contents were never
-        // downloaded, or insufficient free space for the working copy. Surface
-        // the underlying reason instead of a bare "could not copy".
-        const char *reason = error.localizedDescription.UTF8String ?: "unknown error";
-        LOG_ERROR("iOS import copy failed for '{}': {}",
-            url.lastPathComponent.UTF8String ?: "?", reason);
-        vita3k_ios_report_import_result(
-            std::string("Could not read the selected file: ") + reason
-                + ". If it is stored in iCloud, download it in Files first.",
-            false);
-        return;
-    }
-    NSString *busy = @"Installing game…";
-    if (self.kind == Vita3KIOSFrontendActionKind::ImportFirmware)
-        busy = @"Installing firmware…";
-    else if (self.kind == Vita3KIOSFrontendActionKind::ImportLicense)
-        busy = @"Installing license…";
-    else if (self.kind == Vita3KIOSFrontendActionKind::ImportSave)
-        busy = @"Importing save…";
-    if (self.kind == Vita3KIOSFrontendActionKind::ImportSave && !self.titleId.length)
-        busy = @"Importing all game saves...";
-    else if (self.kind == Vita3KIOSFrontendActionKind::ImportLibraryArchive)
-        busy = @"Importing games...";
-    [TsubomiLibraryStateBridge setBusyMessage:busy];
-    Vita3KIOSFrontendAction action;
-    action.kind = self.kind;
-    action.app_path = destination.UTF8String;
-    action.title_id = self.titleId.UTF8String ?: "";
-    queue_action(std::move(action));
+    // Snapshot the delegate state before leaving the main thread. The picker
+    // delegate is shared by every import surface and can be reconfigured for a
+    // later picker while a large iCloud file is still being materialized.
+    const Vita3KIOSFrontendActionKind kind = self.kind;
+    NSString *titleId = [self.titleId copy];
+    NSString *filename = url.lastPathComponent.length ? url.lastPathComponent : @"import.bin";
+
+    NSString *preparing = kind == Vita3KIOSFrontendActionKind::ImportFirmware
+        ? @"Preparing firmware…"
+        : @"Preparing import…";
+    [TsubomiLibraryStateBridge setBusyMessage:preparing];
+
+    // File-provider reads can download hundreds of megabytes and are much
+    // slower through compatibility containers such as LiveContainer. Keeping
+    // that coordinated copy off the main thread prevents the selection from
+    // looking ignored (or being killed by the main-thread watchdog).
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        @autoreleasepool {
+            NSFileManager *manager = NSFileManager.defaultManager;
+            const BOOL scoped = [url startAccessingSecurityScopedResource];
+
+            NSError *directoryError = nil;
+            NSURL *documents = [manager URLForDirectory:NSDocumentDirectory
+                                               inDomain:NSUserDomainMask
+                                      appropriateForURL:nil
+                                                 create:YES
+                                                  error:&directoryError];
+            NSURL *importDirectory = [[documents URLByAppendingPathComponent:@"Tsubomi"
+                                                                  isDirectory:YES]
+                URLByAppendingPathComponent:@"import" isDirectory:YES];
+            if (documents) {
+                [manager createDirectoryAtURL:importDirectory
+                  withIntermediateDirectories:YES
+                                   attributes:nil
+                                        error:&directoryError];
+            }
+
+            // Never delete a same-named file before copying. Aside from losing
+            // an existing in-flight import, an open-in-place provider can hand
+            // back the exact destination URL. A short unique staging name
+            // avoids both cases while retaining the extension used to identify
+            // PKGs (and not overflowing NAME_MAX for a long provider name).
+            NSString *stagedName = NSUUID.UUID.UUIDString;
+            if (filename.pathExtension.length)
+                stagedName = [stagedName stringByAppendingPathExtension:filename.pathExtension];
+            NSURL *destination = [importDirectory URLByAppendingPathComponent:stagedName];
+
+            __block BOOL copied = NO;
+            __block NSError *copyError = directoryError;
+            if (documents && !directoryError) {
+                NSFileCoordinator *coordinator =
+                    [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+                NSError *coordinationError = nil;
+                [coordinator coordinateReadingItemAtURL:url
+                                               options:NSFileCoordinatorReadingWithoutChanges
+                                                 error:&coordinationError
+                                            byAccessor:^(NSURL *coordinatedURL) {
+                                                copied = [manager copyItemAtURL:coordinatedURL
+                                                                         toURL:destination
+                                                                         error:&copyError];
+                                            }];
+                if (!copyError)
+                    copyError = coordinationError;
+            }
+
+            if (scoped)
+                [url stopAccessingSecurityScopedResource];
+
+            if (!copied) {
+                [manager removeItemAtURL:destination error:nil];
+                // A common cause is an iCloud-only file whose contents were
+                // never downloaded, or insufficient free space for the
+                // working copy. Surface the provider's precise failure.
+                const char *reason =
+                    copyError.localizedDescription.UTF8String ?: "unknown error";
+                LOG_ERROR("iOS import copy failed for '{}': {}",
+                    filename.UTF8String ?: "?", reason);
+                vita3k_ios_report_import_result(
+                    std::string("Could not read the selected file: ") + reason
+                        + ". If it is stored in iCloud, download it in Files first.",
+                    false);
+                return;
+            }
+
+            NSString *busy = @"Installing game…";
+            if (kind == Vita3KIOSFrontendActionKind::ImportFirmware)
+                busy = @"Installing firmware…";
+            else if (kind == Vita3KIOSFrontendActionKind::ImportLicense)
+                busy = @"Installing license…";
+            else if (kind == Vita3KIOSFrontendActionKind::ImportSave)
+                busy = titleId.length ? @"Importing save…" : @"Importing all game saves...";
+            else if (kind == Vita3KIOSFrontendActionKind::ImportLibraryArchive)
+                busy = @"Importing games...";
+
+            perform_on_main(^{
+                [TsubomiLibraryStateBridge setBusyMessage:busy];
+                Vita3KIOSFrontendAction action;
+                action.kind = kind;
+                action.app_path = destination.path.UTF8String ?: "";
+                action.title_id = titleId.UTF8String ?: "";
+                queue_action(std::move(action));
+            });
+        }
+    });
 }
 
 @end
@@ -1142,6 +1205,15 @@ UIViewController *document_picker_presenter() {
     while (presenter.presentedViewController)
         presenter = presenter.presentedViewController;
     return presenter;
+}
+
+UIDocumentPickerViewController *import_picker(NSArray<UTType *> *types) {
+    // This app consumes imports; it never edits the provider's original file.
+    // Explicit copy mode asks Files/File Provider to materialize an app-owned
+    // selection instead of relying on an open-in-place security extension.
+    // The latter is not reliably forwarded by nested/compatibility containers.
+    return [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types
+                                                                      asCopy:YES];
 }
 
 // Presents the Files picker for a game/firmware/license import. Attached to the
@@ -1170,8 +1242,7 @@ void present_import_picker(BOOL firmware) {
             [types addObject:pkg];
     }
     [types addObject:UTTypeData];
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types];
+    UIDocumentPickerViewController *picker = import_picker(types);
     picker.delegate = g_import_picker;
     picker.allowsMultipleSelection = NO;
     [presenter presentViewController:picker animated:YES completion:nil];
@@ -1186,8 +1257,7 @@ void present_license_picker() {
     g_import_picker.kind = Vita3KIOSFrontendActionKind::ImportLicense;
     g_import_picker.titleId = nil;
     // A work.bin has no standard UTType; accept any file.
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData]];
+    UIDocumentPickerViewController *picker = import_picker(@[UTTypeData]);
     picker.delegate = g_import_picker;
     picker.allowsMultipleSelection = NO;
     [presenter presentViewController:picker animated:YES completion:nil];
@@ -1201,8 +1271,7 @@ void present_save_picker(NSString *titleId) {
         g_import_picker = [[Vita3KImportPicker alloc] init];
     g_import_picker.kind = Vita3KIOSFrontendActionKind::ImportSave;
     g_import_picker.titleId = titleId;
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP, UTTypeData]];
+    UIDocumentPickerViewController *picker = import_picker(@[UTTypeZIP, UTTypeData]);
     picker.delegate = g_import_picker;
     picker.allowsMultipleSelection = NO;
     [presenter presentViewController:picker animated:YES completion:nil];
@@ -1216,8 +1285,7 @@ void present_library_archive_picker() {
         g_import_picker = [[Vita3KImportPicker alloc] init];
     g_import_picker.kind = Vita3KIOSFrontendActionKind::ImportLibraryArchive;
     g_import_picker.titleId = nil;
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP, UTTypeData]];
+    UIDocumentPickerViewController *picker = import_picker(@[UTTypeZIP, UTTypeData]);
     picker.delegate = g_import_picker;
     picker.allowsMultipleSelection = NO;
     [presenter presentViewController:picker animated:YES completion:nil];
