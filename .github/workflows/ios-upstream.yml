@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Check out source and upstream dependencies
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           submodules: recursive
@@ -95,7 +95,7 @@ jobs:
 
       - name: Restore iOS vcpkg binary archive
         id: vcpkg-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/vcpkg/archives
           # The run_id suffix makes the primary key unique so the save step
@@ -151,7 +151,7 @@ jobs:
         # unique run_id key means this always persists (GitHub cache entries
         # are immutable per key); old entries are evicted by LRU.
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/vcpkg/archives
           key: vcpkg-arm64-ios-77df67c-${{ env.XCODE_VER }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
@@ -175,7 +175,7 @@ jobs:
             --output artifacts/Vita3K-upstream-core-iOS-unsigned.ipa
 
       - name: Upload unsigned upstream-core IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Vita3K-upstream-core-iOS-${{ github.sha }}-unsigned
           path: artifacts/Vita3K-upstream-core-iOS-unsigned.ipa
