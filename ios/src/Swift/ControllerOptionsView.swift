@@ -100,7 +100,11 @@ struct ControllerOptionsView: View {
 
                 Section {
                     Toggle("Hide for physical controller", isOn: $model.hideWhenPhysical)
-                    Toggle("Haptic feedback", isOn: $model.haptics)
+                    Picker("Touch Haptics", selection: $model.hapticStrength) {
+                        ForEach(HapticStrength.allCases) { strength in
+                            Text(strength.title).tag(strength)
+                        }
+                    }
                     Toggle("Alignment guides", isOn: $model.snapGuides)
                     DefaultsToggle("Colored face buttons", key: .coloredFaceButtons)
                     // The same preference as Settings › General, as Colored
@@ -111,7 +115,7 @@ struct ControllerOptionsView: View {
                 } header: {
                     Text("Behaviour")
                 } footer: {
-                    Text("Liquid Glass is turned off in game only.")
+                    Text("Touch Haptics tap once as a finger lands on any on-screen control, and never for Vita touchscreen taps in the gaps between them. Liquid Glass is turned off in game only.")
                 }
 
                 visibilitySection

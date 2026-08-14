@@ -14,6 +14,37 @@ enum ControlKind: Equatable {
     case menu
 }
 
+/// How hard the on-screen controls tap back when a finger lands on one.
+///
+/// `off` is a case rather than a separate switch so a single control covers
+/// both "do I want this" and "how much"; the saved file still writes the old
+/// boolean so an older build reads the choice correctly.
+enum HapticStrength: String, CaseIterable, Identifiable {
+    case off, light, medium, strong
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .light: return "Light"
+        case .medium: return "Medium"
+        case .strong: return "Strong"
+        }
+    }
+
+    /// Light keeps the intensity the fixed-strength version used, so an
+    /// upgrade feels the same until the player changes it.
+    var intensity: CGFloat {
+        switch self {
+        case .off: return 0
+        case .light: return 0.55
+        case .medium: return 0.75
+        case .strong: return 1.0
+        }
+    }
+}
+
 /// One control's identity, label and behaviour. Positions live separately in
 /// `ControlsModel.placements` because they are per-orientation and user-edited.
 struct ControlDefinition: Identifiable, Equatable {
@@ -77,8 +108,12 @@ final class ControlsModel {
             scheduleSave()
         }
     }
-    var haptics = true { didSet { scheduleSave() } }
+    var hapticStrength: HapticStrength = .light { didSet { scheduleSave() } }
     var snapGuides = true { didSet { scheduleSave() } }
+
+    /// Whether any touch feedback is wanted at all. Written to the saved file
+    /// under the key the fixed-strength version used.
+    var haptics: Bool { hapticStrength != .off }
 
     /// Floating sticks: the fixed sticks disappear and each half of the screen
     /// becomes a stick that centres itself wherever the finger lands.
@@ -433,7 +468,13 @@ final class ControlsModel {
         opacity = root["opacity"] as? Double ?? opacity
         scale = root["scale"] as? Double ?? scale
         hideWhenPhysical = root["hideWhenPhysical"] as? Bool ?? hideWhenPhysical
-        haptics = root["haptics"] as? Bool ?? haptics
+        // A file written before the strength setting existed only has the
+        // boolean, which maps onto the intensity that build always used.
+        if let raw = root["hapticStrength"] as? String, let strength = HapticStrength(rawValue: raw) {
+            hapticStrength = strength
+        } else if let enabled = root["haptics"] as? Bool {
+            hapticStrength = enabled ? .light : .off
+        }
         snapGuides = root["snapGuides"] as? Bool ?? snapGuides
         dynamicSticks = root["dynamicSticks"] as? Bool ?? dynamicSticks
 
@@ -476,6 +517,9 @@ final class ControlsModel {
             "opacity": opacity,
             "scale": scale,
             "hideWhenPhysical": hideWhenPhysical,
+            "hapticStrength": hapticStrength.rawValue,
+            // Kept so a build without the strength setting still reads whether
+            // feedback is wanted.
             "haptics": haptics,
             "snapGuides": snapGuides,
             "dynamicSticks": dynamicSticks,

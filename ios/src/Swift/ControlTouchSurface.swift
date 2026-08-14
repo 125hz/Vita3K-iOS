@@ -100,9 +100,11 @@ struct ControlTouchSurface: UIViewRepresentable {
                 }
                 activeTouches[ObjectIdentifier(touch)] = definition.id
                 press(definition, at: location)
-                if model.haptics, case .button = definition.kind {
-                    ControllerHaptics.tick()
-                }
+                // Every control taps back, not just the face buttons: a finger
+                // landing on a trigger or a stick is the same discrete event,
+                // and it is the only confirmation a flat screen can give that
+                // the touch found the control rather than the gap beside it.
+                ControllerHaptics.tick(model.hapticStrength)
             }
         }
 
@@ -126,6 +128,9 @@ struct ControlTouchSurface: UIViewRepresentable {
             activeTouches[ObjectIdentifier(touch)] = id
             model.dynamicStickCenters[id] = location
             model.stickOffsets[id] = .zero
+            // A floating stick has nothing on screen to aim at, so the tick is
+            // the only sign the touch raised one rather than doing nothing.
+            ControllerHaptics.tick(model.hapticStrength)
         }
 
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -243,26 +248,49 @@ enum ControllerInput {
     }
 }
 
-/// Button-press feedback. Created once and kept warm only while the overlay is
-/// on screen; a generator held across a whole game session would keep the
-/// Taptic Engine powered for no reason.
+/// Touch feedback for the on-screen controls. Created once and kept warm only
+/// while the overlay is on screen; a generator held across a whole game session
+/// would keep the Taptic Engine powered for no reason.
+///
+/// The strength is passed in per call rather than read from `ControlsModel`, so
+/// changing it in settings takes effect on the very next touch without the
+/// model needing to know this type exists.
 @MainActor
 enum ControllerHaptics {
     private static var generator: UIImpactFeedbackGenerator?
+    /// The style `generator` was built with; a generator's style is fixed at
+    /// init, so a strength change has to replace it.
+    private static var style: UIImpactFeedbackGenerator.FeedbackStyle?
 
-    static func prepare() {
-        if generator == nil {
-            generator = UIImpactFeedbackGenerator(style: .light)
+    static func prepare(_ strength: HapticStrength) {
+        guard let wanted = feedbackStyle(for: strength) else {
+            end()
+            return
+        }
+        if generator == nil || style != wanted {
+            generator = UIImpactFeedbackGenerator(style: wanted)
+            style = wanted
         }
         generator?.prepare()
     }
 
-    static func tick() {
-        if generator == nil { prepare() }
-        generator?.impactOccurred(intensity: 0.55)
+    static func tick(_ strength: HapticStrength) {
+        guard feedbackStyle(for: strength) != nil else { return }
+        prepare(strength)
+        generator?.impactOccurred(intensity: strength.intensity)
     }
 
     static func end() {
         generator = nil
+        style = nil
+    }
+
+    private static func feedbackStyle(for strength: HapticStrength) -> UIImpactFeedbackGenerator.FeedbackStyle? {
+        switch strength {
+        case .off: return nil
+        case .light: return .light
+        case .medium: return .medium
+        case .strong: return .heavy
+        }
     }
 }

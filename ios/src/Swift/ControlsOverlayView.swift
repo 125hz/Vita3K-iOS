@@ -26,7 +26,7 @@ struct ControlsOverlayView: View {
         // UIKit's authoritative view.safeAreaInsets - a SwiftUI GeometryReader
         // here would report zero once the controls go full-bleed.
         controlsLayer
-            .onAppear { ControllerHaptics.prepare() }
+            .onAppear { ControllerHaptics.prepare(model.hapticStrength) }
             .onDisappear { ControllerHaptics.end() }
     }
 

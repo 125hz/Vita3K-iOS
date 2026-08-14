@@ -43,6 +43,10 @@ enum Changelog {
     }
 
     static let releases: [Release] = [
+        Release(version: "0.47.0", notes: [
+            "Controls settings replace the haptics switch with Touch Haptics: Off, Light, Medium, or Strong.",
+            "Haptics now fire for the sticks, triggers, and shoulder buttons as well as the face buttons, and never for Vita touchscreen taps in the gaps between controls.",
+        ]),
         Release(version: "0.46.3", notes: [
             "Fixed exports failing at the update directory. A title with no update could abort the whole export; an absent optional directory is now simply absent.",
             "An update, add-on, license, save or trophy set that exists but cannot be read no longer fails the whole export. It is skipped — and because a missing update is only discovered when a restore goes wrong, the export then reports incomplete in a dialog that names every item left out.",
